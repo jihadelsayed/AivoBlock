@@ -1,0 +1,22 @@
+[package]
+name = "aivoblock-node"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Decentralized AivoBlock node runtime for AI puzzle blockchain research"
+publish = false
+
+[[bin]]
+name = "aivoblock-node"
+path = "src/main.rs"
+
+[dependencies]
+rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
