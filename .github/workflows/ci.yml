@@ -1,0 +1,77 @@
+name: AivoBlock CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python AI engine
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-engine/pyproject.toml
+      - name: Install package and tests
+        run: python -m pip install -e "./ai-engine[dev]"
+      - name: Run tests
+        run: python -m pytest ai-engine/tests
+
+  haskell:
+    name: Haskell core
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "3.12"
+      - name: Update package index
+        run: cabal update
+      - name: Build
+        run: cabal build all
+      - name: Test
+        run: cabal test all --test-show-details=direct
+
+  rust:
+    name: Rust node
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install RocksDB build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build and test
+        run: cargo test --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  protobuf:
+    name: Protocol schemas
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Validate schemas
+        run: |
+          mkdir -p /tmp/aivoblock-proto
+          protoc --proto_path=protocol/proto --descriptor_set_out=/tmp/aivoblock-proto/schema.pb --include_imports protocol/proto/*.proto
