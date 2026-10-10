@@ -1,0 +1,39 @@
+# AivoBlock Rust node container — prototype diagnostics only.
+# Build from repository root:
+#   docker build -f docker/Dockerfile.node -t aivoblock-node .
+#
+# The Rust CLI currently reports status; P2P, Haskell validation,
+# and Python worker orchestration are not connected yet.
+
+FROM rust:1.85-bookworm AS builder
+WORKDIR /build
+
+# Native build dependencies for the RocksDB Rust crate.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang libclang-dev cmake pkg-config libsnappy-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY node/ ./node/
+WORKDIR /build/node
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libstdc++6 libgcc-s1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 10001 aivoblock \
+    && mkdir -p /var/lib/aivoblock \
+    && chown aivoblock:aivoblock /var/lib/aivoblock
+
+COPY --from=builder /build/node/target/release/aivoblock-node /usr/local/bin/aivoblock-node
+
+USER aivoblock
+WORKDIR /home/aivoblock
+ENV AIVOBLOCK_DATA_DIR=/var/lib/aivoblock
+VOLUME ["/var/lib/aivoblock"]
+
+# Reserved for the future P2P transport. The current CLI doesn't listen.
+EXPOSE 30333/tcp
+
+ENTRYPOINT ["/usr/local/bin/aivoblock-node"]
+CMD ["status"]
