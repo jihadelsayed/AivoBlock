@@ -1,6 +1,6 @@
 # AivoBlock Canonical Encoding — Draft v0.1
 
-**Status:** Design draft. Only the integer-inference result commitment below is implemented. Other formats MUST NOT be used for consensus until implemented and tested across languages.
+**Status:** Design draft. Integer-inference result and model commitments are implemented. The block-header encoding below is a newly specified candidate, **not yet implemented or approved for consensus**. Other formats MUST NOT be used for consensus until implemented and tested across languages.
 
 ## Why this matters
 
@@ -55,12 +55,55 @@ ASCII("AIVOBLOCK-INT-LINEAR-V1") || 0x00
 
 The model commitment is `SHA256(encoded_model)`. The only supported model version is 1. Current bounds are 1–4096 weights and absolute weight values no greater than 1,000,000.
 
-## Future consensus encodings (NOT defined yet)
+## Proposed block-header ID — candidate V1 (NOT implemented)
+
+A block identifier is the **SHA-256 digest of the canonical block header bytes**.
+The body is not serialized into the header ID; instead the transaction,
+AI-proof, and state root fields are intended to commit to the relevant data.
+Until those roots are independently recomputed and verified, a matching
+header digest does **not** authenticate the body or ledger state.
+
+The exact candidate byte layout, in field order, is:
+
+```text
+ASCII("AIVOBLOCK-BLOCK-HEADER-V1") || 0x00  (26 bytes total)
+|| uint32_be(headerVersion)                  (4 bytes)
+|| uint32_be(headerChainId)                  (4 bytes)
+|| uint64_be(headerHeight)                   (8 bytes)
+|| raw32(headerParentHash)                   (32 bytes)
+|| raw32(headerTransactionsRoot)             (32 bytes)
+|| raw32(headerPuzzleProofsRoot)             (32 bytes)
+|| raw32(headerStateRoot)                    (32 bytes)
+|| uint64_be(headerTimestampMs)              (8 bytes)
+```
+
+The total preimage is **178 bytes**. Hash algorithm: SHA-256, producing exactly
+32 raw bytes. Hash values are represented as lowercase 64-character hex
+**only for display**; hex text is never substituted for the raw bytes
+in the preimage. Fields are unsigned and fixed-width, so negative numbers,
+overflow, missing fields, and non-32-byte commitments must be rejected.
+No JSON serialization, field separators, implicit padding, or machine
+endianness are allowed. The domain tag above is case sensitive.
+
+**Provisional test vector:** version=1, chain ID=1, height=0,
+timestampMs=1000, and all four 32-byte hashes/roots equal to 32 zero bytes.
+The expected SHA-256 digest is:
+
+```text
+c1b8e653731eeafeacb557e46669d277096ecc7ceff7ec911ab29b25a8a55c22
+```
+
+This vector was calculated from the specified 178-byte preimage; future
+Rust and Haskell implementations must independently reproduce it.
+Defining a header digest does not yet establish a valid genesis block,
+valid Merkle roots, signatures, chain ancestry, or consensus acceptance.
+
+## Remaining consensus encodings (NOT implemented yet)
 
 Before enabling block or transaction acceptance, specify exact byte layouts, hashing algorithms, domain tags and test vectors for:
 
 1. Chain identity and genesis configuration.
-2. Block headers and block IDs.
+2. Independent implementations and cross-language test vectors for the block-header encoding proposed above.
 3. Transaction signing payloads and transaction IDs.
 4. Merkle leaves, internal nodes, empty-root rules and tree construction.
 5. Ledger/account state roots.
@@ -79,4 +122,4 @@ Before these formats become consensus rules:
 - Check byte-for-byte equality and identical digests across independent implementations.
 - Test malformed lengths, integer overflow, duplicate entries, ordering differences, unsupported versions and replay contexts.
 
-**No completed canonical encoding for blocks or transactions is claimed by this draft.**
+**The candidate block-header layout is specified but not implemented or consensus-ready; complete block/transaction encodings remain outstanding.**
