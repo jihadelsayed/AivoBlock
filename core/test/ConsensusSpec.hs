@@ -32,7 +32,7 @@ main = hspec $ do
 
     it "calculates quorum for arbitrary positive weights" $
       property $ \(Positive n) ->
-        let power = fromIntegral (1 + (n `mod` 100000)) 
+        let power = fromIntegral (1 + ((n :: Int) `mod` 100000)) 
             validators = set [(alice, power)]
         in requiredQuorumPower validators ==
              (2 * power) `div` 3 + 1
