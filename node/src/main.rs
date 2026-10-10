@@ -17,6 +17,9 @@ const EXPECTED_HEALTH_RESPONSE: &str = r#"{"ok":true,"type":"health","protocol_v
 
 const SAMPLE_PUZZLE_REQUEST: &str = r#"{"protocol_version":1,"type":"execute_integer_inference","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"start":0,"count":3,"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3]}"#;
 
+const SAMPLE_VERIFY_REQUEST: &str = r#"{"protocol_version":1,"type":"verify_integer_inference","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3],"proof":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","start_unit":0,"unit_count":3,"result_commitment":"a22d7dc4fe5191094e273e20c50df061c516b244a030227957c61ed4cab8761f","witness_commitment":null}}"#;
+const SAMPLE_TAMPERED_VERIFY_REQUEST: &str = r#"{"protocol_version":1,"type":"verify_integer_inference","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3],"proof":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","start_unit":0,"unit_count":3,"result_commitment":"0000000000000000000000000000000000000000000000000000000000000000","witness_commitment":null}}"#;
+
 fn print_help() {
     println!(
         "AivoBlock Node {VERSION}\n\n\
@@ -25,6 +28,7 @@ fn print_help() {
            status       Show implementation status (default)\n\
            ai-health    Check the local Python AI worker over framed IPC\n\
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
+           ai-verify    Verify a sample proof and reject a tampered proof\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -104,6 +108,43 @@ fn ai_demo() -> Result<(), String> {
     Ok(())
 }
 
+
+fn ai_verify() -> Result<(), String> {
+    let executable = env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
+    let script = env::var_os("AIVOBLOCK_PYTHON_WORKER")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_worker_path);
+    let client = PythonWorkerClient::new(executable, script)
+        .map_err(|e| format!("Worker configuration error: {e:?}"))?;
+    // Two separate worker processes recompute the locally trusted fixtures.
+    for (request, expected) in [
+        (SAMPLE_VERIFY_REQUEST, true),
+        (SAMPLE_TAMPERED_VERIFY_REQUEST, false),
+    ] {
+        let bytes = client.exchange(request.as_bytes())
+            .map_err(|e| format!("Verifier IPC error: {e:?}"))?;
+        let response = std::str::from_utf8(&bytes)
+            .map_err(|_| "Verifier response is not UTF-8".to_owned())?;
+        let expected_response = if expected {
+            r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":true,"method":"full_recomputation"}"#
+        } else {
+            r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":false,"method":"full_recomputation"}"#
+        };
+        if response != expected_response {
+            return Err(format!("Unexpected verifier response: {response}"));
+        }
+    }
+    println!("AI verification demo: PASS");
+    println!("Valid sample proof: accepted by recomputation");
+    println!("Tampered sample proof: rejected by recomputation");
+    println!("Verification uses local trusted fixtures; no ledger update performed");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -116,6 +157,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command] if command == "ai-health" => ai_health(),
         [command] if command == "ai-demo" => ai_demo(),
+        [command] if command == "ai-verify" => ai_verify(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -160,6 +202,7 @@ mod tests {
         assert!(run(&["start".to_owned()]).is_err());
         assert!(run(&["ai-health".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
     }
 
     #[test]
