@@ -64,6 +64,33 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  cross_language:
+    name: Rust ↔ Haskell IPC integration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust RocksDB prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
+      - name: Build Haskell IPC executable
+        working-directory: core
+        run: |
+          cabal update
+          cabal build exe:aivoblock-core
+          echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
+      - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
+        working-directory: node
+        run: |
+          cargo test haskell_json_ipc_validation_cases -- --nocapture
+          cargo test haskell_rejects_malformed_ipc_frames -- --nocapture
+          cargo run -- core-health
+          cargo run -- core-validate
+          cargo run -- core-json
+
   protobuf:
     name: Protocol schemas
     runs-on: ubuntu-24.04
