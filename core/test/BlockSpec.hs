@@ -46,6 +46,20 @@ main = hspec $ do
       BS.length expected `shouldBe` 178
       encodeBlockHeaderV1 (header 0 zeroHash) `shouldBe` Right expected
 
+    it "matches the published SHA-256 genesis header vector" $ do
+      let expected = "c1b8e653731eeafeacb557e46669d277096ecc7ceff7ec911ab29b25a8a55c22"
+      fmap (hexBytes . hash256Bytes) (hashBlockHeaderV1 (header 0 zeroHash))
+        `shouldBe` Right expected
+
+    it "changes the SHA-256 identifier when the header changes" $ do
+      let original = header 0 zeroHash
+      hashBlockHeaderV1 original
+        `shouldNotBe` hashBlockHeaderV1 (original { headerTimestampMs = 1001 })
+
+    it "does not hash an unsupported V1 header" $
+      hashBlockHeaderV1 ((header 0 zeroHash) { headerVersion = 2 })
+        `shouldBe` Left "Unsupported V1 header version"
+
     it "uses raw hash bytes rather than hexadecimal strings" $ do
       let encoded = encodeBlockHeaderV1 (header 1 sampleHash)
       fmap (BS.take 32 . BS.drop 42) encoded
@@ -164,3 +178,10 @@ header heightValue parent =
     , headerStateRoot = zeroHash
     , headerTimestampMs = fromInteger heightValue + 1000
     }
+
+-- | Lowercase hexadecimal, for comparing against the published digest.
+hexBytes :: BS.ByteString -> String
+hexBytes = concatMap toHex . BS.unpack
+  where
+    alphabet = "0123456789abcdef"
+    toHex b = [alphabet !! fromIntegral (b `div` 16), alphabet !! fromIntegral (b `mod` 16)]
