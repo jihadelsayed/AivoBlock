@@ -15,6 +15,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HEALTH_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"health"}"#;
 const EXPECTED_HEALTH_RESPONSE: &str = r#"{"ok":true,"type":"health","protocol_version":1,"worker":"aivoblock-ai","status":"ready_for_protocol_development"}"#;
 
+const SAMPLE_PUZZLE_REQUEST: &str = r#"{"protocol_version":1,"type":"execute_integer_inference","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"start":0,"count":3,"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3]}"#;
+
 fn print_help() {
     println!(
         "AivoBlock Node {VERSION}\n\n\
@@ -22,6 +24,7 @@ fn print_help() {
          Commands:\n\
            status       Show implementation status (default)\n\
            ai-health    Check the local Python AI worker over framed IPC\n\
+           ai-demo      Execute a sample AI puzzle using Python IPC\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -72,6 +75,37 @@ fn ai_health() -> Result<(), String> {
     Ok(())
 }
 
+fn ai_demo() -> Result<(), String> {
+    let executable = env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
+    let script = env::var_os("AIVOBLOCK_PYTHON_WORKER")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_worker_path);
+    let client = PythonWorkerClient::new(executable, script)
+        .map_err(|e| format!("Worker configuration error: {e:?}"))?;
+    let response = client.exchange(SAMPLE_PUZZLE_REQUEST.as_bytes())
+        .map_err(|e| format!("Worker IPC error: {e:?}"))?;
+    let response = std::str::from_utf8(&response)
+        .map_err(|_| "Worker response is not UTF-8".to_owned())?;
+    // Demo-only validation. A future verifier must recompute claimed work
+    // against authenticated inputs before accepting any ledger transaction.
+    if !response.contains(r#""ok":true,"type":"execute_integer_inference""#)
+        || !response.contains(r#""outputs":[8,18,11]"#)
+        || !response.contains(r#""result_commitment":""#)
+        || !response.contains(r#""verified":false"#)
+    {
+        return Err(format!("Unexpected AI worker response: {response}"));
+    }
+    println!("AI puzzle demo completed");
+    println!("Expected outputs: [8, 18, 11]");
+    println!("Worker response: {response}");
+    println!("Proof status: UNVERIFIED; no ledger update performed");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -83,6 +117,7 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         [command] if command == "ai-health" => ai_health(),
+        [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -126,6 +161,7 @@ mod tests {
     fn unknown_commands_are_rejected() {
         assert!(run(&["start".to_owned()]).is_err());
         assert!(run(&["ai-health".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
     }
 
     #[test]
