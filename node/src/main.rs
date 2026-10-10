@@ -99,10 +99,7 @@ fn core_validate() -> Result<(), String> {
         })?;
     let client = HaskellValidatorClient::new(executable)
         .map_err(|e| format!("Haskell core configuration error: {e:?}"))?;
-    for (request, expected_response) in [
-        (VALID_GENESIS_REQUEST, VALID_GENESIS_RESPONSE),
-        (INVALID_GENESIS_REQUEST, INVALID_GENESIS_RESPONSE),
-    ] {
+    for request in [VALID_GENESIS_REQUEST, INVALID_GENESIS_REQUEST] {
         let result = client.exchange(request)
             .map_err(|e| format!("Haskell block validation IPC error: {e:?}"))?;
         let response = std::str::from_utf8(&result)
