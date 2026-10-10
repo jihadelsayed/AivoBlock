@@ -1,0 +1,78 @@
+# AivoBlock — generated files and local secrets
+
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+**/secrets/
+**/private_keys/
+**/node-identity.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+
+# Haskell / Cabal
+dist-newstyle/
+.cabal-sandbox/
+cabal.sandbox.config
+*.hi
+*.hie
+*.o
+*.dyn_hi
+*.dyn_o
+*.prof
+*.eventlog
+
+# Rust / Cargo
+target/
+**/target/
+*.rs.bk
+
+# Local blockchain storage and testnet state
+data/
+**/data/
+*.rocksdb/
+*.sst
+*.log.old
+*.ldb
+*.db-wal
+*.db-shm
+
+# Docker and local diagnostics
+docker-compose.override.yml
+compose.override.yaml
+*.pid
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Keep source lockfiles (Cargo.lock / cabal.project.freeze) tracked
+# once generated for reproducible builds.
