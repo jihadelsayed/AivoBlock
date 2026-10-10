@@ -44,6 +44,7 @@ fn print_help() {
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
+           validated-storage-demo Check JSON block structure before saving a fixture\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -306,6 +307,63 @@ fn storage_demo() -> Result<(), String> {
     Ok(())
 }
 
+
+fn validated_storage_demo() -> Result<(), String> {
+    // Experimental structural check, not full block consensus validation.
+    // Never save this fixture into a production chain directory.
+    let executable = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "Set AIVOBLOCK_HASKELL_EXECUTABLE to the compiled Haskell core binary.".to_owned())?;
+    let client = HaskellValidatorClient::new(executable)
+        .map_err(|e| format!("Haskell core configuration failed: {e:?}"))?;
+    let request = JSON_GENESIS_VALID.as_bytes();
+    let response = client.exchange(request)
+        .map_err(|e| format!("Haskell structural validation IPC failed: {e:?}"))?;
+    let response = std::str::from_utf8(&response)
+        .map_err(|_| "Haskell validation response was not UTF-8".to_owned())?;
+    // The response is diagnostic JSON. Requiring all essential fields avoids
+    // accepting a generic "ok" message as a structural verdict.
+    for field in [
+        r#""ok":true"#,
+        r#""type":"validate_block_shape""#,
+        r#""protocol_version":1"#,
+        r#""valid":true"#,
+        r#""reason":"none""#,
+        r#""scope":"structural_only""#,
+    ] {
+        if !response.contains(field) {
+            return Err(format!("Haskell did not accept block structure: {response}"));
+        }
+    }
+    let path = env::var_os("AIVOBLOCK_VALIDATED_STORAGE_DEMO_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("validated-storage-demo-data"));
+    // This deterministic test ID is NOT a computed or authenticated block hash.
+    let demo_id = [0x7au8; 32];
+    {
+        let db = RocksDbStore::open(&path)
+            .map_err(|e| format!("Opening demo database failed: {e}"))?;
+        db.put(Column::Blocks, &demo_id, request)
+            .map_err(|e| format!("Writing structurally accepted fixture failed: {e}"))?;
+        db.flush().map_err(|e| format!("Flushing demo database failed: {e}"))?;
+    }
+    let db = RocksDbStore::open(&path)
+        .map_err(|e| format!("Reopening demo database failed: {e}"))?;
+    if db.get(Column::Blocks, &demo_id)
+        .map_err(|e| format!("Reading stored fixture failed: {e}"))?
+        .as_deref() != Some(request)
+    {
+        return Err("Reopened block fixture differs from stored bytes".to_owned());
+    }
+    println!("Haskell structural validation → RocksDB persistence: PASS");
+    println!("Structurally accepted JSON fixture recovered after database reopen");
+    println!("Database: {}", path.display());
+    println!("No authenticated block hash, canonical encoding, chain-tip update or consensus");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -323,6 +381,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "ai-verify" => ai_verify(),
         [command] if command == "storage-demo" => storage_demo(),
+        [command] if command == "validated-storage-demo" => validated_storage_demo(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -372,6 +431,7 @@ mod tests {
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
     }
 
 
