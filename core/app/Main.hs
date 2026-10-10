@@ -1,10 +1,15 @@
 -- | Local diagnostics and a bounded IPC health endpoint for the Rust node.
--- No blockchain block validation or network consensus is provided yet.
+-- A fixture-based block shape IPC check is available; full validation
+-- and network consensus are not implemented.
 module Main (main) where
 
 import Control.Exception (IOException, try)
-import Control.Monad (replicateM, when)
+import Control.Monad (replicateM)
+import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash)
+import AivoBlock.Validation (validateBlockShape)
 import Data.Bits (shiftR, (.&.))
+import qualified Data.ByteString as BS
+import AivoBlock.Block (mkHash256)
 import Data.Char (chr, ord)
 import Data.List (foldl')
 import System.Environment (getArgs)
@@ -44,7 +49,7 @@ printHelp = mapM_ putStrLn
   , ""
   , "Commands:"
   , "  status       Show the current implementation status (default)"
-  , "  ipc-health   Exchange one length-prefixed IPC health request"
+  , "  ipc-health   Exchange one length-prefixed health or block-shape request"
   , "  --version    Print the core version"
   , "  --help       Show this help message"
   ]
@@ -60,7 +65,8 @@ printStatus = mapM_ putStrLn
   ]
 
 -- Binary handles use byte-valued characters; protocol health JSON is ASCII.
--- This endpoint deliberately supports one exact diagnostic message only.
+-- This endpoint supports health and two fixed block-shape test fixtures.
+-- It is not a general block decoder or consensus validator.
 readFrame :: IO (Either String String)
 readFrame = do
   header <- replicateM 4 (hGetCharByte)
@@ -83,6 +89,48 @@ writeFrame body = do
   mapM_ putChar [byteAt 24, byteAt 16, byteAt 8, byteAt 0]
   putStr body
 
+
+-- | Deliberately fixed local fixtures until canonical JSON/Protobuf decoding
+-- and authenticated block commitments are defined. The result is a real
+-- call to validateBlockShape, but only for these predetermined candidates.
+fixtureBlock :: Bool -> Block
+fixtureBlock validGenesis =
+  let nonzeroHash = case mkHash256 (BS.replicate 32 1) of
+        Right value -> value
+        Left err -> error err
+      header = BlockHeader
+        { headerVersion = 1
+        , headerChainId = 1
+        , headerHeight = 0
+        , headerParentHash = if validGenesis then zeroHash else nonzeroHash
+        , headerTransactionsRoot = zeroHash
+        , headerPuzzleProofsRoot = zeroHash
+        , headerStateRoot = zeroHash
+        , headerTimestampMs = 0
+        }
+  in Block header (BlockBody [] [])
+
+shapeResponse :: Bool -> String
+shapeResponse validGenesis =
+  let verdict = validateBlockShape (fixtureBlock validGenesis)
+      valid = case verdict of
+        Right () -> "true"
+        Left _ -> "false"
+      reason = case verdict of
+        Right () -> "none"
+        Left err -> show err
+  in "{\\"ok\\":true,\\"type\\":\\"validate_block_shape\\",\\"protocol_version\\":1,\\"valid\\":"
+       ++ valid ++ ",\\"reason\\":\\"" ++ reason ++ "\\",\\"scope\\":\\"structural_fixture_only\\"}"
+
+handleIpcRequest :: String -> Maybe String
+handleIpcRequest request
+  | request == healthRequest = Just healthResponse
+  | request == "{\\"protocol_version\\":1,\\"type\\":\\"validate_block_shape\\",\\"case\\":\\"valid_genesis\\"}" =
+      Just (shapeResponse True)
+  | request == "{\\"protocol_version\\":1,\\"type\\":\\"validate_block_shape\\",\\"case\\":\\"invalid_genesis_parent\\"}" =
+      Just (shapeResponse False)
+  | otherwise = Nothing
+
 ipcHealth :: IO ()
 ipcHealth = do
   hSetBinaryMode stdin True
@@ -92,9 +140,9 @@ ipcHealth = do
     Left _ -> failIpc "Incomplete IPC frame"
     Right (Left problem) -> failIpc problem
     Right (Right request) ->
-      if request == healthRequest
-        then writeFrame healthResponse
-        else failIpc "Unsupported IPC request"
+      case handleIpcRequest request of
+        Just response -> writeFrame response
+        Nothing -> failIpc "Unsupported IPC request"
 
 failIpc :: String -> IO ()
 failIpc message = do
