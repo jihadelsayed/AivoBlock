@@ -1,9 +1,9 @@
-//! Local IPC client for the future Haskell consensus validator.
+//! Local IPC client for the AivoBlock Haskell core health endpoint.
 //!
 //! The executable must implement the binary framing contract defined in
 //! `ipc::mod`: a 4-byte big-endian length followed by a payload.
-//! The current Haskell CLI does NOT implement this protocol yet.
-//! This adapter therefore fails rather than treating CLI output as validation.
+//! The Haskell CLI implements `ipc-health` for diagnostics only.
+//! No block/transaction validation RPC is implemented yet.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -54,6 +54,8 @@ impl HaskellValidatorClient {
         })
     }
 
+    /// Call `aivoblock-core ipc-health` with one length-prefixed request.
+    /// Currently only the exact version-1 health request is supported.
     /// Send an opaque request and return an opaque response.
     ///
     /// A successful IPC exchange is NOT evidence of a valid block;
@@ -61,6 +63,7 @@ impl HaskellValidatorClient {
     pub fn exchange(&self, payload: &[u8]) -> Result<Vec<u8>, HaskellIpcError> {
         let frame = encode_frame(payload)?;
         let mut child = Command::new(&self.executable)
+            .arg("ipc-health")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
