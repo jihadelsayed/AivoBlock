@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package aivoblock.protocol.v1;
+
+// Transport schema for native Sayed Token transfers on AivoBlock.
+// This does not define or deploy another blockchain or token.
+//
+// IMPORTANT: Protobuf bytes are not canonical transaction-signing bytes.
+// The protocol must specify canonical encoding, signature domain
+// separation, address derivation, and transaction ID hashing separately.
+// Receivers must validate lengths and reject unsupported versions.
+
+message Transaction {
+  uint64 version = 1;
+  uint64 chain_id = 2;
+  bytes sender = 3;       // Address: 32 bytes
+  bytes recipient = 4;    // Address: 32 bytes
+  uint64 amount = 5;      // Smallest native token unit, never floating point
+  uint64 fee = 6;         // Smallest native token unit
+  uint64 nonce = 7;       // Sender account sequence number
+
+  // Optional application commitment. Proto3 optional preserves presence.
+  optional bytes reference = 8; // Hash256 if present: 32 bytes
+
+  bytes public_key = 9;   // Signature algorithm and length: protocol-defined
+  bytes signature = 10;   // Verified against canonical signing payload
+}
+
+// Gossip wrapper: nodes must independently verify the transaction.
+message TransactionAnnouncement {
+  bytes transaction_id = 1; // Hash256: 32 bytes
+}
+
+// A transport-level rejection description; not a consensus verdict.
+message TransactionRejection {
+  bytes transaction_id = 1; // Hash256: 32 bytes
+  string reason_code = 2;   // Machine-readable diagnostic only
+}
