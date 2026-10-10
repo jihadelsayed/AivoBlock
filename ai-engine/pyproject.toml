@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aivoblock-ai"
+version = "0.1.0"
+description = "Local AI puzzle worker for the AivoBlock custom blockchain"
+readme = { text = "AivoBlock AI engine: deterministic puzzle execution and experimental proof checking.", content-type = "text/plain" }
+requires-python = ">=3.11"
+license = { text = "License to be determined" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
