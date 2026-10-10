@@ -1,14 +1,14 @@
 -- | Consensus-facing block types for the AivoBlock prototype.
 --
--- This module defines data structures only. It deliberately does not
--- calculate block hashes, Merkle roots, or validate AI puzzle proofs:
--- those operations require a canonical encoding and protocol rules.
+-- This module defines block types and a candidate V1 header encoding.
+-- It does not hash headers, verify committed roots, or validate AI proofs.
 module AivoBlock.Block
   ( Hash256
   , hash256Length
   , mkHash256
   , hash256Bytes
   , zeroHash
+  , encodeBlockHeaderV1
   , BlockHeader(..)
   , BlockBody(..)
   , Block(..)
@@ -17,6 +17,8 @@ module AivoBlock.Block
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Bits (shiftR)
+import Data.Word (Word8)
 import Data.Word (Word32, Word64)
 
 -- | An opaque 32-byte value used for hashes and commitments.
@@ -49,8 +51,8 @@ zeroHash = Hash256 (BS.replicate hash256Length 0)
 --
 -- Transaction, AI-proof, and state roots are *commitments*. Validators
 -- must recompute or verify them under an explicitly versioned protocol.
--- No hash of a header should be used for consensus until the canonical
--- byte encoding has been specified in protocol/spec/canonical-encoding.md.
+-- Encoding is specified in protocol/spec/canonical-encoding.md, but
+-- this candidate is not yet approved for consensus.
 data BlockHeader = BlockHeader
   { headerVersion          :: !Word32
   , headerChainId          :: !Word32
@@ -76,6 +78,39 @@ data Block = Block
   { blockHeader :: !BlockHeader
   , blockBody   :: !BlockBody
   } deriving (Eq, Show)
+
+
+-- | Candidate canonical V1 block-header preimage (178 bytes).
+--
+-- ASCII domain tag plus NUL; then unsigned big-endian fields in the exact
+-- order specified by protocol/spec/canonical-encoding.md.
+-- This function does NOT calculate SHA-256 or establish block validity.
+-- V1 is deliberately restricted to protocol header version 1.
+encodeBlockHeaderV1 :: BlockHeader -> Either String ByteString
+encodeBlockHeaderV1 h
+  | headerVersion h /= 1 = Left "Unsupported V1 header version"
+  | headerChainId h == 0 = Left "Chain ID must not be zero"
+  | otherwise = Right (BS.concat
+      [ BS.pack (map (fromIntegral . fromEnum) "AIVOBLOCK-BLOCK-HEADER-V1") 
+      , BS.singleton 0
+      , word32BE (headerVersion h)
+      , word32BE (headerChainId h)
+      , word64BE (headerHeight h)
+      , hash256Bytes (headerParentHash h)
+      , hash256Bytes (headerTransactionsRoot h)
+      , hash256Bytes (headerPuzzleProofsRoot h)
+      , hash256Bytes (headerStateRoot h)
+      , word64BE (headerTimestampMs h)
+      ])
+  where
+    word32BE :: Word32 -> ByteString
+    word32BE n = BS.pack [byte n s | s <- [24,16,8,0]]
+
+    word64BE :: Word64 -> ByteString
+    word64BE n = BS.pack [byte n s | s <- [56,48,40,32,24,16,8,0]]
+
+    byte :: (Integral a) => a -> Int -> Word8
+    byte n s = fromIntegral (n `shiftR` s)
 
 -- | A structural check, NOT full genesis block validation.
 --
