@@ -4,10 +4,10 @@
 module Main (main) where
 
 import Control.Exception (IOException, try)
-import Control.Monad (replicateM, when)
+import Control.Monad (when)
 import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash)
 import AivoBlock.Validation (validateBlockShape)
-import Data.Bits (shiftR, (.&.))
+import Data.Bits (shiftL, shiftR, (.&.))
 import qualified Data.ByteString as BS
 import AivoBlock.Block (mkHash256, Hash256)
 import Data.Char (chr, ord)
@@ -17,10 +17,9 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Char (digitToInt, isHexDigit)
 import Data.Word (Word32, Word64)
 
-import Data.List (foldl')
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.IO (hIsEOF, hPutStrLn, hSetBinaryMode, stderr, stdin, stdout)
+import System.IO (hPutStrLn, hSetBinaryMode, stderr, stdin, stdout)
 
 version :: String
 version = "0.1.0.0"
@@ -70,31 +69,45 @@ printStatus = mapM_ putStrLn
   , "No blockchain node is started by this command."
   ]
 
--- Binary handles use byte-valued characters; protocol health JSON is ASCII.
--- This endpoint supports health and two fixed block-shape test fixtures.
--- It is not a general block decoder or consensus validator.
+-- | Read one bounded binary frame with the shared Rust framing contract.
+-- Short reads, zero length, oversized frames and trailing bytes are rejected.
 readFrame :: IO (Either String String)
 readFrame = do
-  header <- replicateM 4 (hGetCharByte)
-  let count = foldl' (\total byte -> total * 256 + toInteger byte) 0 header
-  if count <= 0 || count > maxIpcBytes
-    then pure (Left "Invalid IPC payload length")
+  header <- readExactly 4
+  if BS.length header /= 4
+    then pure (Left "Incomplete IPC header")
     else do
-      payload <- replicateM (fromInteger count) hGetCharByte
-      extra <- hIsEOF stdin
-      pure $ if extra then Right (map chr payload)
-                      else Left "Unexpected trailing IPC bytes"
+      let count = BS.foldl' (\n byte -> (n `shiftL` 8) + toInteger byte) 0 header
+      if count <= 0 || count > maxIpcBytes
+        then pure (Left "Invalid IPC payload length")
+        else do
+          payload <- readExactly (fromInteger count)
+          if toInteger (BS.length payload) /= count
+            then pure (Left "Incomplete IPC payload")
+            else do
+              extra <- BS.hGet stdin 1
+              pure $ if BS.null extra
+                then Right (map (chr . fromIntegral) (BS.unpack payload))
+                else Left "Unexpected trailing IPC bytes"
 
-hGetCharByte :: IO Int
-hGetCharByte = ord <$> getChar
+readExactly :: Int -> IO BS.ByteString
+readExactly amount = go amount []
+  where
+    go remaining chunks
+      | remaining <= 0 = pure (BS.concat (reverse chunks))
+      | otherwise = do
+          chunk <- BS.hGetSome stdin remaining
+          if BS.null chunk
+            then pure (BS.concat (reverse chunks))
+            else go (remaining - BS.length chunk) (chunk : chunks)
 
 writeFrame :: String -> IO ()
 writeFrame body = do
-  let lengthBytes = length body
-      byteAt shift = chr ((lengthBytes `shiftR` shift) .&. 255)
-  mapM_ putChar [byteAt 24, byteAt 16, byteAt 8, byteAt 0]
-  putStr body
-
+  let payload = BS.pack (map (fromIntegral . ord) body)
+      n = BS.length payload
+      header = BS.pack [fromIntegral ((n `shiftR` s) .&. 255) | s <- [24,16,8,0]]
+  BS.hPut stdout header
+  BS.hPut stdout payload
 
 -- | Deliberately fixed local fixtures until canonical JSON/Protobuf decoding
 -- and authenticated block commitments are defined. The result is a real
