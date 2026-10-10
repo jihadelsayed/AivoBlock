@@ -90,13 +90,11 @@ fn ai_demo() -> Result<(), String> {
         .map_err(|e| format!("Worker IPC error: {e:?}"))?;
     let response = std::str::from_utf8(&response)
         .map_err(|_| "Worker response is not UTF-8".to_owned())?;
-    // Demo-only validation. A future verifier must recompute claimed work
-    // against authenticated inputs before accepting any ledger transaction.
-    if !response.contains(r#""ok":true,"type":"execute_integer_inference""#)
-        || !response.contains(r#""outputs":[8,18,11]"#)
-        || !response.contains(r#""result_commitment":""#)
-        || !response.contains(r#""verified":false"#)
-    {
+    // Strictly match this fixture's entire result, including the exact
+    // SHA-256 commitment. Substring checks could accept a tampered response.
+    // This is a diagnostic test vector, NOT general proof verification.
+    const EXPECTED_DEMO_RESPONSE: &str = r#"{"ok":true,"type":"execute_integer_inference","protocol_version":1,"outputs":[8,18,11],"proof":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","start_unit":0,"unit_count":3,"result_commitment":"a22d7dc4fe5191094e273e20c50df061c516b244a030227957c61ed4cab8761f","witness_commitment":null},"verified":false}"#;
+    if response != EXPECTED_DEMO_RESPONSE {
         return Err(format!("Unexpected AI worker response: {response}"));
     }
     println!("AI puzzle demo completed");
