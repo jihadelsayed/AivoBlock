@@ -9,9 +9,12 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use ipc::haskell::HaskellValidatorClient;
 use ipc::python::PythonWorkerClient;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const CORE_HEALTH_REQUEST: &[u8] = br#"{\"protocol_version\":1,\"type\":\"health\"}"#;
+const EXPECTED_CORE_HEALTH_RESPONSE: &str = r#"{\"ok\":true,\"type\":\"health\",\"protocol_version\":1,\"core\":\"aivoblock-core\",\"status\":\"ready_for_protocol_development\"}"#;
 const HEALTH_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"health"}"#;
 const EXPECTED_HEALTH_RESPONSE: &str = r#"{"ok":true,"type":"health","protocol_version":1,"worker":"aivoblock-ai","status":"ready_for_protocol_development"}"#;
 
@@ -26,6 +29,7 @@ fn print_help() {
          Usage: aivoblock-node [COMMAND]\n\n\
          Commands:\n\
            status       Show implementation status (default)\n\
+           core-health  Check the local Haskell core over framed IPC\n\
            ai-health    Check the local Python AI worker over framed IPC\n\
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
@@ -37,7 +41,7 @@ fn print_help() {
 fn print_status() {
     println!("AivoBlock Node {VERSION}");
     println!("Status: Initial development");
-    println!("Core validation: Haskell (not connected)");
+    println!("Core validation: Haskell (diagnostic IPC via core-health; validation not connected)");
     println!("AI puzzle worker: Python (health IPC available via ai-health)");
     println!("P2P networking: Not implemented");
     println!("Persistent ledger: Not implemented");
@@ -47,6 +51,34 @@ fn print_status() {
 fn default_worker_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../ai-engine/src/aivoblock_ai/worker.py")
+}
+
+
+fn core_health() -> Result<(), String> {
+    // Use a trusted, locally built core executable, not an arbitrary command.
+    // On Windows set AIVOBLOCK_HASKELL_EXECUTABLE to the .exe path returned
+    // by "cabal list-bin exe:aivoblock-core" from the core directory.
+    let executable = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "Set AIVOBLOCK_HASKELL_EXECUTABLE to the compiled Haskell core executable (run cabal list-bin exe:aivoblock-core in core/).".to_owned()
+        })?;
+    let client = HaskellValidatorClient::new(executable)
+        .map_err(|e| format!("Haskell core configuration error: {e:?}"))?;
+    let bytes = client.exchange(CORE_HEALTH_REQUEST)
+        .map_err(|e| format!("Haskell core IPC error: {e:?}"))?;
+    let response = std::str::from_utf8(&bytes)
+        .map_err(|_| "Haskell core response is not UTF-8".to_owned())?;
+    // This is only an exact diagnostic contract, not proof of block validity.
+    if response != EXPECTED_CORE_HEALTH_RESPONSE {
+        return Err(format!("Unexpected Haskell core health response: {response}"));
+    }
+    println!("Haskell core IPC: healthy");
+    println!("Core: aivoblock-core");
+    println!("Protocol version: 1");
+    println!("Block validation over IPC: Not implemented");
+    Ok(())
 }
 
 fn ai_health() -> Result<(), String> {
@@ -155,6 +187,7 @@ fn run(args: &[String]) -> Result<(), String> {
             print_status();
             Ok(())
         }
+        [command] if command == "core-health" => core_health(),
         [command] if command == "ai-health" => ai_health(),
         [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "ai-verify" => ai_verify(),
@@ -201,6 +234,7 @@ mod tests {
     fn unknown_commands_are_rejected() {
         assert!(run(&["start".to_owned()]).is_err());
         assert!(run(&["ai-health".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["core-health".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
     }
