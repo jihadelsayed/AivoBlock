@@ -1,9 +1,9 @@
-//! Local IPC client for the AivoBlock Haskell core health endpoint.
+//! Local framed IPC client for AivoBlock Haskell diagnostics and structural checks.
 //!
 //! The executable must implement the binary framing contract defined in
 //! `ipc::mod`: a 4-byte big-endian length followed by a payload.
-//! The Haskell CLI implements `ipc-health` for diagnostics only.
-//! No block/transaction validation RPC is implemented yet.
+//! The Haskell CLI accepts health and structural block checks via `ipc-health`.
+//! Structural acceptance is not full consensus validation.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,7 @@ pub enum HaskellIpcError {
     ProcessFailed(Option<i32>),
     EmptyResponse,
     ResponseTooLarge,
+    IncompleteResponse,
 }
 
 impl From<std::io::Error> for HaskellIpcError {
@@ -55,7 +56,7 @@ impl HaskellValidatorClient {
     }
 
     /// Call `aivoblock-core ipc-health` with one length-prefixed request.
-    /// Currently only the exact version-1 health request is supported.
+    /// Supports health and structural block-check requests.
     /// Send an opaque request and return an opaque response.
     ///
     /// A successful IPC exchange is NOT evidence of a valid block;
@@ -80,7 +81,11 @@ impl HaskellValidatorClient {
                 HaskellIpcError::Io(std::io::Error::other("missing child stdout"))
             })?;
             let mut header = [0u8; 4];
-            stdout.read_exact(&mut header)?;
+            if let Err(error) = stdout.read_exact(&mut header) {
+                return if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    Err(HaskellIpcError::IncompleteResponse)
+                } else { Err(HaskellIpcError::Io(error)) };
+            }
             let length = u32::from_be_bytes(header) as usize;
             if length == 0 {
                 return Err(HaskellIpcError::EmptyResponse);
@@ -89,7 +94,11 @@ impl HaskellValidatorClient {
                 return Err(HaskellIpcError::ResponseTooLarge);
             }
             let mut response = vec![0u8; length];
-            stdout.read_exact(&mut response)?;
+            if let Err(error) = stdout.read_exact(&mut response) {
+                return if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    Err(HaskellIpcError::IncompleteResponse)
+                } else { Err(HaskellIpcError::Io(error)) };
+            }
             let mut trailing = [0u8; 1];
             if stdout.read(&mut trailing)? != 0 {
                 return Err(HaskellIpcError::Framing(FrameError::TrailingBytes));
@@ -101,6 +110,11 @@ impl HaskellValidatorClient {
             let _ = child.kill();
         }
         let status = child.wait()?;
+        // Keep the framing error when we terminated the child after detecting it.
+        // Otherwise report a nonzero exit from the Haskell executable.
+        if result.is_err() {
+            return result;
+        }
         if !status.success() {
             return Err(HaskellIpcError::ProcessFailed(status.code()));
         }
@@ -118,6 +132,25 @@ mod tests {
             HaskellValidatorClient::new(""),
             Err(HaskellIpcError::InvalidExecutable)
         ));
+    }
+
+
+    #[test]
+    fn rejects_request_above_frame_limit_before_spawning() {
+        let client = HaskellValidatorClient::new("not-a-real-validator").unwrap();
+        let oversized = vec![b'x'; MAX_IPC_PAYLOAD_BYTES + 1];
+        assert!(matches!(
+            client.exchange(&oversized),
+            Err(HaskellIpcError::Framing(_))
+        ));
+    }
+
+    #[test]
+    fn reports_missing_haskell_executable() {
+        let client = HaskellValidatorClient::new(
+            "aivoblock-haskell-executable-that-does-not-exist"
+        ).unwrap();
+        assert!(matches!(client.exchange(b"{}"), Err(HaskellIpcError::Io(_))));
     }
 
     #[test]
