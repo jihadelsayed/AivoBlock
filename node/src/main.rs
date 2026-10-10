@@ -13,15 +13,13 @@ use ipc::haskell::HaskellValidatorClient;
 use ipc::python::PythonWorkerClient;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const CORE_HEALTH_REQUEST: &[u8] = br#"{\"protocol_version\":1,\"type\":\"health\"}"#;
-const EXPECTED_CORE_HEALTH_RESPONSE: &str = r#"{\"ok\":true,\"type\":\"health\",\"protocol_version\":1,\"core\":\"aivoblock-core\",\"status\":\"ready_for_protocol_development\"}"#;
+const CORE_HEALTH_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"health"}"#;
+const EXPECTED_CORE_HEALTH_RESPONSE: &str = r#"{"ok":true,"type":"health","protocol_version":1,"core":"aivoblock-core","status":"ready_for_protocol_development"}"#;
 const HEALTH_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"health"}"#;
 const EXPECTED_HEALTH_RESPONSE: &str = r#"{"ok":true,"type":"health","protocol_version":1,"worker":"aivoblock-ai","status":"ready_for_protocol_development"}"#;
 
 const VALID_GENESIS_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"validate_block_shape","case":"valid_genesis"}"#;
 const INVALID_GENESIS_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"validate_block_shape","case":"invalid_genesis_parent"}"#;
-const VALID_GENESIS_RESPONSE: &str = r#"{"ok":true,"type":"validate_block_shape","protocol_version":1,"valid":true,"reason":"none","scope":"structural_fixture_only"}"#;
-const INVALID_GENESIS_RESPONSE: &str = r#"{"ok":true,"type":"validate_block_shape","protocol_version":1,"valid":false,"reason":"InvalidGenesisParent","scope":"structural_fixture_only"}"#;
 
 const SAMPLE_PUZZLE_REQUEST: &str = r#"{"protocol_version":1,"type":"execute_integer_inference","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"start":0,"count":3,"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3]}"#;
 
@@ -109,8 +107,32 @@ fn core_validate() -> Result<(), String> {
             .map_err(|e| format!("Haskell block validation IPC error: {e:?}"))?;
         let response = std::str::from_utf8(&result)
             .map_err(|_| "Haskell block validation response is not UTF-8".to_owned())?;
-        if response != expected_response {
-            return Err(format!("Unexpected Haskell block validation response: {response}"));
+        // Aeson serializes JSON object keys independently of insertion order.
+        // Verify all expected fixture fields without requiring a byte-for-byte
+        // order match. This remains a diagnostic check, not consensus parsing.
+        let required_fields = [
+            r#""ok":true"#,
+            r#""type":"validate_block_shape""#,
+            r#""protocol_version":1"#,
+            r#""scope":"structural_fixture_only""#,
+        ];
+        let expected_verdict = if request == VALID_GENESIS_REQUEST {
+            r#""valid":true"#
+        } else {
+            r#""valid":false"#
+        };
+        let expected_reason = if request == VALID_GENESIS_REQUEST {
+            r#""reason":"none""#
+        } else {
+            r#""reason":"InvalidGenesisParent""#
+        };
+        if !required_fields.iter().all(|field| response.contains(field))
+            || !response.contains(expected_verdict)
+            || !response.contains(expected_reason)
+        {
+            return Err(format!(
+                "Unexpected Haskell block validation response: {response}; fixture contract mismatch"
+            ));
         }
     }
     println!("Haskell structural block validation demo: PASS");
