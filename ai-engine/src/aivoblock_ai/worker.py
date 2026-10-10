@@ -13,7 +13,7 @@ import sys
 from typing import BinaryIO
 
 from aivoblock_ai.executor import execute_integer_inference
-from aivoblock_ai.proof import proof_from_result
+from aivoblock_ai.proof import PuzzleProof, proof_from_result, verify_by_recomputation
 from aivoblock_ai.puzzle import Puzzle, WorkRange
 
 MAX_PAYLOAD = 4 * 1024 * 1024
@@ -117,6 +117,58 @@ def _execute_request(request: dict) -> dict:
     }
 
 
+
+def _verify_request(request: dict) -> dict:
+    """Recompute a claimed proof against caller-supplied trusted puzzle inputs.
+
+    The verifier must obtain the puzzle definition, rows and weights from an
+    independent trusted source; values sent by a prover cannot authenticate
+    themselves. This local operation is not consensus verification.
+    """
+    puzzle_data = request.get("puzzle")
+    proof_data = request.get("proof")
+    if not isinstance(puzzle_data, dict) or not isinstance(proof_data, dict):
+        raise ValueError("puzzle and proof must be objects")
+
+    puzzle = Puzzle(
+        puzzle_id=_hex32(puzzle_data.get("puzzle_id"), "puzzle_id"),
+        version=_integer(puzzle_data.get("version"), "version"),
+        model_commitment=_hex32(puzzle_data.get("model_commitment"), "model_commitment"),
+        input_commitment=_hex32(puzzle_data.get("input_commitment"), "input_commitment"),
+        rules_commitment=_hex32(puzzle_data.get("rules_commitment"), "rules_commitment"),
+        units=_integer(puzzle_data.get("units"), "units"),
+        deadline_height=_integer(puzzle_data.get("deadline_height"), "deadline_height"),
+    )
+    if puzzle.units > MAX_REQUEST_ROWS:
+        raise ValueError("puzzle exceeds local verification limit")
+    rows_data = request.get("rows")
+    if not isinstance(rows_data, list) or len(rows_data) != puzzle.units:
+        raise ValueError("rows must match trusted puzzle units")
+    rows = [_integer_vector(row, "row") for row in rows_data]
+    weights = _integer_vector(request.get("weights"), "weights")
+
+    witness = proof_data.get("witness_commitment")
+    if witness is not None:
+        witness = _hex32(witness, "witness_commitment")
+    proof = PuzzleProof(
+        puzzle_id=_hex32(proof_data.get("puzzle_id"), "proof.puzzle_id"),
+        worker_id=_hex32(proof_data.get("worker_id"), "proof.worker_id"),
+        start_unit=_integer(proof_data.get("start_unit"), "start_unit"),
+        unit_count=_integer(proof_data.get("unit_count"), "unit_count"),
+        result_commitment=_hex32(proof_data.get("result_commitment"), "result_commitment"),
+        witness_commitment=witness,
+    )
+    if proof.unit_count > MAX_REQUEST_ROWS:
+        raise ValueError("proof exceeds verification limit")
+    valid = verify_by_recomputation(puzzle, proof, rows, weights)
+    return {
+        "ok": True,
+        "type": "verify_integer_inference",
+        "protocol_version": 1,
+        "verified": valid,
+        "method": "full_recomputation",
+    }
+
 def handle_request(request: dict) -> dict:
     """Dispatch one request; unsupported or invalid tasks return framed errors."""
     if request.get("protocol_version") != 1:
@@ -135,6 +187,11 @@ def handle_request(request: dict) -> dict:
             return _execute_request(request)
         except (ValueError, TypeError, KeyError):
             return {"ok": False, "error": "invalid_puzzle_request"}
+    if kind == "verify_integer_inference":
+        try:
+            return _verify_request(request)
+        except (ValueError, TypeError, KeyError):
+            return {"ok": False, "error": "invalid_verification_request"}
     return {"ok": False, "error": "unsupported_request_type"}
 
 
