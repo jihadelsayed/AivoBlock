@@ -1,7 +1,7 @@
 -- | Consensus-facing block types for the AivoBlock prototype.
 --
 -- This module defines block types and a candidate V1 header encoding.
--- It does not hash headers, verify committed roots, or validate AI proofs.
+-- It can hash candidate V1 headers; it does not verify committed roots or AI proofs.
 module AivoBlock.Block
   ( Hash256
   , hash256Length
@@ -9,12 +9,15 @@ module AivoBlock.Block
   , hash256Bytes
   , zeroHash
   , encodeBlockHeaderV1
+  , hashBlockHeaderV1
   , BlockHeader(..)
   , BlockBody(..)
   , Block(..)
   , isGenesisCandidate
   ) where
 
+import Crypto.Hash (Digest, SHA256, hash)
+import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Bits (Bits, shiftR)
@@ -112,6 +115,15 @@ encodeBlockHeaderV1 h
 
     byte :: (Integral a, Bits a) => a -> Int -> Word8
     byte n s = fromIntegral (n `shiftR` s)
+
+-- | SHA-256 of the exact 178-byte V1 header encoding.
+-- This digest identifies the supplied header bytes only; it does not
+-- establish valid Merkle roots, a valid ledger, or consensus approval.
+hashBlockHeaderV1 :: BlockHeader -> Either String Hash256
+hashBlockHeaderV1 header = do
+  preimage <- encodeBlockHeaderV1 header
+  let digest = hash preimage :: Digest SHA256
+  mkHash256 (convert digest)
 
 -- | A structural check, NOT full genesis block validation.
 --
