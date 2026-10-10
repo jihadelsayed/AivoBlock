@@ -1,0 +1,69 @@
+cabal-version:      3.0
+name:               aivoblock-core
+version:            0.1.0.0
+build-type:         Simple
+synopsis:           Pure protocol rules for the AivoBlock blockchain
+description:
+  AivoBlock's Haskell core defines consensus-critical data types,
+  deterministic ledger transitions, block and transaction validation,
+  AI puzzle proof rules, and mining rewards.
+  Network I/O, persistence, and AI model execution belong to the
+  Rust node and Python worker respectively.
+category:           Blockchain
+
+common shared-settings
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wcompat
+  build-depends:    base >=4.16 && <5
+
+library
+  import:           shared-settings
+  hs-source-dirs:   src
+  exposed-modules:
+      AivoBlock.Block
+      AivoBlock.Transaction
+      AivoBlock.Ledger
+      AivoBlock.Consensus
+      AivoBlock.PuzzleProof
+      AivoBlock.Rewards
+      AivoBlock.Validation
+  build-depends:
+      bytestring >=0.11 && <0.13,
+      containers >=0.6 && <0.9,
+      text >=1.2 && <2.2
+
+executable aivoblock-core
+  import:           shared-settings
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  build-depends:    aivoblock-core
+
+test-suite block-spec
+  import:           shared-settings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          BlockSpec.hs
+  build-depends:
+      aivoblock-core,
+      hspec >=2.10 && <3,
+      QuickCheck >=2.14 && <3
+
+test-suite consensus-spec
+  import:           shared-settings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          ConsensusSpec.hs
+  build-depends:
+      aivoblock-core,
+      hspec >=2.10 && <3,
+      QuickCheck >=2.14 && <3
+
+test-suite ledger-spec
+  import:           shared-settings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          LedgerSpec.hs
+  build-depends:
+      aivoblock-core,
+      hspec >=2.10 && <3,
+      QuickCheck >=2.14 && <3
