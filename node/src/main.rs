@@ -358,8 +358,8 @@ fn validated_storage_demo() -> Result<(), String> {
     {
         let db = RocksDbStore::open(&path)
             .map_err(|e| format!("Opening demo database failed: {e}"))?;
-        db.put(Column::Blocks, &block_id, request)
-            .map_err(|e| format!("Writing structurally accepted fixture failed: {e}"))?;
+        db.put_validated_block_and_tip(&block_id, request)
+            .map_err(|e| format!("Atomically storing demo block and tip failed: {e}"))?;
         db.flush().map_err(|e| format!("Flushing demo database failed: {e}"))?;
     }
     let db = RocksDbStore::open(&path)
@@ -370,11 +370,16 @@ fn validated_storage_demo() -> Result<(), String> {
     {
         return Err("Reopened block fixture differs from stored bytes".to_owned());
     }
-    println!("Haskell structural validation → RocksDB persistence: PASS");
-    println!("Structurally accepted JSON fixture recovered after database reopen");
+    let recovered_tip = db.get(Column::ChainState, b"tip")
+        .map_err(|e| format!("Reading stored chain tip failed: {e}"))?;
+    if recovered_tip.as_deref() != Some(block_id.as_slice()) {
+        return Err("Reopened chain tip does not match candidate header hash".to_owned());
+    }
+    println!("Haskell structural validation → atomic RocksDB demo: PASS");
+    println!("Block bytes and chain-tip reference recovered after database reopen");
     println!("Database: {}", path.display());
     println!("Canonical header SHA-256 key: {}", block_id.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
-    println!("Header digest only; block roots, signatures, chain-tip and consensus are not verified");
+    println!("Demo tip is stored, not consensus-validated; block roots, signatures and consensus remain unverified");
     Ok(())
 }
 
