@@ -1,0 +1,61 @@
+# AivoBlock local multi-node development environment.
+#
+# Current limitation: the Rust executable only supports diagnostic commands.
+# These containers do NOT yet establish a P2P network or produce blocks.
+#
+# Run from the repository root:
+#   docker compose up --build
+#   docker compose down
+
+x-node-common: &node-common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.node
+  image: aivoblock-node:dev
+  restart: "no"
+  command: ["status"]
+  networks:
+    - aivoblock-dev
+
+services:
+  node-1:
+    <<: *node-common
+    hostname: node-1
+    environment:
+      AIVOBLOCK_CHAIN_ID: "1"
+      AIVOBLOCK_NODE_NAME: "node-1"
+      AIVOBLOCK_DATA_DIR: /var/lib/aivoblock
+      AIVOBLOCK_P2P_LISTEN: "0.0.0.0:30333"
+    volumes:
+      - node1-data:/var/lib/aivoblock
+
+  node-2:
+    <<: *node-common
+    hostname: node-2
+    environment:
+      AIVOBLOCK_CHAIN_ID: "1"
+      AIVOBLOCK_NODE_NAME: "node-2"
+      AIVOBLOCK_DATA_DIR: /var/lib/aivoblock
+      AIVOBLOCK_P2P_LISTEN: "0.0.0.0:30333"
+    volumes:
+      - node2-data:/var/lib/aivoblock
+
+  node-3:
+    <<: *node-common
+    hostname: node-3
+    environment:
+      AIVOBLOCK_CHAIN_ID: "1"
+      AIVOBLOCK_NODE_NAME: "node-3"
+      AIVOBLOCK_DATA_DIR: /var/lib/aivoblock
+      AIVOBLOCK_P2P_LISTEN: "0.0.0.0:30333"
+    volumes:
+      - node3-data:/var/lib/aivoblock
+
+networks:
+  aivoblock-dev:
+    driver: bridge
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
