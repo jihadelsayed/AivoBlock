@@ -60,8 +60,8 @@ main = hspec $ do
 
     it "preserves funds plus accumulated fees for an ordinary transfer" $
       property $ \(NonNegative rawAmount) (NonNegative rawFee) ->
-        let amount = fromIntegral (rawAmount `mod` 1001) :: Word64
-            fee = fromIntegral (rawFee `mod` 1001) :: Word64
+        let amount = fromIntegral ((rawAmount :: Int) `mod` 1001) :: Word64
+            fee = fromIntegral ((rawFee :: Int) `mod` 1001) :: Word64
             initial = funded 3000
             result = applyVerifiedTransfer (transfer alice bob amount fee 0) initial
         in if amount == 0
