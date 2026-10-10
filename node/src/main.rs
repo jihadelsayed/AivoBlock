@@ -357,6 +357,56 @@ mod tests {
         assert!(response.contains(r#""error":"invalid_block""#), "{response}");
     }
 
+
+    // Execute malformed raw frames against the real Haskell binary.
+    // These tests are opt-in because CI may not have Cabal/GHC installed.
+    #[test]
+    fn haskell_rejects_malformed_ipc_frames() {
+        use std::env;
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let Some(executable) = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
+            .filter(|value| !value.is_empty()) else {
+                eprintln!("SKIP: set AIVOBLOCK_HASKELL_EXECUTABLE for malformed IPC tests");
+                return;
+            };
+
+        let oversized = ((4 * 1024 * 1024 + 1) as u32).to_be_bytes().to_vec();
+        let cases: [(&str, Vec<u8>); 6] = [
+            ("empty input", vec![]),
+            ("short header", vec![0, 0, 0]),
+            ("zero-length frame", vec![0, 0, 0, 0]),
+            ("oversized header", oversized),
+            ("truncated body", vec![0, 0, 0, 5, b'{', b'}']),
+            ("trailing byte", {
+                let mut frame = (2u32).to_be_bytes().to_vec();
+                frame.extend_from_slice(b"{}!");
+                frame
+            }),
+        ];
+
+        for (name, frame) in cases {
+            let mut child = Command::new(&executable)
+                .arg("ipc-health")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("launch Haskell core");
+            child.stdin.take().expect("child stdin")
+                .write_all(&frame).expect("write raw frame");
+            let output = child.wait_with_output().expect("wait for Haskell core");
+            assert!(!output.status.success(), "{name}: malformed frame unexpectedly succeeded");
+            assert!(output.stdout.is_empty(), "{name}: malformed frame returned output");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("IPC error"),
+                "{name}: missing diagnostic: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
     #[test]
     fn default_worker_location_is_under_ai_engine() {
         assert!(default_worker_path().ends_with("ai-engine/src/aivoblock_ai/worker.py"));
