@@ -1,8 +1,8 @@
-"""Local Python worker entry point for AivoBlock AI puzzle tasks.
+"""Local framed-JSON worker for deterministic AivoBlock AI puzzle experiments.
 
-IPC contract: four-byte unsigned big-endian length, followed by UTF-8 JSON.
-This is a development protocol, not consensus canonical serialization.
-The Rust process owns scheduling; worker output is always untrusted.
+One request per process, using a four-byte big-endian length prefix.
+Worker results are UNTRUSTED: the Rust node must independently verify them
+before any ledger or consensus action. This is not proof-of-useful-work.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ import struct
 import sys
 from typing import BinaryIO
 
+from aivoblock_ai.executor import execute_integer_inference
+from aivoblock_ai.proof import proof_from_result
+from aivoblock_ai.puzzle import Puzzle, WorkRange
+
 MAX_PAYLOAD = 4 * 1024 * 1024
+MAX_REQUEST_ROWS = 1024
+MAX_REQUEST_FEATURES = 4096
 
 
 def read_exact(stream: BinaryIO, count: int) -> bytes:
@@ -40,11 +46,83 @@ def write_frame(stream: BinaryIO, payload: bytes) -> None:
     stream.flush()
 
 
+def _hex32(value: object, name: str) -> bytes:
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"{name} must be 64 hexadecimal characters")
+    try:
+        return bytes.fromhex(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be hexadecimal") from exc
+
+
+def _integer(value: object, name: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _integer_vector(value: object, name: str) -> list[int]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_REQUEST_FEATURES:
+        raise ValueError(f"{name} must be a nonempty bounded array")
+    return [_integer(item, name) for item in value]
+
+
+def _execute_request(request: dict) -> dict:
+    """Run one bounded integer-inference partition and describe its claimed proof."""
+    puzzle_data = request.get("puzzle")
+    if not isinstance(puzzle_data, dict):
+        raise ValueError("puzzle must be an object")
+
+    task = Puzzle(
+        puzzle_id=_hex32(puzzle_data.get("puzzle_id"), "puzzle_id"),
+        version=_integer(puzzle_data.get("version"), "version"),
+        model_commitment=_hex32(puzzle_data.get("model_commitment"), "model_commitment"),
+        input_commitment=_hex32(puzzle_data.get("input_commitment"), "input_commitment"),
+        rules_commitment=_hex32(puzzle_data.get("rules_commitment"), "rules_commitment"),
+        units=_integer(puzzle_data.get("units"), "units"),
+        deadline_height=_integer(puzzle_data.get("deadline_height"), "deadline_height"),
+    )
+    worker_id = _hex32(request.get("worker_id"), "worker_id")
+    work = WorkRange(
+        _integer(request.get("start"), "start"),
+        _integer(request.get("count"), "count"),
+    )
+    work.validate_for(task)
+
+    rows_data = request.get("rows")
+    if not isinstance(rows_data, list) or not 1 <= len(rows_data) <= MAX_REQUEST_ROWS:
+        raise ValueError("rows must be a nonempty bounded array")
+    if len(rows_data) != task.units:
+        raise ValueError("rows length must equal puzzle units")
+    rows = [_integer_vector(row, "row") for row in rows_data]
+    weights = _integer_vector(request.get("weights"), "weights")
+
+    result = execute_integer_inference(rows, weights, work)
+    proof = proof_from_result(task, worker_id, result)
+
+    return {
+        "ok": True,
+        "type": "execute_integer_inference",
+        "protocol_version": 1,
+        "outputs": list(result.outputs),
+        "proof": {
+            "puzzle_id": proof.puzzle_id.hex(),
+            "worker_id": proof.worker_id.hex(),
+            "start_unit": proof.start_unit,
+            "unit_count": proof.unit_count,
+            "result_commitment": proof.result_commitment.hex(),
+            "witness_commitment": None,
+        },
+        "verified": False,
+    }
+
+
 def handle_request(request: dict) -> dict:
-    """Respond to protocol diagnostics; actual AI work is not enabled yet."""
+    """Dispatch one request; unsupported or invalid tasks return framed errors."""
     if request.get("protocol_version") != 1:
         return {"ok": False, "error": "unsupported_protocol_version"}
-    if request.get("type") == "health":
+    kind = request.get("type")
+    if kind == "health":
         return {
             "ok": True,
             "type": "health",
@@ -52,6 +130,11 @@ def handle_request(request: dict) -> dict:
             "worker": "aivoblock-ai",
             "status": "ready_for_protocol_development",
         }
+    if kind == "execute_integer_inference":
+        try:
+            return _execute_request(request)
+        except (ValueError, TypeError, KeyError):
+            return {"ok": False, "error": "invalid_puzzle_request"}
     return {"ok": False, "error": "unsupported_request_type"}
 
 
