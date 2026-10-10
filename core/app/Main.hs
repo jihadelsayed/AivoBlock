@@ -4,13 +4,19 @@
 module Main (main) where
 
 import Control.Exception (IOException, try)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, when)
 import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash)
 import AivoBlock.Validation (validateBlockShape)
 import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
-import AivoBlock.Block (mkHash256)
+import AivoBlock.Block (mkHash256, Hash256)
 import Data.Char (chr, ord)
+import Data.Aeson (Value, eitherDecodeStrict', encode, object, (.=), (.:), (.:?), withObject)
+import Data.Aeson.Types (Parser, parseEither)
+import qualified Data.ByteString.Lazy as BL
+import Data.Char (digitToInt, isHexDigit)
+import Data.Word (Word32, Word64)
+
 import Data.List (foldl')
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -122,6 +128,75 @@ shapeResponse validGenesis =
   in "{\\"ok\\":true,\\"type\\":\\"validate_block_shape\\",\\"protocol_version\\":1,\\"valid\\":"
        ++ valid ++ ",\\"reason\\":\\"" ++ reason ++ "\\",\\"scope\\":\\"structural_fixture_only\\"}"
 
+
+-- This endpoint checks structure only, not signatures, roots, finality or AI proofs.
+parseHash :: String -> Parser AivoBlock.Block.Hash256
+parseHash hex
+  | length hex /= 64 || not (all isHexDigit hex) = fail "Expected 64 hex digits"
+  | otherwise = either fail pure (mkHash256 (BS.pack (decodeHex hex)))
+  where
+    decodeHex (a:b:rest) = fromIntegral (16 * digitToInt a + digitToInt b) : decodeHex rest
+    decodeHex _ = []
+
+parseBlock :: Value -> Parser Block
+parseBlock = withObject "block" $ \o -> do
+  h <- o .: "header"
+  b <- o .: "body"
+  header <- withObject "header" (\v -> do
+    ver <- v .: "version" :: Parser Word32
+    chain <- v .: "chain_id" :: Parser Word32
+    height <- v .: "height" :: Parser Word64
+    parent <- v .: "parent_hash" >>= parseHash
+    txRoot <- v .: "transactions_root" >>= parseHash
+    proofRoot <- v .: "puzzle_proofs_root" >>= parseHash
+    stateRoot <- v .: "state_root" >>= parseHash
+    timestamp <- v .: "timestamp_ms" :: Parser Word64
+    pure (BlockHeader ver chain height parent txRoot proofRoot stateRoot timestamp)) h
+  body <- withObject "body" (\v -> do
+    tx <- v .: "transaction_ids" :: Parser [String]
+    proofs <- v .: "puzzle_proof_ids" :: Parser [String]
+    when (length tx > 10000 || length proofs > 10000) (fail "Too many block IDs")
+    ids <- traverse parseHash tx
+    proofIds <- traverse parseHash proofs
+    pure (BlockBody ids proofIds)) b
+  pure (Block header body)
+
+jsonResponse :: Bool -> String -> BS.ByteString
+jsonResponse valid reason = BL.toStrict (encode (object
+  [ "ok" .= True
+  , "type" .= ("validate_block_shape" :: String)
+  , "protocol_version" .= (1 :: Int)
+  , "valid" .= valid
+  , "reason" .= reason
+  , "scope" .= ("structural_only" :: String)
+  ]))
+
+dynamicBlockResponse :: Value -> BS.ByteString
+dynamicBlockResponse value =
+  case parseEither parseBlock value of
+    Left _ -> BL.toStrict (encode (object ["ok" .= False, "error" .= ("invalid_block" :: String)]))
+    Right block ->
+      let result = validateBlockShape block
+      in jsonResponse (either (const False) (const True) result)
+          (either show (const "none") result)
+
+dynamicRequest :: String -> Maybe BS.ByteString
+dynamicRequest raw =
+  case eitherDecodeStrict' (BS.pack (map (fromIntegral . ord) raw)) :: Either String Value of
+    Left _ -> Nothing
+    Right value ->
+      case parseEither parseIpcBlock value of
+        Right (Just block) -> Just (dynamicBlockResponse block)
+        _ -> Nothing
+  where
+    parseIpcBlock = withObject "request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      block <- o .:? "block" :: Parser (Maybe Value)
+      if protocol == 1 && kind == "validate_block_shape"
+        then pure block
+        else pure Nothing
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | request == healthRequest = Just healthResponse
@@ -129,7 +204,7 @@ handleIpcRequest request
       Just (shapeResponse True)
   | request == "{\\"protocol_version\\":1,\\"type\\":\\"validate_block_shape\\",\\"case\\":\\"invalid_genesis_parent\\"}" =
       Just (shapeResponse False)
-  | otherwise = Nothing
+  | otherwise = fmap (map chr . BS.unpack) (dynamicRequest request)
 
 ipcHealth :: IO ()
 ipcHealth = do
