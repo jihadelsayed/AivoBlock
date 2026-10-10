@@ -47,6 +47,7 @@ fn print_help() {
            storage-demo Persist and reopen a sample block in RocksDB\n\
            validated-storage-demo Check JSON block structure before saving a fixture\n\
            header-hash  Verify Rust canonical header SHA-256 test vector\n\
+           two-block-demo  Test two-block RocksDB parent/height continuity\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -451,6 +452,62 @@ fn header_hash_demo() -> Result<(), String> {
     Ok(())
 }
 
+
+fn two_block_demo() -> Result<(), String> {
+    // Separate demonstration database; never use this as a consensus ledger.
+    let path = env::var_os("AIVOBLOCK_TWO_BLOCK_DEMO_PATH")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("two-block-demo-data"));
+    let genesis = CanonicalHeaderV1 {
+        version: 1, chain_id: 1, height: 0,
+        parent_hash: [0; 32], transactions_root: [0; 32],
+        puzzle_proofs_root: [0; 32], state_root: [0; 32], timestamp_ms: 1000,
+    };
+    let genesis_id = hash_header_v1(&genesis).map_err(str::to_owned)?;
+    let child = CanonicalHeaderV1 {
+        height: 1, parent_hash: genesis_id, timestamp_ms: 1001, ..genesis
+    };
+    let child_id = hash_header_v1(&child).map_err(str::to_owned)?;
+    let genesis_bytes = encode_header_v1(&genesis).map_err(str::to_owned)?;
+    let child_bytes = encode_header_v1(&child).map_err(str::to_owned)?;
+    {
+        let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
+        // Require a fresh demo database to avoid overwriting existing state.
+        if db.get(Column::ChainState, b"tip").map_err(|e| e.to_string())?.is_some()
+            || db.get(Column::ChainState, b"height").map_err(|e| e.to_string())?.is_some()
+        {
+            return Err(format!("Demo database already contains a chain: {}. Set AIVOBLOCK_TWO_BLOCK_DEMO_PATH to a new directory.", path.display()));
+        }
+        db.append_checked_block(&genesis_id, &[0; 32], 0, &genesis_bytes)
+            .map_err(|e| format!("Genesis append failed: {e}"))?;
+        // Invalid parent must be rejected without changing the tip.
+        if db.append_checked_block(&child_id, &[9; 32], 1, &child_bytes).is_ok() {
+            return Err("Incorrect parent was unexpectedly accepted".to_owned());
+        }
+        if db.append_checked_block(&child_id, &genesis_id, 2, &child_bytes).is_ok() {
+            return Err("Incorrect height was unexpectedly accepted".to_owned());
+        }
+        db.append_checked_block(&child_id, &genesis_id, 1, &child_bytes)
+            .map_err(|e| format!("Child append failed: {e}"))?;
+    }
+    let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
+    if db.get(Column::ChainState, b"tip").map_err(|e| e.to_string())?.as_deref() != Some(child_id.as_slice())
+        || db.get(Column::ChainState, b"height").map_err(|e| e.to_string())?.as_deref() != Some(1u64.to_be_bytes().as_slice())
+        || db.get(Column::Blocks, &genesis_id).map_err(|e| e.to_string())?.as_deref() != Some(genesis_bytes.as_slice())
+        || db.get(Column::Blocks, &child_id).map_err(|e| e.to_string())?.as_deref() != Some(child_bytes.as_slice())
+    {
+        return Err("Two-block chain did not survive database reopening".to_owned());
+    }
+    println!("Two-block RocksDB continuity demo: PASS");
+    println!("Genesis height: 0; child height: 1");
+    println!("Invalid parent and height rejected");
+    println!("Both headers, tip and height persisted after reopen");
+    println!("Database: {}", path.display());
+    println!("Scope: local header continuity only; no Haskell consensus verification");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -470,6 +527,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "storage-demo" => storage_demo(),
         [command] if command == "validated-storage-demo" => validated_storage_demo(),
         [command] if command == "header-hash" => header_hash_demo(),
+        [command] if command == "two-block-demo" => two_block_demo(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -521,6 +579,7 @@ mod tests {
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["header-hash".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["two-block-demo".to_owned(), "extra".to_owned()]).is_err());
     }
 
 
