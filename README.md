@@ -120,5 +120,9 @@ The Compose services currently print diagnostic status and exit. They do **not**
 - Build and test results have not yet been independently verified across all components.
 
 ## License
-
+MIT
 See [LICENSE](LICENSE). The repository currently carries an all-rights-reserved notice; no open-source license has been selected.
+
+
+
+.\scripts\setup.ps1
