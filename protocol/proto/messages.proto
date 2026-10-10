@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package aivoblock.protocol.v1;
+
+import "block.proto";
+import "transaction.proto";
+import "puzzle.proto";
+
+// P2P transport envelope for the independent AivoBlock node network.
+// This is not canonical serialization for consensus or signatures.
+// Receivers must enforce framing limits and validate all untrusted data.
+
+message NetworkEnvelope {
+  uint32 protocol_version = 1;
+  uint32 chain_id = 2;
+  uint64 request_id = 3;
+
+  oneof payload {
+    Handshake handshake = 10;
+    PeerStatus peer_status = 11;
+    BlockAnnouncement block_announcement = 12;
+    BlockRequest block_request = 13;
+    BlockResponse block_response = 14;
+    TransactionAnnouncement transaction_announcement = 15;
+    Transaction transaction = 16;
+    Puzzle puzzle = 17;
+    PuzzleAssignment puzzle_assignment = 18;
+    PuzzleProof puzzle_proof = 19;
+    PuzzleVerificationReport puzzle_verification_report = 20;
+  }
+}
+
+message Handshake {
+  bytes peer_id = 1;       // 32-byte provisional peer identity
+  bytes genesis_hash = 2;  // Hash256: 32 bytes
+  uint64 best_height = 3;
+  bytes best_block_hash = 4; // Hash256: 32 bytes
+}
+
+message PeerStatus {
+  uint64 best_height = 1;
+  bytes best_block_hash = 2; // Hash256: 32 bytes
+}
+
+message BlockRequest {
+  bytes block_hash = 1; // Hash256: 32 bytes
+}
+
+message BlockResponse {
+  oneof result {
+    Block block = 1;
+    NotFound not_found = 2;
+  }
+}
+
+message NotFound {
+  string reason_code = 1; // Diagnostic only; never a validation verdict
+}
+
+// TODO: Define authenticated consensus-vote messages after the
+// consensus protocol specifies validator membership and signatures.
