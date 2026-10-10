@@ -27,9 +27,6 @@ version = "0.1.0.0"
 maxIpcBytes :: Integer
 maxIpcBytes = 4 * 1024 * 1024
 
-healthRequest :: String
-healthRequest = "{\"protocol_version\":1,\"type\":\"health\"}"
-
 healthResponse :: String
 healthResponse =
   "{\"ok\":true,\"type\":\"health\",\"protocol_version\":1,\"core\":\"aivoblock-core\",\"status\":\"ready_for_protocol_development\"}"
@@ -213,16 +210,22 @@ dynamicRequest raw =
 
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
-  | request == healthRequest = Just healthResponse
   | otherwise =
       case eitherDecodeStrict' (BS.pack (map (fromIntegral . ord) request)) :: Either String Value of
         Left _ -> Nothing
         Right value ->
-          case parseEither parseFixture value of
-            Right (Just True) -> Just (shapeResponse True)
-            Right (Just False) -> Just (shapeResponse False)
-            _ -> fmap (map chr . BS.unpack) (dynamicRequest request)
+          case parseEither parseHealth value of
+            Right True -> Just healthResponse
+            _ -> case parseEither parseFixture value of
+              Right (Just True) -> Just (shapeResponse True)
+              Right (Just False) -> Just (shapeResponse False)
+              _ -> fmap (map chr . BS.unpack) (dynamicRequest request)
   where
+    parseHealth = withObject "health request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (protocol == 1 && kind == "health")
+
     parseFixture = withObject "request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
       kind <- o .: "type" :: Parser String
