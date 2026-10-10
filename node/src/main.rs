@@ -28,6 +28,9 @@ const SAMPLE_PUZZLE_REQUEST: &str = r#"{"protocol_version":1,"type":"execute_int
 const SAMPLE_VERIFY_REQUEST: &str = r#"{"protocol_version":1,"type":"verify_integer_inference","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3],"proof":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","start_unit":0,"unit_count":3,"result_commitment":"a22d7dc4fe5191094e273e20c50df061c516b244a030227957c61ed4cab8761f","witness_commitment":null}}"#;
 const SAMPLE_TAMPERED_VERIFY_REQUEST: &str = r#"{"protocol_version":1,"type":"verify_integer_inference","puzzle":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","version":1,"model_commitment":"0202020202020202020202020202020202020202020202020202020202020202","input_commitment":"0303030303030303030303030303030303030303030303030303030303030303","rules_commitment":"0404040404040404040404040404040404040404040404040404040404040404","units":3,"deadline_height":100},"rows":[[1,2],[3,4],[-2,5]],"weights":[2,3],"proof":{"puzzle_id":"0101010101010101010101010101010101010101010101010101010101010101","worker_id":"0505050505050505050505050505050505050505050505050505050505050505","start_unit":0,"unit_count":3,"result_commitment":"0000000000000000000000000000000000000000000000000000000000000000","witness_commitment":null}}"#;
 
+const JSON_GENESIS_VALID: &str = r#"{"protocol_version":1,"type":"validate_block_shape","block":{"header":{"version":1,"chain_id":1,"height":0,"parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","transactions_root":"0000000000000000000000000000000000000000000000000000000000000000","puzzle_proofs_root":"0000000000000000000000000000000000000000000000000000000000000000","state_root":"0000000000000000000000000000000000000000000000000000000000000000","timestamp_ms":0},"body":{"transaction_ids":[],"puzzle_proof_ids":[]}}}"#;
+const JSON_GENESIS_INVALID: &str = r#"{"protocol_version":1,"type":"validate_block_shape","block":{"header":{"version":1,"chain_id":1,"height":0,"parent_hash":"0101010101010101010101010101010101010101010101010101010101010101","transactions_root":"0000000000000000000000000000000000000000000000000000000000000000","puzzle_proofs_root":"0000000000000000000000000000000000000000000000000000000000000000","state_root":"0000000000000000000000000000000000000000000000000000000000000000","timestamp_ms":0},"body":{"transaction_ids":[],"puzzle_proof_ids":[]}}}"#;
+
 fn print_help() {
     println!(
         "AivoBlock Node {VERSION}\n\n\
@@ -36,6 +39,7 @@ fn print_help() {
            status       Show implementation status (default)\n\
            core-health  Check the local Haskell core over framed IPC\n\
            core-validate  Check valid and invalid Haskell block fixtures\n\
+           core-json      Send full JSON block candidates to Haskell\n\
            ai-health    Check the local Python AI worker over framed IPC\n\
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
@@ -113,6 +117,44 @@ fn core_validate() -> Result<(), String> {
     println!("Valid genesis fixture: accepted");
     println!("Invalid genesis parent fixture: rejected");
     println!("Scope: structural fixtures only; no full block validation or consensus");
+    Ok(())
+}
+
+
+fn core_json() -> Result<(), String> {
+    let executable = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "Set AIVOBLOCK_HASKELL_EXECUTABLE using cabal list-bin exe:aivoblock-core from core/.".to_owned())?;
+    let client = HaskellValidatorClient::new(executable)
+        .map_err(|e| format!("Haskell core configuration error: {e:?}"))?;
+    for (request, expected_valid, expected_reason) in [
+        (JSON_GENESIS_VALID, true, "none"),
+        (JSON_GENESIS_INVALID, false, "InvalidGenesisParent"),
+    ] {
+        let raw = client.exchange(request.as_bytes())
+            .map_err(|e| format!("Haskell core IPC failed: {e:?}"))?;
+        let response = std::str::from_utf8(&raw)
+            .map_err(|_| "Haskell JSON block response is not UTF-8".to_owned())?;
+        // The Haskell JSON encoder may reorder keys. Match all required
+        // diagnostic fields, never treat the response as consensus approval.
+        let required = [
+            r#""ok":true"#,
+            r#""type":"validate_block_shape""#,
+            r#""protocol_version":1"#,
+            r#""scope":"structural_only""#,
+            if expected_valid { r#""valid":true"# } else { r#""valid":false"# },
+        ];
+        if !required.iter().all(|field| response.contains(field))
+            || !response.contains(&format!(r#""reason":"{expected_reason}""#))
+        {
+            return Err(format!("Unexpected structural validation response: {response}"));
+        }
+    }
+    println!("JSON block structural validation demo: PASS");
+    println!("Valid JSON genesis candidate: accepted");
+    println!("Invalid JSON genesis parent: rejected");
+    println!("Scope: structural validation only; no signatures, roots, or consensus");
     Ok(())
 }
 
@@ -224,6 +266,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command] if command == "core-health" => core_health(),
         [command] if command == "core-validate" => core_validate(),
+        [command] if command == "core-json" => core_json(),
         [command] if command == "ai-health" => ai_health(),
         [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "ai-verify" => ai_verify(),
@@ -272,6 +315,7 @@ mod tests {
         assert!(run(&["ai-health".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["core-health".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["core-validate".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["core-json".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
     }
