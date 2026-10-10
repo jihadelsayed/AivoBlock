@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package aivoblock.protocol.v1;
+
+// Transport definitions for AivoBlock's collaborative AI puzzles.
+// These wire messages do not establish that useful work occurred.
+// All Hash256 fields must contain exactly 32 bytes; receivers enforce
+// sizes, bounds, protocol versions and task commitments independently.
+//
+// Consensus-critical encodings and verification rules are specified
+// separately; protobuf wire bytes MUST NOT be used as canonical hashes.
+
+message Puzzle {
+  bytes puzzle_id = 1;              // Hash256
+  uint32 version = 2;
+  bytes model_commitment = 3;       // Hash256
+  bytes input_commitment = 4;       // Hash256
+  bytes rules_commitment = 5;       // Hash256
+  uint64 units = 6;
+  uint64 deadline_height = 7;
+}
+
+message WorkRange {
+  uint64 start_unit = 1;
+  uint64 unit_count = 2;
+}
+
+// Worker identity is a commitment to a network identity, not proof of
+// authentication. Signed worker messages are required by the protocol.
+message PuzzleAssignment {
+  bytes puzzle_id = 1;              // Hash256
+  bytes worker_id = 2;              // Hash256
+  WorkRange range = 3;
+}
+
+// A claimed result. Independent task-specific checks must verify it
+// before consensus and rewards can use it.
+message PuzzleProof {
+  bytes puzzle_id = 1;              // Hash256
+  bytes worker_id = 2;              // Hash256
+  uint64 start_unit = 3;
+  uint64 unit_count = 4;
+  bytes result_commitment = 5;      // Hash256
+  optional bytes witness_commitment = 6; // Hash256 when present
+}
+
+enum ProofVerificationStatus {
+  PROOF_VERIFICATION_STATUS_UNSPECIFIED = 0;
+  PROOF_VERIFICATION_STATUS_PENDING = 1;
+  PROOF_VERIFICATION_STATUS_VERIFIED = 2;
+  PROOF_VERIFICATION_STATUS_REJECTED = 3;
+}
+
+message PuzzleVerificationReport {
+  bytes puzzle_id = 1;              // Hash256
+  bytes worker_id = 2;              // Hash256
+  bytes proof_id = 3;               // Hash256
+  ProofVerificationStatus status = 4;
+  string reason_code = 5;
+}
+
+// A report is diagnostic unless bound to an authenticated validator
+// decision under the separately specified consensus protocol.
