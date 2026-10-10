@@ -6,6 +6,7 @@
 mod ipc;
 mod storage;
 
+use sha2::{Digest, Sha256};
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -45,6 +46,7 @@ fn print_help() {
            ai-verify    Verify a sample proof and reject a tampered proof\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
            validated-storage-demo Check JSON block structure before saving a fixture\n\
+           header-hash  Verify Rust canonical header SHA-256 test vector\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -364,6 +366,74 @@ fn validated_storage_demo() -> Result<(), String> {
     Ok(())
 }
 
+
+#[derive(Clone, Copy)]
+struct CanonicalHeaderV1 {
+    version: u32,
+    chain_id: u32,
+    height: u64,
+    parent_hash: [u8; 32],
+    transactions_root: [u8; 32],
+    puzzle_proofs_root: [u8; 32],
+    state_root: [u8; 32],
+    timestamp_ms: u64,
+}
+
+fn encode_header_v1(header: &CanonicalHeaderV1) -> Result<[u8; 178], &'static str> {
+    if header.version != 1 {
+        return Err("Unsupported V1 header version");
+    }
+    if header.chain_id == 0 {
+        return Err("Chain ID must not be zero");
+    }
+    let mut bytes = [0u8; 178];
+    let mut offset = 0;
+    fn append<const N: usize>(target: &mut [u8; 178], offset: &mut usize, value: &[u8; N]) {
+        target[*offset..*offset + N].copy_from_slice(value);
+        *offset += N;
+    }
+    append(&mut bytes, &mut offset, b"AIVOBLOCK-BLOCK-HEADER-V1\0");
+    append(&mut bytes, &mut offset, &header.version.to_be_bytes());
+    append(&mut bytes, &mut offset, &header.chain_id.to_be_bytes());
+    append(&mut bytes, &mut offset, &header.height.to_be_bytes());
+    append(&mut bytes, &mut offset, &header.parent_hash);
+    append(&mut bytes, &mut offset, &header.transactions_root);
+    append(&mut bytes, &mut offset, &header.puzzle_proofs_root);
+    append(&mut bytes, &mut offset, &header.state_root);
+    append(&mut bytes, &mut offset, &header.timestamp_ms.to_be_bytes());
+    debug_assert_eq!(offset, bytes.len());
+    Ok(bytes)
+}
+
+fn hash_header_v1(header: &CanonicalHeaderV1) -> Result<[u8; 32], &'static str> {
+    let bytes = encode_header_v1(header)?;
+    Ok(Sha256::digest(bytes).into())
+}
+
+fn header_hash_demo() -> Result<(), String> {
+    let header = CanonicalHeaderV1 {
+        version: 1,
+        chain_id: 1,
+        height: 0,
+        parent_hash: [0; 32],
+        transactions_root: [0; 32],
+        puzzle_proofs_root: [0; 32],
+        state_root: [0; 32],
+        timestamp_ms: 1000,
+    };
+    let digest = hash_header_v1(&header).map_err(str::to_owned)?;
+    let hex = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    const EXPECTED: &str = "c1b8e653731eeafeacb557e46669d277096ecc7ceff7ec911ab29b25a8a55c22";
+    if hex != EXPECTED {
+        return Err(format!("Canonical header SHA-256 mismatch: {hex}"));
+    }
+    println!("Canonical Rust header hash: PASS");
+    println!("Preimage: 178 bytes");
+    println!("SHA-256: {hex}");
+    println!("Scope: header ID only; body roots and consensus are not verified");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -382,6 +452,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-verify" => ai_verify(),
         [command] if command == "storage-demo" => storage_demo(),
         [command] if command == "validated-storage-demo" => validated_storage_demo(),
+        [command] if command == "header-hash" => header_hash_demo(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -432,6 +503,7 @@ mod tests {
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["header-hash".to_owned(), "extra".to_owned()]).is_err());
     }
 
 
@@ -519,6 +591,25 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    }
+
+    #[test]
+    fn canonical_header_matches_published_sha256_vector() {
+        use super::{encode_header_v1, hash_header_v1, CanonicalHeaderV1};
+        let mut header = CanonicalHeaderV1 {
+            version: 1, chain_id: 1, height: 0,
+            parent_hash: [0; 32], transactions_root: [0; 32],
+            puzzle_proofs_root: [0; 32], state_root: [0; 32],
+            timestamp_ms: 1000,
+        };
+        assert_eq!(encode_header_v1(&header).unwrap().len(), 178);
+        let result = hash_header_v1(&header).unwrap();
+        let hex = result.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(hex, "c1b8e653731eeafeacb557e46669d277096ecc7ceff7ec911ab29b25a8a55c22");
+        header.timestamp_ms += 1;
+        assert_ne!(hash_header_v1(&header).unwrap(), result);
+        header.version = 2;
+        assert!(hash_header_v1(&header).is_err());
     }
 
     #[test]
