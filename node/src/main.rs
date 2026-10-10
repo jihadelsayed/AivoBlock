@@ -342,18 +342,29 @@ fn validated_storage_demo() -> Result<(), String> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("validated-storage-demo-data"));
-    // This deterministic test ID is NOT a computed or authenticated block hash.
-    let demo_id = [0x7au8; 32];
+    // These fields correspond exactly to JSON_GENESIS_VALID above.
+    // This is a candidate header ID, not an authenticated block or body.
+    let header = CanonicalHeaderV1 {
+        version: 1,
+        chain_id: 1,
+        height: 0,
+        parent_hash: [0; 32],
+        transactions_root: [0; 32],
+        puzzle_proofs_root: [0; 32],
+        state_root: [0; 32],
+        timestamp_ms: 0,
+    };
+    let block_id = hash_header_v1(&header).map_err(str::to_owned)?;
     {
         let db = RocksDbStore::open(&path)
             .map_err(|e| format!("Opening demo database failed: {e}"))?;
-        db.put(Column::Blocks, &demo_id, request)
+        db.put(Column::Blocks, &block_id, request)
             .map_err(|e| format!("Writing structurally accepted fixture failed: {e}"))?;
         db.flush().map_err(|e| format!("Flushing demo database failed: {e}"))?;
     }
     let db = RocksDbStore::open(&path)
         .map_err(|e| format!("Reopening demo database failed: {e}"))?;
-    if db.get(Column::Blocks, &demo_id)
+    if db.get(Column::Blocks, &block_id)
         .map_err(|e| format!("Reading stored fixture failed: {e}"))?
         .as_deref() != Some(request)
     {
@@ -362,7 +373,8 @@ fn validated_storage_demo() -> Result<(), String> {
     println!("Haskell structural validation → RocksDB persistence: PASS");
     println!("Structurally accepted JSON fixture recovered after database reopen");
     println!("Database: {}", path.display());
-    println!("No authenticated block hash, canonical encoding, chain-tip update or consensus");
+    println!("Canonical header SHA-256 key: {}", block_id.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+    println!("Header digest only; block roots, signatures, chain-tip and consensus are not verified");
     Ok(())
 }
 
