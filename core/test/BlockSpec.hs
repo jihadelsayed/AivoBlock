@@ -51,6 +51,44 @@ main = hspec $ do
         (BlockBody [] [sampleHash, sampleHash]))
         `shouldBe` Left DuplicatePuzzleProofId
 
+    it "rejects a zero block version" $
+      validateBlockShape (Block ((header 0 zeroHash) { headerVersion = 0 }) (BlockBody [] []))
+        `shouldBe` Left InvalidBlockVersion
+
+    it "rejects a zero chain ID" $
+      validateBlockShape (Block ((header 0 zeroHash) { headerChainId = 0 }) (BlockBody [] []))
+        `shouldBe` Left InvalidChainId
+
+    it "rejects a non-genesis block with a zero parent" $
+      validateBlockShape (Block (header 1 zeroHash) (BlockBody [] []))
+        `shouldBe` Left InvalidParentHash
+
+    it "accepts distinct transaction and proof IDs" $
+      validateBlockShape (Block (header 0 zeroHash)
+        (BlockBody [sampleHash, otherHash] [sampleHash, otherHash]))
+        `shouldBe` Right ()
+
+    it "rejects a child with a different chain ID" $
+      validateChildHeader 1 1 sampleHash
+        (header 0 zeroHash) ((header 1 sampleHash) { headerChainId = 2 })
+        `shouldBe` Left InvalidChainId
+
+    it "rejects a child with a different protocol version" $
+      validateChildHeader 1 1 sampleHash
+        (header 0 zeroHash) ((header 1 sampleHash) { headerVersion = 2 })
+        `shouldBe` Left InvalidBlockVersion
+
+    it "rejects a child timestamp that does not increase" $
+      validateChildHeader 1 1 sampleHash
+        (header 0 zeroHash) ((header 1 sampleHash) { headerTimestampMs = 1000 })
+        `shouldBe` Left NonIncreasingTimestamp
+
+    it "rejects child height overflow" $
+      validateChildHeader 1 1 sampleHash
+        ((header 0 zeroHash) { headerHeight = maxBound })
+        (header 1 sampleHash)
+        `shouldBe` Left HeightOverflow
+
     it "accepts a correctly linked child header" $
       validateChildHeader 1 1 sampleHash
         (header 0 zeroHash) (header 1 sampleHash)
