@@ -28,6 +28,42 @@ main = hspec $ do
         Right h -> hash256Bytes h == BS.replicate 32 byte
         Left _ -> False
 
+  describe "Canonical V1 block-header encoding" $ do
+    it "encodes the published genesis fixture as exactly 178 bytes" $ do
+      let encoded = encodeBlockHeaderV1 (header 0 zeroHash)
+      fmap BS.length encoded `shouldBe` Right 178
+
+    it "matches the specified 178-byte preimage field by field" $ do
+      let domain = BS.pack (map (fromIntegral . fromEnum) "AIVOBLOCK-BLOCK-HEADER-V1") 
+          expected = BS.concat
+            [ domain, BS.singleton 0
+            , BS.pack [0,0,0,1]    -- version, uint32 big-endian
+            , BS.pack [0,0,0,1]    -- chain ID, uint32 big-endian
+            , BS.replicate 8 0     -- genesis height, uint64 big-endian
+            , BS.replicate 128 0   -- four raw 32-byte commitments
+            , BS.pack [0,0,0,0,0,0,3,232] -- timestamp 1000
+            ]
+      BS.length expected `shouldBe` 178
+      encodeBlockHeaderV1 (header 0 zeroHash) `shouldBe` Right expected
+
+    it "uses raw hash bytes rather than hexadecimal strings" $ do
+      let encoded = encodeBlockHeaderV1 (header 1 sampleHash)
+      fmap (BS.take 32 . BS.drop 42) encoded
+        `shouldBe` Right (BS.replicate 32 1)
+
+    it "changes the encoded bytes when a field changes" $ do
+      let original = header 0 zeroHash
+      encodeBlockHeaderV1 original
+        `shouldNotBe` encodeBlockHeaderV1 (original { headerTimestampMs = 1001 })
+
+    it "rejects unsupported header versions" $
+      encodeBlockHeaderV1 ((header 0 zeroHash) { headerVersion = 2 })
+        `shouldBe` Left "Unsupported V1 header version"
+
+    it "rejects chain ID zero" $
+      encodeBlockHeaderV1 ((header 0 zeroHash) { headerChainId = 0 })
+        `shouldBe` Left "Chain ID must not be zero"
+
   describe "Block structure" $ do
     it "recognizes a genesis candidate, but not a child" $ do
       isGenesisCandidate (header 0 zeroHash) `shouldBe` True
