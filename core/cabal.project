@@ -1,0 +1,10 @@
+-- AivoBlock Haskell workspace
+-- Run cabal commands from the core/ directory.
+packages: .
+
+-- Prefer reproducible dependency solving and explicit tests.
+tests: True
+
+-- Retain build outputs locally; never commit dist-newstyle/.
+-- A freeze file can be generated once compiler and dependencies are chosen:
+--   cabal freeze
