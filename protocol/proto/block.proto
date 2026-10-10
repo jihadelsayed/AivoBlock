@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package aivoblock.protocol.v1;
+
+// Network and IPC transport schema for AivoBlock blocks.
+//
+// IMPORTANT: Protobuf serialization is NOT the canonical hashing format.
+// Consensus-critical hashing, Merkle roots and signature preimages require
+// a separately specified deterministic encoding shared by Rust and Haskell.
+// All bytes fields documented as Hash256 must be exactly 32 bytes;
+// proto3 itself does not enforce this constraint.
+
+message BlockHeader {
+  uint32 version = 1;
+  uint32 chain_id = 2;
+  uint64 height = 3;
+  bytes parent_hash = 4;         // Hash256; 32 bytes
+  bytes transactions_root = 5;   // Hash256; 32 bytes
+  bytes puzzle_proofs_root = 6;  // Hash256; 32 bytes
+  bytes state_root = 7;          // Hash256; 32 bytes
+  uint64 timestamp_ms = 8;
+}
+
+message BlockBody {
+  repeated bytes transaction_ids = 1; // Each Hash256; 32 bytes
+  repeated bytes puzzle_proof_ids = 2; // Each Hash256; 32 bytes
+}
+
+message Block {
+  BlockHeader header = 1;
+  BlockBody body = 2;
+}
+
+// Transfer blocks only after independently validating their contents.
+// An optional hint from a peer is NOT a cryptographic validation result.
+message BlockAnnouncement {
+  uint32 chain_id = 1;
+  uint64 height = 2;
+  bytes block_hash = 3; // Hash256; 32 bytes
+}
