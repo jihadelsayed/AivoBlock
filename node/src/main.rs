@@ -4,6 +4,7 @@
 //! integration. No blockchain network is started by these commands.
 
 mod ipc;
+mod storage;
 
 use std::env;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use std::process::ExitCode;
 
 use ipc::haskell::HaskellValidatorClient;
 use ipc::python::PythonWorkerClient;
+use storage::{Column, KeyValueStore, RocksDbStore};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const CORE_HEALTH_REQUEST: &[u8] = br#"{"protocol_version":1,"type":"health"}"#;
@@ -41,6 +43,7 @@ fn print_help() {
            ai-health    Check the local Python AI worker over framed IPC\n\
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
+           storage-demo Persist and reopen a sample block in RocksDB\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -273,6 +276,36 @@ fn ai_verify() -> Result<(), String> {
     Ok(())
 }
 
+
+fn storage_demo() -> Result<(), String> {
+    // Dedicated diagnostic path, never a node's real chain database.
+    let path = env::var_os("AIVOBLOCK_STORAGE_DEMO_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("storage-demo-data"));
+    let block_key = b"demo-block-v1";
+    let block_bytes = b"AivoBlock storage fixture; NOT a validated blockchain block";
+    {
+        let db = RocksDbStore::open(&path)
+            .map_err(|e| format!("Opening storage demo database failed: {e}"))?;
+        db.put(Column::Blocks, block_key, block_bytes)
+            .map_err(|e| format!("Writing sample block failed: {e}"))?;
+        db.flush().map_err(|e| format!("Flushing storage demo failed: {e}"))?;
+    }
+    let db = RocksDbStore::open(&path)
+        .map_err(|e| format!("Reopening storage demo database failed: {e}"))?;
+    let recovered = db.get(Column::Blocks, block_key)
+        .map_err(|e| format!("Reading sample block failed: {e}"))?;
+    if recovered.as_deref() != Some(block_bytes.as_slice()) {
+        return Err("Persisted sample block did not match written bytes".to_owned());
+    }
+    println!("RocksDB storage demo: PASS");
+    println!("Sample bytes persisted and recovered after reopen");
+    println!("Database: {}", path.display());
+    println!("Scope: raw storage only; no validation, chain-tip update, or consensus");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     match args {
         [] => {
@@ -289,6 +322,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-health" => ai_health(),
         [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "ai-verify" => ai_verify(),
+        [command] if command == "storage-demo" => storage_demo(),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
@@ -337,6 +371,7 @@ mod tests {
         assert!(run(&["core-json".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
     }
 
 
