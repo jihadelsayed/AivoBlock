@@ -119,18 +119,19 @@ fixtureBlock validGenesis =
 shapeResponse :: Bool -> String
 shapeResponse validGenesis =
   let verdict = validateBlockShape (fixtureBlock validGenesis)
-      valid = case verdict of
-        Right () -> "true"
-        Left _ -> "false"
-      reason = case verdict of
-        Right () -> "none"
-        Left err -> show err
-  in "{\\"ok\\":true,\\"type\\":\\"validate_block_shape\\",\\"protocol_version\\":1,\\"valid\\":"
-       ++ valid ++ ",\\"reason\\":\\"" ++ reason ++ "\\",\\"scope\\":\\"structural_fixture_only\\"}"
-
+      valid = either (const False) (const True) verdict
+      reason = either show (const "none") verdict
+  in map (chr . fromIntegral) . BS.unpack $ BL.toStrict (encode (object
+       [ "ok" .= True
+       , "type" .= ("validate_block_shape" :: String)
+       , "protocol_version" .= (1 :: Int)
+       , "valid" .= valid
+       , "reason" .= reason
+       , "scope" .= ("structural_fixture_only" :: String)
+       ]))
 
 -- This endpoint checks structure only, not signatures, roots, finality or AI proofs.
-parseHash :: String -> Parser AivoBlock.Block.Hash256
+parseHash :: String -> Parser Hash256
 parseHash hex
   | length hex /= 64 || not (all isHexDigit hex) = fail "Expected 64 hex digits"
   | otherwise = either fail pure (mkHash256 (BS.pack (decodeHex hex)))
@@ -200,11 +201,25 @@ dynamicRequest raw =
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | request == healthRequest = Just healthResponse
-  | request == "{\\"protocol_version\\":1,\\"type\\":\\"validate_block_shape\\",\\"case\\":\\"valid_genesis\\"}" =
-      Just (shapeResponse True)
-  | request == "{\\"protocol_version\\":1,\\"type\\":\\"validate_block_shape\\",\\"case\\":\\"invalid_genesis_parent\\"}" =
-      Just (shapeResponse False)
-  | otherwise = fmap (map chr . BS.unpack) (dynamicRequest request)
+  | otherwise =
+      case eitherDecodeStrict' (BS.pack (map (fromIntegral . ord) request)) :: Either String Value of
+        Left _ -> Nothing
+        Right value ->
+          case parseEither parseFixture value of
+            Right (Just True) -> Just (shapeResponse True)
+            Right (Just False) -> Just (shapeResponse False)
+            _ -> fmap (map chr . BS.unpack) (dynamicRequest request)
+  where
+    parseFixture = withObject "request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      fixture <- o .:? "case" :: Parser (Maybe String)
+      pure $ if protocol == 1 && kind == "validate_block_shape"
+        then case fixture of
+          Just "valid_genesis" -> Just True
+          Just "invalid_genesis_parent" -> Just False
+          _ -> Nothing
+        else Nothing
 
 ipcHealth :: IO ()
 ipcHealth = do
