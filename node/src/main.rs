@@ -320,6 +320,43 @@ mod tests {
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
     }
 
+
+    // Cross-language tests run when the compiled Haskell executable is supplied.
+    // Set AIVOBLOCK_HASKELL_EXECUTABLE before cargo test. Without it the
+    // test is skipped, rather than depending on a Cabal installation in CI.
+    #[test]
+    fn haskell_json_ipc_validation_cases() {
+        use super::{
+            JSON_GENESIS_VALID, JSON_GENESIS_INVALID, CORE_HEALTH_REQUEST,
+        };
+        use crate::ipc::haskell::HaskellValidatorClient;
+        use std::env;
+
+        let Some(executable) = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
+            .filter(|v| !v.is_empty()) else {
+                eprintln!("SKIP: set AIVOBLOCK_HASKELL_EXECUTABLE for Haskell IPC integration");
+                return;
+            };
+        let client = HaskellValidatorClient::new(executable).expect("valid core executable path");
+        for (request, required) in [
+            (CORE_HEALTH_REQUEST, vec![r#""ok":true"#, r#""core":"aivoblock-core""#]),
+            (JSON_GENESIS_VALID.as_bytes(), vec![r#""valid":true"#, r#""scope":"structural_only""#]),
+            (JSON_GENESIS_INVALID.as_bytes(), vec![r#""valid":false"#, r#""reason":"InvalidGenesisParent""#]),
+        ] {
+            let response = client.exchange(request).expect("Haskell framed IPC exchange");
+            let response = std::str::from_utf8(&response).expect("UTF-8 JSON response");
+            for field in required {
+                assert!(response.contains(field), "missing {field} in {response}");
+            }
+        }
+        // Valid JSON, but the required block is missing: the core must not approve it.
+        let malformed_block = br#"{"protocol_version":1,"type":"validate_block_shape","block":{}}"#;
+        let response = client.exchange(malformed_block).expect("malformed block response");
+        let response = std::str::from_utf8(&response).expect("UTF-8 error response");
+        assert!(response.contains(r#""ok":false"#), "{response}");
+        assert!(response.contains(r#""error":"invalid_block""#), "{response}");
+    }
+
     #[test]
     fn default_worker_location_is_under_ai_engine() {
         assert!(default_worker_path().ends_with("ai-engine/src/aivoblock_ai/worker.py"));
