@@ -5,8 +5,8 @@ module Main (main) where
 
 import Control.Exception (IOException, try)
 import Control.Monad (when)
-import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash)
-import AivoBlock.Validation (validateBlockShape)
+import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash, hashBlockHeaderV1)
+import AivoBlock.Validation (validateBlockShape, validateChildHeader)
 import Data.Bits (shiftL, shiftR, (.&.))
 import qualified Data.ByteString as BS
 import AivoBlock.Block (mkHash256, Hash256)
@@ -208,6 +208,60 @@ dynamicRequest raw =
         then pure block
         else pure Nothing
 
+
+-- | Validate two supplied blocks' shapes, derive the parent's SHA-256
+-- header ID locally, then check the child's chain, version, ancestry,
+-- height and timestamp. The parent must already be trusted by the caller.
+-- This does not verify Merkle roots, signatures, AI proofs or consensus.
+childHeaderResponse :: Value -> BS.ByteString
+childHeaderResponse value =
+  case parseEither parsePair value of
+    Left _ -> failure "invalid_parent_or_child"
+    Right (parent, child) ->
+      let parentHeader = blockHeader parent
+          childHeader = blockHeader child
+          verdict = do
+            validateBlockShape parent
+            validateBlockShape child
+            parentHash <- either (Left . const "invalid_parent_header") Right
+              (hashBlockHeaderV1 parentHeader)
+            either (Left . show) Right
+              (validateChildHeader
+                (headerChainId parentHeader)
+                (headerVersion parentHeader)
+                parentHash parentHeader childHeader)
+      in case verdict of
+        Left reason -> decision False reason
+        Right () -> decision True "none"
+  where
+    parsePair = withObject "validate child request" $ \o -> do
+      parentValue <- o .: "parent"
+      childValue <- o .: "child"
+      parent <- parseBlock parentValue
+      child <- parseBlock childValue
+      pure (parent, child)
+    failure reason = BL.toStrict (encode (object
+      [ "ok" .= False, "error" .= (reason :: String) ]))
+    decision valid reason = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("validate_child_header" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "valid" .= valid
+      , "reason" .= (reason :: String)
+      , "scope" .= ("structural_parent_link_only" :: String)
+      ]))
+
+childRequest :: Value -> Maybe BS.ByteString
+childRequest value =
+  case parseEither parseKind value of
+    Right True -> Just (childHeaderResponse value)
+    _ -> Nothing
+  where
+    parseKind = withObject "request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (protocol == 1 && kind == "validate_child_header")
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | otherwise =
@@ -219,7 +273,9 @@ handleIpcRequest request
             _ -> case parseEither parseFixture value of
               Right (Just True) -> Just (shapeResponse True)
               Right (Just False) -> Just (shapeResponse False)
-              _ -> fmap (map chr . BS.unpack) (dynamicRequest request)
+              _ -> fmap (map chr . BS.unpack) (case childRequest value of
+                Just result -> Just result
+                Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
