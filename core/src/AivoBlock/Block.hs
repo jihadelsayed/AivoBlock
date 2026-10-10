@@ -17,7 +17,7 @@ module AivoBlock.Block
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Bits (shiftR)
+import Data.Bits (Bits, shiftR)
 import Data.Word (Word8)
 import Data.Word (Word32, Word64)
 
@@ -84,7 +84,8 @@ data Block = Block
 --
 -- ASCII domain tag plus NUL; then unsigned big-endian fields in the exact
 -- order specified by protocol/spec/canonical-encoding.md.
--- This function does NOT calculate SHA-256 or establish block validity.
+-- This function supplies the SHA-256 preimage, but does not calculate
+-- its digest or establish block validity.
 -- V1 is deliberately restricted to protocol header version 1.
 encodeBlockHeaderV1 :: BlockHeader -> Either String ByteString
 encodeBlockHeaderV1 h
@@ -109,7 +110,7 @@ encodeBlockHeaderV1 h
     word64BE :: Word64 -> ByteString
     word64BE n = BS.pack [byte n s | s <- [56,48,40,32,24,16,8,0]]
 
-    byte :: (Integral a) => a -> Int -> Word8
+    byte :: (Integral a, Bits a) => a -> Int -> Word8
     byte n s = fromIntegral (n `shiftR` s)
 
 -- | A structural check, NOT full genesis block validation.
