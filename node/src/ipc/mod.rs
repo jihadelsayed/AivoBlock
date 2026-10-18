@@ -12,6 +12,8 @@ pub mod python;
 /// Maximum permitted payload size for one local IPC message (4 MiB).
 pub const MAX_IPC_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
+// Framing decoder variants are exercised by tests and reserved for future IPC consumers.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     EmptyPayload,
@@ -29,8 +31,7 @@ pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
     if payload.len() > MAX_IPC_PAYLOAD_BYTES {
         return Err(FrameError::PayloadTooLarge);
     }
-    let length = u32::try_from(payload.len())
-        .map_err(|_| FrameError::PayloadTooLarge)?;
+    let length = u32::try_from(payload.len()).map_err(|_| FrameError::PayloadTooLarge)?;
     let mut frame = Vec::with_capacity(payload.len() + 4);
     frame.extend_from_slice(&length.to_be_bytes());
     frame.extend_from_slice(payload);
@@ -38,13 +39,14 @@ pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
 }
 
 /// Decode exactly one complete frame from an in-memory buffer.
+// The production stream reader currently decodes incrementally instead.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn decode_frame(frame: &[u8]) -> Result<&[u8], FrameError> {
     if frame.len() < 4 {
         return Err(FrameError::IncompleteHeader);
     }
-    let length = u32::from_be_bytes(
-        frame[..4].try_into().expect("checked four-byte header"),
-    ) as usize;
+    let length =
+        u32::from_be_bytes(frame[..4].try_into().expect("checked four-byte header")) as usize;
     if length == 0 {
         return Err(FrameError::EmptyPayload);
     }
@@ -77,8 +79,14 @@ mod tests {
         assert_eq!(encode_frame(b""), Err(FrameError::EmptyPayload));
         assert_eq!(decode_frame(&[0, 0]), Err(FrameError::IncompleteHeader));
         assert_eq!(decode_frame(&[0, 0, 0, 0]), Err(FrameError::EmptyPayload));
-        assert_eq!(decode_frame(&[0, 0, 0, 2, 1]), Err(FrameError::IncompletePayload));
-        assert_eq!(decode_frame(&[0, 0, 0, 1, 1, 2]), Err(FrameError::TrailingBytes));
+        assert_eq!(
+            decode_frame(&[0, 0, 0, 2, 1]),
+            Err(FrameError::IncompletePayload)
+        );
+        assert_eq!(
+            decode_frame(&[0, 0, 0, 1, 1, 2]),
+            Err(FrameError::TrailingBytes)
+        );
     }
 
     #[test]

@@ -42,8 +42,12 @@ impl Error for StorageError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Database(err) => Some(err),
-            Self::EmptyKey | Self::InvalidBlockHash | Self::InvalidParentHash
-            | Self::WrongParent | Self::WrongHeight | Self::CorruptChainState => None,
+            Self::EmptyKey
+            | Self::InvalidBlockHash
+            | Self::InvalidParentHash
+            | Self::WrongParent
+            | Self::WrongHeight
+            | Self::CorruptChainState => None,
         }
     }
 }
@@ -72,9 +76,11 @@ impl RocksDbStore {
         let mut options = Options::default();
         options.create_if_missing(true);
         let db = DB::open(&options, path)?;
-        Ok(Self { db, append_lock: Mutex::new(()) })
+        Ok(Self {
+            db,
+            append_lock: Mutex::new(()),
+        })
     }
-
 
     /// Legacy demo-only batch writer: does NOT check ancestry or height.
     /// Prefer append_checked_block for sequential local chain experiments.
@@ -100,7 +106,6 @@ impl RocksDbStore {
         self.db.write(batch).map_err(StorageError::from)
     }
 
-
     /// Append a previously verified block to a single local chain.
     ///
     /// Ensures the incoming parent equals the current tip, and the incoming
@@ -120,7 +125,10 @@ impl RocksDbStore {
         if parent_hash.len() != 32 {
             return Err(StorageError::InvalidParentHash);
         }
-        let _guard = self.append_lock.lock().map_err(|_| StorageError::CorruptChainState)?;
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
         let tip_key = storage_key(Column::ChainState, b"tip")?;
         let height_key = storage_key(Column::ChainState, b"height")?;
         let existing_tip = self.db.get(&tip_key)?;
@@ -195,7 +203,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn validates_block_hash_size_without_writing() {
         let path = std::env::temp_dir().join(format!(
@@ -226,7 +233,9 @@ mod tests {
         let hash = [42u8; 32];
         {
             let store = RocksDbStore::open(&path).unwrap();
-            store.put_validated_block_and_tip(&hash, b"sample-block").unwrap();
+            store
+                .put_validated_block_and_tip(&hash, b"sample-block")
+                .unwrap();
         }
         {
             let store = RocksDbStore::open(&path).unwrap();
@@ -242,7 +251,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(path);
     }
 
-
     #[test]
     fn checked_chain_rejects_wrong_parent_and_height_without_advancing() {
         let path = std::env::temp_dir().join(format!(
@@ -255,7 +263,9 @@ mod tests {
         let child = [2u8; 32];
         {
             let store = RocksDbStore::open(&path).unwrap();
-            store.append_checked_block(&genesis, &[0u8; 32], 0, b"genesis").unwrap();
+            store
+                .append_checked_block(&genesis, &[0u8; 32], 0, b"genesis")
+                .unwrap();
             assert!(matches!(
                 store.append_checked_block(&child, &[9u8; 32], 1, b"bad-parent"),
                 Err(StorageError::WrongParent)
@@ -264,14 +274,28 @@ mod tests {
                 store.append_checked_block(&child, &genesis, 3, b"bad-height"),
                 Err(StorageError::WrongHeight)
             ));
-            assert_eq!(store.get(Column::ChainState, b"tip").unwrap(), Some(genesis.to_vec()));
-            store.append_checked_block(&child, &genesis, 1, b"child").unwrap();
+            assert_eq!(
+                store.get(Column::ChainState, b"tip").unwrap(),
+                Some(genesis.to_vec())
+            );
+            store
+                .append_checked_block(&child, &genesis, 1, b"child")
+                .unwrap();
         }
         {
             let store = RocksDbStore::open(&path).unwrap();
-            assert_eq!(store.get(Column::ChainState, b"tip").unwrap(), Some(child.to_vec()));
-            assert_eq!(store.get(Column::ChainState, b"height").unwrap(), Some(1u64.to_be_bytes().to_vec()));
-            assert_eq!(store.get(Column::Blocks, &child).unwrap(), Some(b"child".to_vec()));
+            assert_eq!(
+                store.get(Column::ChainState, b"tip").unwrap(),
+                Some(child.to_vec())
+            );
+            assert_eq!(
+                store.get(Column::ChainState, b"height").unwrap(),
+                Some(1u64.to_be_bytes().to_vec())
+            );
+            assert_eq!(
+                store.get(Column::Blocks, &child).unwrap(),
+                Some(b"child".to_vec())
+            );
         }
         let _ = std::fs::remove_dir_all(path);
     }

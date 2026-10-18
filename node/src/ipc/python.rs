@@ -22,6 +22,28 @@ pub enum PythonIpcError {
     TrailingBytes,
 }
 
+impl std::fmt::Display for PythonIpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Framing(error) => write!(f, "invalid Python IPC frame: {error:?}"),
+            Self::Io(error) => write!(f, "Python worker I/O error: {error}"),
+            Self::ProcessFailed(code) => {
+                write!(f, "Python worker exited with status {code:?}")
+            }
+            error => write!(f, "{error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PythonIpcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 impl From<std::io::Error> for PythonIpcError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -73,15 +95,17 @@ impl PythonWorkerClient {
             .spawn()?;
 
         let response = (|| {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                std::io::Error::other("missing worker stdin")
-            })?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("missing worker stdin"))?;
             stdin.write_all(&frame)?;
             drop(stdin);
 
-            let mut stdout = child.stdout.take().ok_or_else(|| {
-                std::io::Error::other("missing worker stdout")
-            })?;
+            let mut stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| std::io::Error::other("missing worker stdout"))?;
             let mut header = [0u8; 4];
             stdout.read_exact(&mut header)?;
             let length = u32::from_be_bytes(header) as usize;

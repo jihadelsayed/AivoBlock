@@ -8,6 +8,8 @@ pub mod rocksdb;
 pub use rocksdb::RocksDbStore;
 
 /// Namespaces prevent keys for different record types from colliding.
+// Storage namespaces also reserve currently unused transaction/proof indexes.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {
     Blocks,
@@ -51,6 +53,8 @@ pub trait KeyValueStore {
 
     fn get(&self, column: Column, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error>;
     fn put(&self, column: Column, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
+    // Reserved for pruning and rollback once those protocols are implemented.
+    #[allow(dead_code)]
     fn delete(&self, column: Column, key: &[u8]) -> Result<(), Self::Error>;
 }
 

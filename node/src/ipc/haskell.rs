@@ -22,6 +22,28 @@ pub enum HaskellIpcError {
     IncompleteResponse,
 }
 
+impl std::fmt::Display for HaskellIpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Framing(error) => write!(f, "invalid Haskell IPC frame: {error:?}"),
+            Self::Io(error) => write!(f, "Haskell validator I/O error: {error}"),
+            Self::ProcessFailed(code) => {
+                write!(f, "Haskell validator exited with status {code:?}")
+            }
+            error => write!(f, "{error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for HaskellIpcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 impl From<std::io::Error> for HaskellIpcError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -71,9 +93,10 @@ impl HaskellValidatorClient {
             .spawn()?;
 
         let result = (|| {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                HaskellIpcError::Io(std::io::Error::other("missing child stdin"))
-            })?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| HaskellIpcError::Io(std::io::Error::other("missing child stdin")))?;
             stdin.write_all(&frame)?;
             drop(stdin);
 
@@ -84,7 +107,9 @@ impl HaskellValidatorClient {
             if let Err(error) = stdout.read_exact(&mut header) {
                 return if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     Err(HaskellIpcError::IncompleteResponse)
-                } else { Err(HaskellIpcError::Io(error)) };
+                } else {
+                    Err(HaskellIpcError::Io(error))
+                };
             }
             let length = u32::from_be_bytes(header) as usize;
             if length == 0 {
@@ -97,7 +122,9 @@ impl HaskellValidatorClient {
             if let Err(error) = stdout.read_exact(&mut response) {
                 return if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     Err(HaskellIpcError::IncompleteResponse)
-                } else { Err(HaskellIpcError::Io(error)) };
+                } else {
+                    Err(HaskellIpcError::Io(error))
+                };
             }
             let mut trailing = [0u8; 1];
             if stdout.read(&mut trailing)? != 0 {
@@ -110,15 +137,12 @@ impl HaskellValidatorClient {
             let _ = child.kill();
         }
         let status = child.wait()?;
-        // Keep the framing error when we terminated the child after detecting it.
-        // Otherwise report a nonzero exit from the Haskell executable.
-        if result.is_err() {
-            return result;
-        }
+        // Preserve the transport error after reaping a child that may have been killed.
+        let response = result?;
         if !status.success() {
             return Err(HaskellIpcError::ProcessFailed(status.code()));
         }
-        result
+        Ok(response)
     }
 }
 
@@ -134,7 +158,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn rejects_request_above_frame_limit_before_spawning() {
         let client = HaskellValidatorClient::new("not-a-real-validator").unwrap();
@@ -147,10 +170,13 @@ mod tests {
 
     #[test]
     fn reports_missing_haskell_executable() {
-        let client = HaskellValidatorClient::new(
-            "aivoblock-haskell-executable-that-does-not-exist"
-        ).unwrap();
-        assert!(matches!(client.exchange(b"{}"), Err(HaskellIpcError::Io(_))));
+        let client =
+            HaskellValidatorClient::new("aivoblock-haskell-executable-that-does-not-exist")
+                .unwrap();
+        assert!(matches!(
+            client.exchange(b"{}"),
+            Err(HaskellIpcError::Io(_))
+        ));
     }
 
     #[test]
