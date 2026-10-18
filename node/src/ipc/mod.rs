@@ -12,6 +12,8 @@ pub mod python;
 /// Maximum permitted payload size for one local IPC message (4 MiB).
 pub const MAX_IPC_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
+// Framing decoder variants are exercised by tests and reserved for future IPC consumers.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     EmptyPayload,
@@ -37,6 +39,8 @@ pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
 }
 
 /// Decode exactly one complete frame from an in-memory buffer.
+// The production stream reader currently decodes incrementally instead.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn decode_frame(frame: &[u8]) -> Result<&[u8], FrameError> {
     if frame.len() < 4 {
         return Err(FrameError::IncompleteHeader);

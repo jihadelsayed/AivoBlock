@@ -22,6 +22,28 @@ pub enum HaskellIpcError {
     IncompleteResponse,
 }
 
+impl std::fmt::Display for HaskellIpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Framing(error) => write!(f, "invalid Haskell IPC frame: {error:?}"),
+            Self::Io(error) => write!(f, "Haskell validator I/O error: {error}"),
+            Self::ProcessFailed(code) => {
+                write!(f, "Haskell validator exited with status {code:?}")
+            }
+            error => write!(f, "{error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for HaskellIpcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 impl From<std::io::Error> for HaskellIpcError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -115,15 +137,12 @@ impl HaskellValidatorClient {
             let _ = child.kill();
         }
         let status = child.wait()?;
-        // Keep the framing error when we terminated the child after detecting it.
-        // Otherwise report a nonzero exit from the Haskell executable.
-        if result.is_err() {
-            return result;
-        }
+        // Preserve the transport error after reaping a child that may have been killed.
+        let response = result?;
         if !status.success() {
             return Err(HaskellIpcError::ProcessFailed(status.code()));
         }
-        result
+        Ok(response)
     }
 }
 
