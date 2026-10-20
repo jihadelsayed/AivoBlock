@@ -11,10 +11,10 @@ use ed25519_dalek::{Signer, SigningKey};
 
 use crate::ai_pipeline::verify_demo_partitions_for;
 use crate::ai_proof_v2::{
-    commit_proof_block_v2, expected_result_commitment_v1, input_commitment_v1,
-    model_commitment_v1, rules_commitment_v1, task_id_v2, task_reward_batch_id_v2,
-    task_signing_bytes_v2, worker_signing_bytes_v2, InferenceTaskV2,
-    ProofBlockInput, RewardProofV2, SignedInferenceClaimV2,
+    commit_proof_block_v2, expected_result_commitment_v1, input_commitment_v1, model_commitment_v1,
+    rules_commitment_v1, task_id_v2, task_reward_batch_id_v2, task_signing_bytes_v2,
+    worker_signing_bytes_v2, InferenceTaskV2, ProofBlockInput, RewardProofV2,
+    SignedInferenceClaimV2,
 };
 use crate::genesis_checkpoint::{
     genesis_checkpoint_signing_bytes_v1, initialize_signed_genesis,
@@ -38,7 +38,8 @@ fn fixture_proof(authority: &SigningKey) -> Result<RewardProofV2, String> {
         rules_commitment: rules_commitment_v1(),
         deadline_height: 100,
         authorized_budget: 3,
-        weights, rows,
+        weights,
+        rows,
         authority_signature: [0; 64],
     };
     task.puzzle_id = task_id_v2(&task);
@@ -104,9 +105,18 @@ pub fn demo() -> Result<(), String> {
         fee_pool: 3,
         ..LedgerState::default()
     };
-    initial.accounts.insert([9; 32], LocalAccount { balance: 97, nonce: 0 });
+    initial.accounts.insert(
+        [9; 32],
+        LocalAccount {
+            balance: 97,
+            nonce: 0,
+        },
+    );
     let genesis_header = CommittedHeaderV1 {
-        version: 1, chain_id: 1, height: 0, parent_hash: [0; 32],
+        version: 1,
+        chain_id: 1,
+        height: 0,
+        parent_hash: [0; 32],
         transactions_root: transaction_root_v1(&[]).map_err(|e| format!("{e:?}"))?,
         puzzle_proofs_root: [0; 32],
         state_root: ledger_state_root_v1(&initial).map_err(|e| format!("{e:?}"))?,
@@ -121,10 +131,13 @@ pub fn demo() -> Result<(), String> {
         signature: authority.sign(&signable).to_bytes(),
     };
 
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|_| "Clock before epoch")?.as_nanos();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Clock before epoch")?
+        .as_nanos();
     let path = env::temp_dir().join(format!(
-        "aivoblock-proof-v2-{}-{timestamp}", std::process::id(),
+        "aivoblock-proof-v2-{}-{timestamp}",
+        std::process::id(),
     ));
     let block_id;
     let expected;
@@ -133,7 +146,14 @@ pub fn demo() -> Result<(), String> {
         let genesis_id = initialize_signed_genesis(&db, &checkpoint, &trusted_key)?;
         let mut forged = proof.clone();
         forged.claims[0].receipt.result_commitment[0] ^= 1;
-        if commit_proof_block_v2(&db, &core, &trusted_key, block_input(&forged, &initial, &genesis_id)).is_ok() {
+        if commit_proof_block_v2(
+            &db,
+            &core,
+            &trusted_key,
+            block_input(&forged, &initial, &genesis_id),
+        )
+        .is_ok()
+        {
             return Err("Forged AI result paid a worker".into());
         }
         forged = proof.clone();
@@ -141,9 +161,13 @@ pub fn demo() -> Result<(), String> {
         if commit_proof_block_v2(&db, &core, &trusted_key, input(&forged)).is_ok() {
             return Err("Changed model weights passed proof verification".into());
         }
-        if commit_proof_block_v2(&db, &core,
+        if commit_proof_block_v2(
+            &db,
+            &core,
             &SigningKey::from_bytes(&[18; 32]).verifying_key().to_bytes(),
-            block_input(&proof, &initial, &genesis_id)).is_ok()
+            block_input(&proof, &initial, &genesis_id),
+        )
+        .is_ok()
         {
             return Err("Untrusted work authority authorized a payout".into());
         }
@@ -152,16 +176,24 @@ pub fn demo() -> Result<(), String> {
         }
 
         block_id = commit_proof_block_v2(&db, &core, &trusted_key, input(&proof))?;
-        expected = db.read_local_ledger_state().map_err(|e| e.to_string())?
+        expected = db
+            .read_local_ledger_state()
+            .map_err(|e| e.to_string())?
             .ok_or("Missing V2 ledger")?;
         if expected.fee_pool != 0
             || expected.settled_batches.len() != 1
             || !expected.settled_batches.contains(&proof.batch_id)
             || expected.paid_receipts.len() != 2
-            || expected.accounts.get(&proof.claims[0].receipt.worker_id)
-                .map(|a| a.balance) != Some(2)
-            || expected.accounts.get(&proof.claims[1].receipt.worker_id)
-                .map(|a| a.balance) != Some(1)
+            || expected
+                .accounts
+                .get(&proof.claims[0].receipt.worker_id)
+                .map(|a| a.balance)
+                != Some(2)
+            || expected
+                .accounts
+                .get(&proof.claims[1].receipt.worker_id)
+                .map(|a| a.balance)
+                != Some(1)
         {
             return Err("Independent AI proof payouts or replay markers wrong".into());
         }
@@ -169,32 +201,46 @@ pub fn demo() -> Result<(), String> {
         // cannot pay it again, because the batch ID is derived from the task.
         let mut differently_partitioned = proof.clone();
         differently_partitioned.claims.swap(0, 1);
-        if commit_proof_block_v2(&db, &core, &trusted_key, ProofBlockInput {
-            expected_prior: &expected, parent_id: &block_id, height: 2,
-            timestamp_ms: 1002, proof: &differently_partitioned,
-        }).is_ok() {
+        if commit_proof_block_v2(
+            &db,
+            &core,
+            &trusted_key,
+            ProofBlockInput {
+                expected_prior: &expected,
+                parent_id: &block_id,
+                height: 2,
+                timestamp_ms: 1002,
+                proof: &differently_partitioned,
+            },
+        )
+        .is_ok()
+        {
             return Err("Replayed or overlapping V2 task rewarded again".into());
         }
     }
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
-        let audited = replay_chain_from_signed_checkpoint(
-            &db, &core, &checkpoint, &trusted_key,
-        )?;
-        if audited.ledger != expected || audited.tip_id != block_id
-            || audited.reward_blocks != 1 || audited.settled_receipts != 2
+        let audited = replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key)?;
+        if audited.ledger != expected
+            || audited.tip_id != block_id
+            || audited.reward_blocks != 1
+            || audited.settled_receipts != 2
         {
             return Err("Independent V2 history recomputation differs from state".into());
         }
-        let raw = db.get(Column::Blocks, &block_id).map_err(|e| e.to_string())?
+        let raw = db
+            .get(Column::Blocks, &block_id)
+            .map_err(|e| e.to_string())?
             .ok_or("Missing persisted V2 proof")?;
         let mut corrupted = raw.clone();
         *corrupted.last_mut().ok_or("Empty V2 proof block")? ^= 1;
-        db.put(Column::Blocks, &block_id, &corrupted).map_err(|e| e.to_string())?;
+        db.put(Column::Blocks, &block_id, &corrupted)
+            .map_err(|e| e.to_string())?;
         if replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key).is_ok() {
             return Err("Tampered stored V2 proof passed independent replay".into());
         }
-        db.put(Column::Blocks, &block_id, &raw).map_err(|e| e.to_string())?;
+        db.put(Column::Blocks, &block_id, &raw)
+            .map_err(|e| e.to_string())?;
         if replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key)?.ledger
             != expected
         {
@@ -206,6 +252,8 @@ pub fn demo() -> Result<(), String> {
     println!("Worker-signed claims, task issuer and canonical commitments: PASS");
     println!("Haskell funded 2 + 1 reward, RocksDB atomic restart/replay: PASS");
     println!("Forgery, changed model, untrusted issuer and corrupted storage: REJECTED");
-    println!("Scope: tiny deterministic integer inference only; no succinct proofs, P2P or consensus");
+    println!(
+        "Scope: tiny deterministic integer inference only; no succinct proofs, P2P or consensus"
+    );
     Ok(())
 }
