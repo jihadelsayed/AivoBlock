@@ -57,7 +57,10 @@ pub fn encode_ledger_state(state: &LedgerState) -> Result<Vec<u8>, StateCodecErr
     Ok(out)
 }
 
-fn read_bytes<const N: usize>(bytes: &[u8], offset: &mut usize) -> Result<[u8; N], StateCodecError> {
+fn read_bytes<const N: usize>(
+    bytes: &[u8],
+    offset: &mut usize,
+) -> Result<[u8; N], StateCodecError> {
     let end = offset
         .checked_add(N)
         .ok_or(StateCodecError::MalformedSnapshot)?;
@@ -70,7 +73,11 @@ fn read_bytes<const N: usize>(bytes: &[u8], offset: &mut usize) -> Result<[u8; N
     Ok(result)
 }
 
-fn read_count(bytes: &[u8], offset: &mut usize, item_size: usize) -> Result<usize, StateCodecError> {
+fn read_count(
+    bytes: &[u8],
+    offset: &mut usize,
+    item_size: usize,
+) -> Result<usize, StateCodecError> {
     let count = u32::from_be_bytes(read_bytes::<4>(bytes, offset)?) as usize;
     if count > bytes.len().saturating_sub(*offset) / item_size {
         return Err(StateCodecError::MalformedSnapshot);
@@ -91,7 +98,10 @@ pub fn decode_ledger_state(bytes: &[u8]) -> Result<LedgerState, StateCodecError>
         let address = read_bytes::<32>(bytes, &mut offset)?;
         let balance = u64::from_be_bytes(read_bytes::<8>(bytes, &mut offset)?);
         let nonce = u64::from_be_bytes(read_bytes::<8>(bytes, &mut offset)?);
-        if accounts.insert(address, LocalAccount { balance, nonce }).is_some() {
+        if accounts
+            .insert(address, LocalAccount { balance, nonce })
+            .is_some()
+        {
             return Err(StateCodecError::MalformedSnapshot);
         }
     }
@@ -128,8 +138,20 @@ mod tests {
             fee_pool: 13,
             ..LedgerState::default()
         };
-        ledger.accounts.insert([3; 32], LocalAccount { balance: 20, nonce: 1 });
-        ledger.accounts.insert([1; 32], LocalAccount { balance: 40, nonce: 2 });
+        ledger.accounts.insert(
+            [3; 32],
+            LocalAccount {
+                balance: 20,
+                nonce: 1,
+            },
+        );
+        ledger.accounts.insert(
+            [1; 32],
+            LocalAccount {
+                balance: 40,
+                nonce: 2,
+            },
+        );
         ledger.settled_batches.insert([9; 32]);
         ledger.paid_receipts.insert([5; 32]);
         ledger
@@ -166,8 +188,7 @@ mod tests {
             Err(StateCodecError::MalformedSnapshot)
         );
         let mut fake_count = encoded;
-        fake_count[MAGIC.len() + 8..MAGIC.len() + 12]
-            .copy_from_slice(&u32::MAX.to_be_bytes());
+        fake_count[MAGIC.len() + 8..MAGIC.len() + 12].copy_from_slice(&u32::MAX.to_be_bytes());
         assert_eq!(
             decode_ledger_state(&fake_count),
             Err(StateCodecError::MalformedSnapshot)
