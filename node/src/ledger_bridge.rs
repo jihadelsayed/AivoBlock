@@ -13,7 +13,7 @@ use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
 use crate::transaction_commitment::{
     signed_transaction_id_v1, transaction_root_v1, ledger_state_root_v1,
-    canonical_header_v1, commit_signed_transfer_block, CommittedHeaderV1,
+    canonical_header_v1, commit_signed_transfer_block, verify_stored_single_transfer_block, CommittedHeaderV1,
 };
 use sha2::{Digest, Sha256};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
@@ -338,6 +338,17 @@ pub fn demo() -> Result<(), String> {
             .read_local_ledger_state()
             .map_err(|e| e.to_string())?
             .ok_or("Missing final ledger")?;
+        let stored_block = db
+            .get(Column::Blocks, &second_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("Missing signed block after reopen")?;
+        verify_stored_single_transfer_block(
+            &stored_block,
+            &second_id,
+            &fixture_transfer(&fixture_key, bob, 5, 1, 1),
+            &final_state,
+        )
+        .map_err(|error| format!("Stored block commitment mismatch: {error:?}"))?;
         if final_state.fee_pool != 3
             || final_state.accounts.get(&alice).map(|x| x.balance) != Some(82)
             || final_state.accounts.get(&bob).map(|x| x.balance) != Some(15)
