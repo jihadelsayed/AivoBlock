@@ -161,9 +161,15 @@ mod tests {
     #[test]
     fn canonical_id_rejects_invalid_ranges_and_chain() {
         let mut r = receipt(&assignment(0, 2));
-        assert_eq!(canonical_receipt_id_v1(0, &r), Err(ReceiptError::InvalidRange));
+        assert_eq!(
+            canonical_receipt_id_v1(0, &r),
+            Err(ReceiptError::InvalidRange)
+        );
         r.range.count = 0;
-        assert_eq!(canonical_receipt_id_v1(1, &r), Err(ReceiptError::InvalidRange));
+        assert_eq!(
+            canonical_receipt_id_v1(1, &r),
+            Err(ReceiptError::InvalidRange)
+        );
         r.range.start = u64::MAX;
         r.range.count = 2;
         assert_eq!(canonical_receipt_id_v1(1, &r), Err(ReceiptError::InvalidRange));
