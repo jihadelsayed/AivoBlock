@@ -46,6 +46,21 @@ struct SignedTransferReply {
     state_root: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RewardBlockReply {
+    #[serde(rename = "type")]
+    kind: String,
+    ok: bool,
+    protocol_version: u32,
+    accepted: bool,
+    reason: String,
+    scope: String,
+    state_hex: Option<String>,
+    state_root: Option<String>,
+    receipt_ids: Option<Vec<String>>,
+}
+
 fn check_envelope(
     kind: &str,
     scope: &str,
@@ -189,6 +204,82 @@ pub fn decode_signed_transfer_reply(
         return Err("Haskell single-transfer Merkle root mismatch".into());
     }
     parse_ledger_and_state_root(reply.state_hex, reply.state_root)
+}
+
+/// Do not authorize a payout from string searches or caller-supplied balances.
+/// Require a strict Haskell envelope, canonical exact receipt IDs and root,
+/// then independently check replay markers and fee conservation in Rust.
+pub fn decode_reward_block_reply(
+    response: &[u8],
+    batch_id: &[u8; 32],
+    budget: u64,
+    expected_receipts: &[[u8; 32]],
+    prior: &LedgerState,
+) -> Result<LedgerState, String> {
+    let reply: RewardBlockReply = parse_json(response)?;
+    check_envelope(
+        &reply.kind,
+        &reply.scope,
+        (
+            "ledger_reward_block_fixture",
+            "caller_attested_fee_funded_reward_block_only",
+        ),
+        reply.ok,
+        reply.protocol_version,
+        reply.accepted,
+        &reply.reason,
+    )?;
+    if *batch_id == [0; 32] || budget == 0
+        || expected_receipts.is_empty() || expected_receipts.len() > 64
+        || prior.fee_pool < budget
+    {
+        return Err("Invalid reward batch, receipt count or fee budget".into());
+    }
+    let reported = reply.receipt_ids.ok_or("Missing settled receipt IDs")?;
+    if reported.len() != expected_receipts.len() {
+        return Err("Haskell reward receipt count mismatch".into());
+    }
+    for (reported_id, expected) in reported.iter().zip(expected_receipts) {
+        if parse_hash(reported_id)? != *expected {
+            return Err("Haskell reward receipt ID or order mismatch".into());
+        }
+    }
+    let state = parse_ledger_and_state_root(reply.state_hex, reply.state_root)?;
+    if state.fee_pool != prior.fee_pool - budget {
+        return Err("Funded reward changed the wrong amount of fees".into());
+    }
+    let mut batches = prior.settled_batches.clone();
+    if !batches.insert(*batch_id) || state.settled_batches != batches {
+        return Err("Reward batch markers were forged or replayed".into());
+    }
+    let mut paid = prior.paid_receipts.clone();
+    for id in expected_receipts {
+        if *id == [0; 32] || !paid.insert(*id) {
+            return Err("Reward receipt reused or forged".into());
+        }
+    }
+    if state.paid_receipts != paid {
+        return Err("Reward receipt markers were not fully committed".into());
+    }
+    for (address, account) in &prior.accounts {
+        match state.accounts.get(address) {
+            Some(next) if next.nonce == account.nonce && next.balance >= account.balance => {}
+            _ => return Err("Reward settlement modified existing account or nonce".into()),
+        }
+    }
+    for (address, account) in &state.accounts {
+        if !prior.accounts.contains_key(address) && account.nonce != 0 {
+            return Err("New reward account has an invalid nonce".into());
+        }
+    }
+    let supply = |ledger: &LedgerState| {
+        ledger.accounts.values().map(|a| u128::from(a.balance)).sum::<u128>()
+            + u128::from(ledger.fee_pool)
+    };
+    if supply(&state) != supply(prior) {
+        return Err("Reward settlement minted funds or destroyed supply".into());
+    }
+    Ok(state)
 }
 
 #[cfg(test)]
