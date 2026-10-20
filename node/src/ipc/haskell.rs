@@ -112,13 +112,11 @@ impl HaskellValidatorClient {
         let status = child.wait()?;
         // Keep the framing error when we terminated the child after detecting it.
         // Otherwise report a nonzero exit from the Haskell executable.
-        if result.is_err() {
-            return result;
-        }
+        let response = result?;
         if !status.success() {
             return Err(HaskellIpcError::ProcessFailed(status.code()));
         }
-        result
+        Ok(response)
     }
 }
 
