@@ -50,12 +50,10 @@ fn hash(bytes: &[u8]) -> [u8; 32] {
 
 /// Hash both canonical V1 signing bytes and the *exact* detached signature.
 /// Do not hash JSON, ignore the signature, or permit invalid signed inputs.
-pub fn signed_transaction_id_v1(
-    transfer: &SignedTransferV1,
-) -> Result<[u8; 32], CommitmentError> {
+pub fn signed_transaction_id_v1(transfer: &SignedTransferV1) -> Result<[u8; 32], CommitmentError> {
     verify_signed_transfer_v1(transfer).map_err(|_| CommitmentError::InvalidTransaction)?;
-    let signing_bytes = transfer_signing_bytes_v1(transfer)
-        .map_err(|_| CommitmentError::InvalidTransaction)?;
+    let signing_bytes =
+        transfer_signing_bytes_v1(transfer).map_err(|_| CommitmentError::InvalidTransaction)?;
     let mut bytes = Vec::with_capacity(TX_ID_DOMAIN.len() + 118 + 64);
     bytes.extend_from_slice(TX_ID_DOMAIN);
     bytes.extend_from_slice(&signing_bytes);
@@ -103,8 +101,7 @@ pub fn transaction_root_v1(ids: &[[u8; 32]]) -> Result<[u8; 32], CommitmentError
 
 /// Domain-separated SHA-256 of exact typed Rust/Haskell ledger snapshot bytes.
 pub fn ledger_state_root_v1(state: &LedgerState) -> Result<[u8; 32], CommitmentError> {
-    let snapshot =
-        encode_ledger_state(state).map_err(|_| CommitmentError::InvalidBlockBytes)?;
+    let snapshot = encode_ledger_state(state).map_err(|_| CommitmentError::InvalidBlockBytes)?;
     let mut bytes = Vec::with_capacity(STATE_DOMAIN.len() + snapshot.len());
     bytes.extend_from_slice(STATE_DOMAIN);
     bytes.extend_from_slice(&snapshot);
@@ -112,9 +109,7 @@ pub fn ledger_state_root_v1(state: &LedgerState) -> Result<[u8; 32], CommitmentE
 }
 
 /// Reuse the existing 178-byte canonical V1 header layout.
-pub fn canonical_header_v1(
-    header: &CommittedHeaderV1,
-) -> Result<[u8; 178], CommitmentError> {
+pub fn canonical_header_v1(header: &CommittedHeaderV1) -> Result<[u8; 178], CommitmentError> {
     if header.version != 1 || header.chain_id != 1 {
         return Err(CommitmentError::UnsupportedHeader);
     }
@@ -158,8 +153,8 @@ pub fn verify_single_transfer_block(
     }
     let encoded_header = canonical_header_v1(header)?;
     let block_id = hash(&encoded_header);
-    let signing_bytes = transfer_signing_bytes_v1(transfer)
-        .map_err(|_| CommitmentError::InvalidTransaction)?;
+    let signing_bytes =
+        transfer_signing_bytes_v1(transfer).map_err(|_| CommitmentError::InvalidTransaction)?;
     let mut body = Vec::with_capacity(BODY_DOMAIN.len() + 178 + 4 + 32 + 118 + 64);
     body.extend_from_slice(BODY_DOMAIN);
     body.extend_from_slice(&encoded_header);
@@ -198,8 +193,8 @@ pub fn verify_stored_single_transfer_block(
     if rest[182..214] != id {
         return Err(CommitmentError::InvalidTransaction);
     }
-    let signing_bytes = transfer_signing_bytes_v1(transaction)
-        .map_err(|_| CommitmentError::InvalidTransaction)?;
+    let signing_bytes =
+        transfer_signing_bytes_v1(transaction).map_err(|_| CommitmentError::InvalidTransaction)?;
     if rest[214..332] != signing_bytes || rest[332..396] != transaction.signature {
         return Err(CommitmentError::InvalidTransaction);
     }
@@ -232,8 +227,7 @@ pub fn commit_signed_transfer_block(
     if on_disk.as_ref() != Some(expected_prior) {
         return Err(CommitmentError::WrongPriorState);
     }
-    let (block_id, block_bytes) =
-        verify_single_transfer_block(header, tx, haskell_post_state)?;
+    let (block_id, block_bytes) = verify_single_transfer_block(header, tx, haskell_post_state)?;
     store
         .append_atomic_ledger_block(
             &block_id,
@@ -271,7 +265,9 @@ mod tests {
             public_key: public,
             signature: [0; 64],
         };
-        tx.signature = key.sign(&transfer_signing_bytes_v1(&tx).unwrap()).to_bytes();
+        tx.signature = key
+            .sign(&transfer_signing_bytes_v1(&tx).unwrap())
+            .to_bytes();
         tx
     }
 
@@ -282,7 +278,10 @@ mod tests {
     #[test]
     fn cross_language_transaction_id_and_leaf_vector() {
         let id = signed_transaction_id_v1(&tx(10, 0)).unwrap();
-        assert_eq!(hex(&id), "a75cb64af25b97c4f7f06feb4a77827ba4d1159426eb45a9c99fded8dcb5b52d");
+        assert_eq!(
+            hex(&id),
+            "a75cb64af25b97c4f7f06feb4a77827ba4d1159426eb45a9c99fded8dcb5b52d"
+        );
         assert_eq!(
             hex(&transaction_root_v1(&[id]).unwrap()),
             "d0ea168dc83df1fd8bf95b46bf20d434d4bd2ae12b1a9ce7cf77cadac19283c3"
@@ -298,21 +297,39 @@ mod tests {
         let a = signed_transaction_id_v1(&tx(10, 0)).unwrap();
         let b = signed_transaction_id_v1(&tx(11, 0)).unwrap();
         let c = signed_transaction_id_v1(&tx(12, 0)).unwrap();
-        assert_ne!(transaction_root_v1(&[a, b]).unwrap(), transaction_root_v1(&[b, a]).unwrap());
-        assert_ne!(transaction_root_v1(&[a, b]).unwrap(), transaction_root_v1(&[a, b, c]).unwrap());
-        assert_ne!(transaction_root_v1(&[a, b, c]).unwrap(), transaction_root_v1(&[a, c, b]).unwrap());
-        assert_eq!(transaction_root_v1(&[a, a]), Err(CommitmentError::DuplicateTransaction));
+        assert_ne!(
+            transaction_root_v1(&[a, b]).unwrap(),
+            transaction_root_v1(&[b, a]).unwrap()
+        );
+        assert_ne!(
+            transaction_root_v1(&[a, b]).unwrap(),
+            transaction_root_v1(&[a, b, c]).unwrap()
+        );
+        assert_ne!(
+            transaction_root_v1(&[a, b, c]).unwrap(),
+            transaction_root_v1(&[a, c, b]).unwrap()
+        );
+        assert_eq!(
+            transaction_root_v1(&[a, a]),
+            Err(CommitmentError::DuplicateTransaction)
+        );
     }
 
     #[test]
     fn unsigned_or_tampered_tx_has_no_valid_identifier() {
         let original = tx(10, 0);
         assert_eq!(
-            signed_transaction_id_v1(&SignedTransferV1 { amount: 11, ..original }),
+            signed_transaction_id_v1(&SignedTransferV1 {
+                amount: 11,
+                ..original
+            }),
             Err(CommitmentError::InvalidTransaction)
         );
         assert_eq!(
-            signed_transaction_id_v1(&SignedTransferV1 { signature: [0;64], ..original }),
+            signed_transaction_id_v1(&SignedTransferV1 {
+                signature: [0; 64],
+                ..original
+            }),
             Err(CommitmentError::InvalidTransaction)
         );
     }
@@ -321,25 +338,52 @@ mod tests {
     fn stored_block_binds_transaction_and_post_state() {
         let signed = tx(10, 0);
         let mut post = LedgerState::default();
-        post.accounts.insert(signed.sender, crate::storage::LocalAccount {balance: 88,nonce: 1});
-        post.accounts.insert([2;32], crate::storage::LocalAccount {balance: 10,nonce: 0});
+        post.accounts.insert(
+            signed.sender,
+            crate::storage::LocalAccount {
+                balance: 88,
+                nonce: 1,
+            },
+        );
+        post.accounts.insert(
+            [2; 32],
+            crate::storage::LocalAccount {
+                balance: 10,
+                nonce: 0,
+            },
+        );
         post.fee_pool = 2;
         let header = CommittedHeaderV1 {
-            version:1, chain_id:1,height:1,parent_hash:[3;32],
-            transactions_root: transaction_root_v1(&[signed_transaction_id_v1(&signed).unwrap()]).unwrap(),
-            puzzle_proofs_root:[0;32],
-            state_root:ledger_state_root_v1(&post).unwrap(),timestamp_ms:1001
+            version: 1,
+            chain_id: 1,
+            height: 1,
+            parent_hash: [3; 32],
+            transactions_root: transaction_root_v1(&[signed_transaction_id_v1(&signed).unwrap()])
+                .unwrap(),
+            puzzle_proofs_root: [0; 32],
+            state_root: ledger_state_root_v1(&post).unwrap(),
+            timestamp_ms: 1001,
         };
-        let (block_id,block_bytes)=verify_single_transfer_block(&header,&signed,&post).unwrap();
-        verify_stored_single_transfer_block(&block_bytes,&block_id,&signed,&post).unwrap();
+        let (block_id, block_bytes) =
+            verify_single_transfer_block(&header, &signed, &post).unwrap();
+        verify_stored_single_transfer_block(&block_bytes, &block_id, &signed, &post).unwrap();
         let mut altered = post.clone();
         altered.fee_pool = 3;
-        assert_eq!(verify_single_transfer_block(&header,&signed,&altered), Err(CommitmentError::WrongStateRoot));
-        let mut wrong=header;
-        wrong.transactions_root=[0;32];
-        assert_eq!(verify_single_transfer_block(&wrong,&signed,&post), Err(CommitmentError::WrongTransactionRoot));
-        let mut changed=block_bytes.clone();
-        changed[0]^=1;
-        assert_eq!(verify_stored_single_transfer_block(&changed,&block_id,&signed,&post), Err(CommitmentError::InvalidBlockBytes));
+        assert_eq!(
+            verify_single_transfer_block(&header, &signed, &altered),
+            Err(CommitmentError::WrongStateRoot)
+        );
+        let mut wrong = header;
+        wrong.transactions_root = [0; 32];
+        assert_eq!(
+            verify_single_transfer_block(&wrong, &signed, &post),
+            Err(CommitmentError::WrongTransactionRoot)
+        );
+        let mut changed = block_bytes.clone();
+        changed[0] ^= 1;
+        assert_eq!(
+            verify_stored_single_transfer_block(&changed, &block_id, &signed, &post),
+            Err(CommitmentError::InvalidBlockBytes)
+        );
     }
 }
