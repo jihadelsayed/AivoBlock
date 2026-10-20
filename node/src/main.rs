@@ -7,6 +7,7 @@ mod ai_pipeline;
 mod batch_commitment;
 mod batch_pipeline;
 mod batch_replay;
+mod chain_replay;
 mod block_replay;
 #[allow(dead_code)]
 // IPC error variants and frame helpers are part of the unfinished node protocol.
