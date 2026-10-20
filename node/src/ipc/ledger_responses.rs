@@ -341,7 +341,8 @@ mod tests {
         post.settled_batches.insert(batch_id);
         post.paid_receipts.extend(receipts);
         for (address, balance) in [([5; 32], 2), ([6; 32], 1)] {
-            post.accounts.insert(address, LocalAccount { balance, nonce: 0 });
+            post.accounts
+                .insert(address, LocalAccount { balance, nonce: 0 });
         }
         let bytes = serde_json::to_vec(&json!({
             "ok": true,
@@ -365,9 +366,10 @@ mod tests {
             r#""accepted":true,"accepted":false"#,
             1,
         );
-        assert!(decode_reward_block_reply(
-            duplicated.as_bytes(), &batch_id, 3, &receipts, &prior
-        ).is_err());
+        assert!(
+            decode_reward_block_reply(duplicated.as_bytes(), &batch_id, 3, &receipts, &prior)
+                .is_err()
+        );
         let original: Value = serde_json::from_slice(&bytes).unwrap();
         for (key, bad) in [
             ("accepted", json!(false)),
@@ -379,26 +381,35 @@ mod tests {
         ] {
             let mut changed = original.clone();
             changed[key] = bad;
-            assert!(decode_reward_block_reply(
-                &serde_json::to_vec(&changed).unwrap(), &batch_id, 3, &receipts, &prior
-            ).is_err(), "bad reward field: {key}");
+            assert!(
+                decode_reward_block_reply(
+                    &serde_json::to_vec(&changed).unwrap(),
+                    &batch_id,
+                    3,
+                    &receipts,
+                    &prior
+                )
+                .is_err(),
+                "bad reward field: {key}"
+            );
         }
-        assert!(decode_reward_block_reply(
-            &bytes, &batch_id, 2, &receipts, &prior
-        ).is_err());
+        assert!(decode_reward_block_reply(&bytes, &batch_id, 2, &receipts, &prior).is_err());
         let mut replay = prior.clone();
         replay.paid_receipts.insert(receipts[0]);
-        assert!(decode_reward_block_reply(
-            &bytes, &batch_id, 3, &receipts, &replay
-        ).is_err());
+        assert!(decode_reward_block_reply(&bytes, &batch_id, 3, &receipts, &replay).is_err());
         let mut minted = post.clone();
         minted.accounts.get_mut(&[5; 32]).unwrap().balance += 1;
         let mut response: Value = original;
         response["state_hex"] = json!(hex(&encode_ledger_state(&minted).unwrap()));
         response["state_root"] = json!(hex(&ledger_state_root_v1(&minted).unwrap()));
         assert!(decode_reward_block_reply(
-            &serde_json::to_vec(&response).unwrap(), &batch_id, 3, &receipts, &prior
-        ).is_err());
+            &serde_json::to_vec(&response).unwrap(),
+            &batch_id,
+            3,
+            &receipts,
+            &prior
+        )
+        .is_err());
     }
 
     #[test]
