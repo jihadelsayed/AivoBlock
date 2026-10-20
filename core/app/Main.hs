@@ -17,8 +17,9 @@ import AivoBlock.RewardEligibility (VerifiedWork(..), eligibleContributions)
 import AivoBlock.Rewards (Contribution(..))
 import AivoBlock.ReceiptId (canonicalReceiptIdV1)
 import AivoBlock.Settlement (RewardEntitlement(..), settleFundedRewards)
-import AivoBlock.Ledger (Ledger(..), Account(..))
-import AivoBlock.Transaction (mkAddress, addressBytes)
+import AivoBlock.Ledger (Ledger(..), Account(..), applyVerifiedTransfer)
+import AivoBlock.LocalLedgerSnapshot (decodeLedgerSnapshot, encodeLedgerSnapshot)
+import AivoBlock.Transaction (Transaction(..), mkAddress, addressBytes, mkAmount)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (chr, ord)
@@ -428,6 +429,78 @@ settlementRequest value =
       kind <- o .: "type" :: Parser String
       pure (protocol == 1 && kind == "settlement_fixture")
 
+-- | Transfer fixture: the Rust caller supplies the stored previous
+-- snapshot and asserts prior authentication. Haskell, not Rust, applies the
+-- deterministic transfer rule. No signature validation or consensus here.
+ledgerTransitionResponse :: Value -> BS.ByteString
+ledgerTransitionResponse value =
+  case parseEither parseTransferFixture value of
+    Left _ -> decision False "invalid_ledger_transition_request" Nothing
+    Right (priorBytes, tx) ->
+      let verdict = do
+            previous <- decodeLedgerSnapshot priorBytes
+            updated <- applyVerifiedTransfer tx previous
+            encodeLedgerSnapshot updated
+      in case verdict of
+        Left problem -> decision False problem Nothing
+        Right bytes -> decision True "none" (Just (hexBytes bytes))
+  where
+    parseTransferFixture = withObject "ledger transfer fixture" $ \o -> do
+      attested <- o .: "caller_attested" :: Parser Bool
+      when (not attested) (fail "Missing local caller attestation")
+      version <- o .: "version" :: Parser Word64
+      chain <- o .: "chain_id" :: Parser Word64
+      when (version /= 1 || chain /= 1)
+        (fail "Unsupported transfer version or chain")
+      snapshotHex <- o .: "state_hex" :: Parser String
+      when (length snapshotHex > 2 * 1024 * 1024)
+        (fail "Ledger snapshot exceeds prototype limit")
+      prior <- parseHexString snapshotHex
+      transferValue <- o .: "transfer"
+      tx <- withObject "transfer" (\t -> do
+        senderHex <- t .: "sender" :: Parser String
+        recipientHex <- t .: "recipient" :: Parser String
+        sender <- parseAddress senderHex
+        recipient <- parseAddress recipientHex
+        amount <- t .: "amount" :: Parser Word64
+        fee <- t .: "fee" :: Parser Word64
+        nonce <- t .: "nonce" :: Parser Word64
+        pure (Transaction version chain sender recipient
+                (mkAmount amount) (mkAmount fee) nonce Nothing
+                BS.empty BS.empty)) transferValue
+      pure (prior, tx)
+    parseAddress string = do
+      digest <- parseHash string
+      either fail pure (mkAddress (hash256Bytes digest))
+    parseHexString hex
+      | odd (length hex) || not (all isHexDigit hex) =
+          fail "Invalid hex ledger snapshot"
+      | otherwise = pure (BS.pack (decodeHex hex))
+      where
+        decodeHex (a:b:rest) =
+          fromIntegral (16 * digitToInt a + digitToInt b) : decodeHex rest
+        decodeHex _ = []
+    decision accepted reason nextState = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("ledger_transfer_fixture" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "accepted" .= accepted
+      , "reason" .= (reason :: String)
+      , "scope" .= ("caller_attested_haskell_transfer_only" :: String)
+      , "state_hex" .= nextState
+      ]))
+
+ledgerTransitionRequest :: Value -> Maybe BS.ByteString
+ledgerTransitionRequest value =
+  case parseEither parser value of
+    Right True -> Just (ledgerTransitionResponse value)
+    _ -> Nothing
+  where
+    parser = withObject "ledger transition request" $ \o -> do
+      version <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (version == 1 && kind == "ledger_transfer_fixture")
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | otherwise =
@@ -445,7 +518,9 @@ handleIpcRequest request
                   Just result -> Just result
                   Nothing -> case settlementRequest value of
                     Just result -> Just result
-                    Nothing -> dynamicRequest request)
+                    Nothing -> case ledgerTransitionRequest value of
+                      Just result -> Just result
+                      Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
