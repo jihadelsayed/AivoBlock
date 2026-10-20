@@ -172,7 +172,10 @@ mod tests {
         );
         r.range.start = u64::MAX;
         r.range.count = 2;
-        assert_eq!(canonical_receipt_id_v1(1, &r), Err(ReceiptError::InvalidRange));
+        assert_eq!(
+            canonical_receipt_id_v1(1, &r),
+            Err(ReceiptError::InvalidRange)
+        );
     }
 
     #[test]
