@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::batch_commitment::MAX_SIGNED_BLOCK_TRANSFERS;
 use crate::transaction_auth::{transfer_signing_bytes_v1, SignedTransferV1};
 use crate::transaction_commitment::{
-    canonical_header_v1, signed_transaction_id_v1, transaction_root_v1,
-    CommitmentError, CommittedHeaderV1,
+    canonical_header_v1, signed_transaction_id_v1, transaction_root_v1, CommitmentError,
+    CommittedHeaderV1,
 };
 
 const BODY_DOMAIN: &[u8] = b"AIVOBLOCK-TX-BATCH-BODY-V1\0";
@@ -29,7 +29,11 @@ pub struct DecodedSignedBatch {
 
 fn bytes<const N: usize>(source: &[u8], at: usize) -> Result<[u8; N], CommitmentError> {
     source
-        .get(at..at.checked_add(N).ok_or(CommitmentError::InvalidBlockBytes)?)
+        .get(
+            at..at
+                .checked_add(N)
+                .ok_or(CommitmentError::InvalidBlockBytes)?,
+        )
         .ok_or(CommitmentError::InvalidBlockBytes)?
         .try_into()
         .map_err(|_| CommitmentError::InvalidBlockBytes)
@@ -93,7 +97,11 @@ pub fn decode_signed_batch_v1(
         return Err(CommitmentError::TooManyTransactions);
     }
     let length = records_at
-        .checked_add(count.checked_mul(RECORD_SIZE).ok_or(CommitmentError::InvalidBlockBytes)?)
+        .checked_add(
+            count
+                .checked_mul(RECORD_SIZE)
+                .ok_or(CommitmentError::InvalidBlockBytes)?,
+        )
         .ok_or(CommitmentError::InvalidBlockBytes)?;
     if stored.len() != length {
         return Err(CommitmentError::InvalidBlockBytes);
@@ -126,7 +134,8 @@ pub fn decode_signed_batch_v1(
         };
         if transfer_signing_bytes_v1(&tx)
             .map_err(|_| CommitmentError::InvalidTransaction)?
-            .as_slice() != raw_signing
+            .as_slice()
+            != raw_signing
         {
             return Err(CommitmentError::InvalidTransaction);
         }
@@ -140,7 +149,11 @@ pub fn decode_signed_batch_v1(
     if transaction_root_v1(&transaction_ids)? != header.transactions_root {
         return Err(CommitmentError::WrongTransactionRoot);
     }
-    Ok(DecodedSignedBatch { header, transactions, transaction_ids })
+    Ok(DecodedSignedBatch {
+        header,
+        transactions,
+        transaction_ids,
+    })
 }
 
 #[cfg(test)]
@@ -156,22 +169,52 @@ mod tests {
         let signer = SigningKey::from_bytes(&[7; 32]);
         let pubkey = signer.verifying_key().to_bytes();
         let mut tx = SignedTransferV1 {
-            version: 1, chain_id: 1, sender: pubkey, public_key: pubkey,
-            recipient: [2; 32], nonce, amount, fee: 1, signature: [0; 64],
+            version: 1,
+            chain_id: 1,
+            sender: pubkey,
+            public_key: pubkey,
+            recipient: [2; 32],
+            nonce,
+            amount,
+            fee: 1,
+            signature: [0; 64],
         };
-        tx.signature = signer.sign(&transfer_signing_bytes_v1(&tx).unwrap()).to_bytes();
+        tx.signature = signer
+            .sign(&transfer_signing_bytes_v1(&tx).unwrap())
+            .to_bytes();
         tx
     }
 
     fn sample() -> ([u8; 32], Vec<u8>, Vec<SignedTransferV1>) {
         let transfers = vec![make_transfer(0, 10), make_transfer(1, 5)];
-        let mut ledger = LedgerState { fee_pool: 2, ..LedgerState::default() };
-        ledger.accounts.insert(transfers[0].sender, LocalAccount { balance: 83, nonce: 2 });
-        ledger.accounts.insert([2; 32], LocalAccount { balance: 15, nonce: 0 });
-        let ids = transfers.iter().map(signed_transaction_id_v1)
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        let mut ledger = LedgerState {
+            fee_pool: 2,
+            ..LedgerState::default()
+        };
+        ledger.accounts.insert(
+            transfers[0].sender,
+            LocalAccount {
+                balance: 83,
+                nonce: 2,
+            },
+        );
+        ledger.accounts.insert(
+            [2; 32],
+            LocalAccount {
+                balance: 15,
+                nonce: 0,
+            },
+        );
+        let ids = transfers
+            .iter()
+            .map(signed_transaction_id_v1)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         let header = CommittedHeaderV1 {
-            version: 1, chain_id: 1, height: 1, parent_hash: [3; 32],
+            version: 1,
+            chain_id: 1,
+            height: 1,
+            parent_hash: [3; 32],
             transactions_root: transaction_root_v1(&ids).unwrap(),
             puzzle_proofs_root: [0; 32],
             state_root: ledger_state_root_v1(&ledger).unwrap(),
@@ -188,10 +231,16 @@ mod tests {
         assert_eq!(decoded.transactions, expected);
         assert_eq!(decoded.header.height, 1);
         assert_eq!(decoded.header.parent_hash, [3; 32]);
-        let expected_ids = expected.iter().map(signed_transaction_id_v1)
-            .collect::<Result<Vec<_>, _>>().unwrap();
+        let expected_ids = expected
+            .iter()
+            .map(signed_transaction_id_v1)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(decoded.transaction_ids, expected_ids);
-        assert_eq!(decode_header_v1(&body[BODY_DOMAIN.len()..BODY_DOMAIN.len() + 178]).unwrap(), decoded.header);
+        assert_eq!(
+            decode_header_v1(&body[BODY_DOMAIN.len()..BODY_DOMAIN.len() + 178]).unwrap(),
+            decoded.header
+        );
     }
 
     #[test]
@@ -202,13 +251,19 @@ mod tests {
         }
         let mut trailing = body;
         trailing.push(0);
-        assert_eq!(decode_signed_batch_v1(&trailing, &id), Err(CommitmentError::InvalidBlockBytes));
+        assert_eq!(
+            decode_signed_batch_v1(&trailing, &id),
+            Err(CommitmentError::InvalidBlockBytes)
+        );
     }
 
     #[test]
     fn rejects_wrong_id_invalid_count_and_changed_header() {
         let (id, body, _) = sample();
-        assert_eq!(decode_signed_batch_v1(&body, &[0; 32]), Err(CommitmentError::InvalidBlockBytes));
+        assert_eq!(
+            decode_signed_batch_v1(&body, &[0; 32]),
+            Err(CommitmentError::InvalidBlockBytes)
+        );
         for count in [0, 65, u32::MAX] {
             let mut forged = body.clone();
             let start = BODY_DOMAIN.len() + HEADER_SIZE;
@@ -217,7 +272,10 @@ mod tests {
         }
         let mut forged = body;
         forged[BODY_DOMAIN.len() + 74] ^= 1;
-        assert_eq!(decode_signed_batch_v1(&forged, &id), Err(CommitmentError::InvalidBlockBytes));
+        assert_eq!(
+            decode_signed_batch_v1(&forged, &id),
+            Err(CommitmentError::InvalidBlockBytes)
+        );
     }
 
     #[test]
