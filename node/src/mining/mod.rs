@@ -4,6 +4,7 @@
 //! is never automatically a valid proof or permission to produce a block:
 //! verification and consensus are separate protocol steps.
 
+pub mod receipts;
 pub mod scheduler;
 
 #[allow(unused_imports)]
