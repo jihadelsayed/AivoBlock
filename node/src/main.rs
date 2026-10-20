@@ -3,7 +3,10 @@
 //! The `ai-health` command is the first local Rust <-> Python IPC
 //! integration. No blockchain network is started by these commands.
 
+mod ai_pipeline;
 mod ipc;
+#[allow(dead_code)]
+mod mining;
 mod storage;
 
 use sha2::{Digest, Sha256};
@@ -44,6 +47,7 @@ fn print_help() {
            ai-health    Check the local Python AI worker over framed IPC\n\
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
+           ai-partition-demo  Execute and verify two locally scheduled AI work ranges\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
            validated-storage-demo Check JSON block structure before saving a fixture\n\
            header-hash  Verify Rust canonical header SHA-256 test vector\n\
@@ -524,6 +528,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-health" => ai_health(),
         [command] if command == "ai-demo" => ai_demo(),
         [command] if command == "ai-verify" => ai_verify(),
+        [command] if command == "ai-partition-demo" => ai_pipeline::demo(),
         [command] if command == "storage-demo" => storage_demo(),
         [command] if command == "validated-storage-demo" => validated_storage_demo(),
         [command] if command == "header-hash" => header_hash_demo(),
@@ -576,6 +581,7 @@ mod tests {
         assert!(run(&["core-json".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["ai-partition-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["header-hash".to_owned(), "extra".to_owned()]).is_err());
