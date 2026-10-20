@@ -56,11 +56,7 @@ impl PeerRegistry {
         Self::new(DEFAULT_MAX_PEERS).expect("default peer limit is nonzero")
     }
 
-    pub fn register(
-        &mut self,
-        id: PeerId,
-        address: SocketAddr,
-    ) -> Result<(), PeerRegistryError> {
+    pub fn register(&mut self, id: PeerId, address: SocketAddr) -> Result<(), PeerRegistryError> {
         if self.peers.contains_key(&id) {
             return Err(PeerRegistryError::DuplicatePeer);
         }
@@ -106,7 +102,10 @@ mod tests {
 
     #[test]
     fn rejects_zero_peer_identity() {
-        assert_eq!(PeerId::new([0; 32]), Err(PeerRegistryError::InvalidIdentity));
+        assert_eq!(
+            PeerId::new([0; 32]),
+            Err(PeerRegistryError::InvalidIdentity)
+        );
     }
 
     #[test]
