@@ -16,7 +16,7 @@ main = hspec $ do
     it "re-encodes and decodes balances, nonces, fees and paid IDs" $ do
       let Right encoded = encodeLedgerSnapshot initial
       decodeLedgerSnapshot encoded `shouldBe` Right initial
-      BS.take 27 encoded `shouldBe`
+      BS.take 26 encoded `shouldBe`
         BS.pack (map (fromIntegral . fromEnum) "AIVOBLOCK-LOCAL-LEDGER-V1" ++ [0])
     it "is independent of account input order" $ do
       let swapped = initial
@@ -33,7 +33,7 @@ main = hspec $ do
       case encodeLedgerSnapshot initial of
         Left problem -> expectationFailure problem
         Right encoded -> do
-          let entryStart = 27 + 8 + 4
+          let entryStart = 26 + 8 + 4
               first = BS.take 48 (BS.drop entryStart encoded)
               second = BS.take 48 (BS.drop (entryStart + 48) encoded)
               prefix = BS.take entryStart encoded
