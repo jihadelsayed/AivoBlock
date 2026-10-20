@@ -59,13 +59,18 @@ impl ReceiptRegistry {
         if receipt.range.count == 0 {
             return Err(ReceiptError::InvalidRange);
         }
-        for existing in self.receipts.values().filter(|r| r.puzzle_id == receipt.puzzle_id) {
+        for existing in self
+            .receipts
+            .values()
+            .filter(|r| r.puzzle_id == receipt.puzzle_id)
+        {
             let existing_end = existing.range.start + existing.range.count;
             if receipt.range.start < existing_end && existing.range.start < end {
                 return Err(ReceiptError::DuplicateOrOverlappingRange);
             }
         }
-        self.receipts.insert((receipt.puzzle_id, receipt.range.start), receipt);
+        self.receipts
+            .insert((receipt.puzzle_id, receipt.range.start), receipt);
         Ok(())
     }
 
