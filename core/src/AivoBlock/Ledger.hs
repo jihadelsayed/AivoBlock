@@ -12,10 +12,13 @@ module AivoBlock.Ledger
   , applyVerifiedTransfer
   ) where
 
+import AivoBlock.Block (Hash256)
 import AivoBlock.Transaction
   ( Address, Amount, Transaction(..), amountValue )
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Word (Word64)
 
 -- | Balances are stored in the smallest indivisible token unit.
@@ -29,10 +32,12 @@ data Account = Account
 data Ledger = Ledger
   { ledgerAccounts :: !(Map Address Account)
   , ledgerFeePool  :: !Word64
+  , ledgerSettledRewardBatches :: !(Set Hash256)
+  , ledgerPaidWorkReceipts :: !(Set Hash256)
   } deriving (Eq, Show)
 
 emptyLedger :: Ledger
-emptyLedger = Ledger Map.empty 0
+emptyLedger = Ledger Map.empty 0 Set.empty Set.empty
 
 lookupAccount :: Address -> Ledger -> Account
 lookupAccount address ledger =
@@ -91,4 +96,6 @@ applyVerifiedTransfer tx ledger = do
   pure Ledger
     { ledgerAccounts = creditedAccounts
     , ledgerFeePool = newFeePool
+    , ledgerSettledRewardBatches = ledgerSettledRewardBatches ledger
+    , ledgerPaidWorkReceipts = ledgerPaidWorkReceipts ledger
     }
