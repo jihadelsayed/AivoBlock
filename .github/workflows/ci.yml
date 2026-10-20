@@ -63,6 +63,17 @@ jobs:
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install local Python AI worker
+        run: python -m pip install -e "../ai-engine"
+      - name: Rust-to-Python partitioned AI integration test
+        run: |
+          cargo run -- ai-health
+          cargo run -- ai-demo
+          cargo run -- ai-verify
+          cargo run -- ai-partition-demo
 
   cross_language:
     name: Rust ↔ Haskell IPC integration
