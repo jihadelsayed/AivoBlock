@@ -3,7 +3,6 @@
 //! This is a local privileged IPC fixture; no validator consensus.
 
 use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
 use std::env;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +12,10 @@ use crate::batch_commitment::{
 };
 use crate::batch_replay::replay_stored_tip;
 use crate::chain_replay::replay_local_chain;
+use crate::genesis_checkpoint::{
+    genesis_checkpoint_signing_bytes_v1, initialize_signed_genesis,
+    replay_chain_from_signed_checkpoint, SignedGenesisCheckpointV1,
+};
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{encode_ledger_state, LedgerState};
 use crate::storage::{Column, KeyValueStore, LocalAccount, RocksDbStore};
@@ -138,11 +141,38 @@ pub fn demo() -> Result<(), String> {
         timestamp_ms: 1000,
     };
     let genesis_bytes = canonical_header_v1(&genesis_header).map_err(|e| format!("{e:?}"))?;
-    let genesis_id: [u8; 32] = Sha256::digest(genesis_bytes).into();
+    // TEST-ONLY authority seed. Real nodes must obtain the trusted
+    // verification key independently from checkpoint bytes or storage.
+    let authority = SigningKey::from_bytes(&[17u8; 32]);
+    let trusted_authority = authority.verifying_key().to_bytes();
+    let checkpoint_payload = genesis_checkpoint_signing_bytes_v1(&genesis_bytes, &genesis)
+        .map_err(|e| format!("Genesis checkpoint bytes: {e:?}"))?;
+    let signed_checkpoint = SignedGenesisCheckpointV1 {
+        genesis_header: genesis_bytes,
+        initial_ledger: genesis.clone(),
+        signature: authority.sign(&checkpoint_payload).to_bytes(),
+    };
+    let genesis_id;
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
-        db.append_atomic_ledger_block(&genesis_id, &[0; 32], 0, &genesis_bytes, &genesis, None)
-            .map_err(|e| format!("Genesis commit: {e}"))?;
+        let attacker = SigningKey::from_bytes(&[18u8; 32]);
+        if initialize_signed_genesis(
+            &db,
+            &signed_checkpoint,
+            &attacker.verifying_key().to_bytes(),
+        )
+        .is_ok()
+        {
+            return Err("Unauthorized genesis key initialized a ledger".into());
+        }
+        if db
+            .get(Column::ChainState, b"tip")
+            .map_err(|e| e.to_string())?
+            .is_some()
+        {
+            return Err("Rejected checkpoint wrote a genesis tip".into());
+        }
+        genesis_id = initialize_signed_genesis(&db, &signed_checkpoint, &trusted_authority)?;
     }
     let batch = [
         signed(&signer, bob, 10, 2, 0),
@@ -308,13 +338,35 @@ pub fn demo() -> Result<(), String> {
             commit_verified_batch_block(&db, &next_header, &subsequent, &computed, &final_expected)
                 .map_err(|error| format!("Second batch atomic commit: {error:?}"))?;
 
-        let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
+        let report = replay_chain_from_signed_checkpoint(
+            &db,
+            &core,
+            &signed_checkpoint,
+            &trusted_authority,
+        )?;
         if report.ledger != final_expected
             || report.signed_blocks != 2
             || report.signed_transfers != 4
             || report.tip_id != final_id
         {
             return Err("Full trusted-genesis replay produced wrong chain state".into());
+        }
+        if replay_chain_from_signed_checkpoint(
+            &db,
+            &core,
+            &signed_checkpoint,
+            &SigningKey::from_bytes(&[18; 32]).verifying_key().to_bytes(),
+        )
+        .is_ok()
+        {
+            return Err("Full replay accepted untrusted genesis signer".into());
+        }
+        let mut changed_checkpoint = signed_checkpoint.clone();
+        changed_checkpoint.initial_ledger.fee_pool += 1;
+        if replay_chain_from_signed_checkpoint(&db, &core, &changed_checkpoint, &trusted_authority)
+            .is_ok()
+        {
+            return Err("Full replay accepted altered signed allocation".into());
         }
         if replay_local_chain(&db, &core, &[9; 32], &genesis).is_ok() {
             return Err("Wrong trusted genesis ID was accepted".into());
@@ -331,7 +383,9 @@ pub fn demo() -> Result<(), String> {
         *damaged.last_mut().ok_or("Empty ancestor body")? ^= 1;
         db.put(Column::Blocks, &block_id, &damaged)
             .map_err(|error| format!("Corrupt ancestor fixture: {error}"))?;
-        if replay_local_chain(&db, &core, &genesis_id, &genesis).is_ok() {
+        if replay_chain_from_signed_checkpoint(&db, &core, &signed_checkpoint, &trusted_authority)
+            .is_ok()
+        {
             return Err("Full replay accepted tampered historical block".into());
         }
         db.put(Column::Blocks, &block_id, &block)
@@ -339,12 +393,17 @@ pub fn demo() -> Result<(), String> {
 
         db.put(Column::ChainState, b"height", &3u64.to_be_bytes())
             .map_err(|error| format!("Tamper height fixture: {error}"))?;
-        if replay_local_chain(&db, &core, &genesis_id, &genesis).is_ok() {
+        if replay_chain_from_signed_checkpoint(&db, &core, &signed_checkpoint, &trusted_authority)
+            .is_ok()
+        {
             return Err("Full replay accepted invalid tip height".into());
         }
         db.put(Column::ChainState, b"height", &2u64.to_be_bytes())
             .map_err(|error| format!("Restore height fixture: {error}"))?;
-        if replay_local_chain(&db, &core, &genesis_id, &genesis)?.ledger != final_expected {
+        if replay_chain_from_signed_checkpoint(&db, &core, &signed_checkpoint, &trusted_authority)?
+            .ledger
+            != final_expected
+        {
             return Err("Restored full chain failed Haskell replay".into());
         }
     }
@@ -352,7 +411,12 @@ pub fn demo() -> Result<(), String> {
     // contents, a trusted genesis checkpoint and independent Haskell rules.
     {
         let db = RocksDbStore::open(&path).map_err(|error| error.to_string())?;
-        let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
+        let report = replay_chain_from_signed_checkpoint(
+            &db,
+            &core,
+            &signed_checkpoint,
+            &trusted_authority,
+        )?;
         if report.tip_id != final_id
             || report.ledger != final_expected
             || report.signed_blocks != 2
@@ -368,7 +432,8 @@ pub fn demo() -> Result<(), String> {
     println!("Atomic RocksDB reopen and signed block body verification: PASS");
     println!("Decode-on-disk + Haskell replay + predecessor check: PASS");
     println!("Tampered stored signature and wrong prior ledger: REJECTED");
-    println!("Full history: 2 signed blocks, 4 transfers replayed from trusted genesis: PASS");
+    println!("Full history: 2 signed blocks, 4 transfers replayed from signed genesis: PASS");
+    println!("Forged genesis signer and modified allocations: REJECTED");
     println!("Tampered ancestor, wrong genesis and wrong height: REJECTED");
     println!("Scope: synthetic genesis; no validator consensus or real payments");
     Ok(())
