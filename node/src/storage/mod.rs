@@ -57,6 +57,9 @@ pub trait KeyValueStore {
 }
 
 #[cfg(test)]
+mod atomic_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
