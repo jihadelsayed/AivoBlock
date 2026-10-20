@@ -6,6 +6,7 @@
 pub mod ledger_state;
 pub mod rocksdb;
 
+#[allow(unused_imports)] // Public storage types are also used by future node callers.
 pub use ledger_state::{LedgerState, LocalAccount};
 pub use rocksdb::RocksDbStore;
 
