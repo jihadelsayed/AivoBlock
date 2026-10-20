@@ -229,8 +229,10 @@ pub fn decode_reward_block_reply(
         reply.accepted,
         &reply.reason,
     )?;
-    if *batch_id == [0; 32] || budget == 0
-        || expected_receipts.is_empty() || expected_receipts.len() > 64
+    if *batch_id == [0; 32]
+        || budget == 0
+        || expected_receipts.is_empty()
+        || expected_receipts.len() > 64
         || prior.fee_pool < budget
     {
         return Err("Invalid reward batch, receipt count or fee budget".into());
@@ -273,7 +275,11 @@ pub fn decode_reward_block_reply(
         }
     }
     let supply = |ledger: &LedgerState| {
-        ledger.accounts.values().map(|a| u128::from(a.balance)).sum::<u128>()
+        ledger
+            .accounts
+            .values()
+            .map(|a| u128::from(a.balance))
+            .sum::<u128>()
             + u128::from(ledger.fee_pool)
     };
     if supply(&state) != supply(prior) {
