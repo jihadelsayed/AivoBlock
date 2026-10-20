@@ -16,10 +16,8 @@ const ROWS: [[i64; 2]; 3] = [[1, 2], [3, 4], [-2, 5]];
 const WEIGHTS: [i64; 2] = [2, 3];
 const ROWS_JSON: &str = "[[1,2],[3,4],[-2,5]]";
 const WEIGHTS_JSON: &str = "[2,3]";
-const VERIFIED_RESPONSE: &str =
-    r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":true,"method":"full_recomputation"}"#;
-const REJECTED_RESPONSE: &str =
-    r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":false,"method":"full_recomputation"}"#;
+const VERIFIED_RESPONSE: &str = r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":true,"method":"full_recomputation"}"#;
+const REJECTED_RESPONSE: &str = r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":false,"method":"full_recomputation"}"#;
 
 fn hex32(byte: u8) -> String {
     format!("{byte:02x}").repeat(32)

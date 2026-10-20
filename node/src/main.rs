@@ -4,7 +4,8 @@
 //! integration. No blockchain network is started by these commands.
 
 mod ai_pipeline;
-#[allow(dead_code)] // IPC error variants and frame helpers are part of the unfinished node protocol.
+#[allow(dead_code)]
+// IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
 #[allow(dead_code)]
 mod mining;
