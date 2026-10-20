@@ -73,15 +73,17 @@ impl PythonWorkerClient {
             .spawn()?;
 
         let response = (|| {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                std::io::Error::other("missing worker stdin")
-            })?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("missing worker stdin"))?;
             stdin.write_all(&frame)?;
             drop(stdin);
 
-            let mut stdout = child.stdout.take().ok_or_else(|| {
-                std::io::Error::other("missing worker stdout")
-            })?;
+            let mut stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| std::io::Error::other("missing worker stdout"))?;
             let mut header = [0u8; 4];
             stdout.read_exact(&mut header)?;
             let length = u32::from_be_bytes(header) as usize;
