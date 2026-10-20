@@ -91,6 +91,37 @@ pub struct SettlementBatch<'a> {
     pub validated_response: &'a [u8],
 }
 
+/// A consensus-finalized block and everything committed atomically with it.
+pub struct FinalizedBlockWrite<'a> {
+    pub block_id: &'a [u8; 32],
+    pub parent_id: &'a [u8; 32],
+    pub height: u64,
+    pub block_bytes: &'a [u8],
+    pub post_state: &'a LedgerState,
+    pub settlement: &'a SettlementBatch<'a>,
+    pub issued: u64,
+    pub certificate: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalizedRecord {
+    pub block_id: [u8; 32],
+    pub bytes: Vec<u8>,
+    pub certificate: Vec<u8>,
+}
+
+fn id32(bytes: &[u8]) -> Result<[u8; 32], StorageError> {
+    bytes
+        .try_into()
+        .map_err(|_| StorageError::CorruptChainState)
+}
+
+fn height_index_suffix(height: u64) -> Vec<u8> {
+    let mut suffix = b"height-v1:".to_vec();
+    suffix.extend_from_slice(&height.to_be_bytes());
+    suffix
+}
+
 const LOCAL_STATE_KEY: &[u8] = b"local-ledger-snapshot-v1";
 const LOCAL_DIGEST_KEY: &[u8] = b"local-ledger-digest-v1";
 const LEGACY_REPLAY_USED_KEY: &[u8] = b"legacy-replay-guard-used-v1";
@@ -346,6 +377,119 @@ impl RocksDbStore {
         post_state: &LedgerState,
         settlement: Option<&SettlementBatch<'_>>,
     ) -> Result<(), StorageError> {
+        self.append_ledger_block_inner(
+            block_hash,
+            parent_hash,
+            height,
+            block_bytes,
+            post_state,
+            settlement,
+            0,
+            Vec::new(),
+        )
+    }
+
+    /// Persist a consensus-finalized block in ONE synced WriteBatch: block
+    /// bytes, tip, height, full successor ledger, reward batch and receipt
+    /// replay markers, the quorum certificate and the height index. Supply
+    /// may grow by exactly `issued` (the scheduled issuance), never more.
+    /// Callers MUST verify the certificate and execute the block first.
+    pub fn append_finalized_block(
+        &self,
+        write: &FinalizedBlockWrite<'_>,
+    ) -> Result<(), StorageError> {
+        if write.height == 0 || write.certificate.is_empty() {
+            return Err(StorageError::InvalidSettlementRecord);
+        }
+        let extra = vec![
+            (
+                marker_key(b"qc-v1:", write.block_id)?,
+                write.certificate.to_vec(),
+            ),
+            (
+                storage_key(Column::Metadata, &height_index_suffix(write.height))?,
+                write.block_id.to_vec(),
+            ),
+        ];
+        self.append_ledger_block_inner(
+            write.block_id,
+            write.parent_id,
+            write.height,
+            write.block_bytes,
+            write.post_state,
+            Some(write.settlement),
+            write.issued,
+            extra,
+        )
+    }
+
+    /// Finalized block ID, bytes and certificate at a height (>= 1).
+    pub fn finalized_block_at(&self, height: u64) -> Result<Option<FinalizedRecord>, StorageError> {
+        let key = storage_key(Column::Metadata, &height_index_suffix(height))?;
+        let Some(id) = self.db.get(key)? else {
+            return Ok(None);
+        };
+        let block_id = id32(&id)?;
+        let bytes = self
+            .db
+            .get(storage_key(Column::Blocks, &block_id)?)?
+            .ok_or(StorageError::CorruptChainState)?;
+        let certificate = self
+            .db
+            .get(marker_key(b"qc-v1:", &block_id)?)?
+            .ok_or(StorageError::CorruptChainState)?;
+        Ok(Some(FinalizedRecord {
+            block_id,
+            bytes,
+            certificate,
+        }))
+    }
+
+    /// Current tip ID and height, if the chain is initialized.
+    pub fn chain_tip(&self) -> Result<Option<([u8; 32], u64)>, StorageError> {
+        let tip = self.db.get(storage_key(Column::ChainState, b"tip")?)?;
+        let height = self.db.get(storage_key(Column::ChainState, b"height")?)?;
+        match (tip, height) {
+            (None, None) => Ok(None),
+            (Some(tip), Some(height)) if tip.len() == 32 && height.len() == 8 => {
+                let mut id = [0u8; 32];
+                id.copy_from_slice(&tip);
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&height);
+                Ok(Some((id, u64::from_be_bytes(raw))))
+            }
+            _ => Err(StorageError::CorruptChainState),
+        }
+    }
+
+    /// Durable (fsynced) metadata write, e.g. a validator's vote lock, which
+    /// must survive a crash before the vote leaves the process.
+    pub fn put_metadata_synced(&self, suffix: &[u8], value: &[u8]) -> Result<(), StorageError> {
+        let mut batch = WriteBatch::default();
+        batch.put(storage_key(Column::Metadata, suffix)?, value);
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        self.db
+            .write_opt(batch, &options)
+            .map_err(StorageError::from)
+    }
+
+    pub fn get_metadata(&self, suffix: &[u8]) -> Result<Option<Vec<u8>>, StorageError> {
+        Ok(self.db.get(storage_key(Column::Metadata, suffix)?)?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_ledger_block_inner(
+        &self,
+        block_hash: &[u8; 32],
+        parent_hash: &[u8; 32],
+        height: u64,
+        block_bytes: &[u8],
+        post_state: &LedgerState,
+        settlement: Option<&SettlementBatch<'_>>,
+        issued: u64,
+        extra_writes: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StorageError> {
         if *block_hash == [0; 32] || block_bytes.is_empty() {
             return Err(StorageError::InvalidBlockHash);
         }
@@ -452,8 +596,11 @@ impl RocksDbStore {
         {
             return Err(StorageError::InvalidLedgerTransition);
         }
+        if prior_state.is_none() && issued != 0 {
+            return Err(StorageError::InvalidLedgerTransition);
+        }
         if let Some(previous) = &prior_state {
-            if local_supply(previous) != local_supply(post_state) {
+            if local_supply(previous) + u128::from(issued) != local_supply(post_state) {
                 return Err(StorageError::InvalidLedgerTransition);
             }
             for (address, account) in &previous.accounts {
@@ -478,6 +625,12 @@ impl RocksDbStore {
             for key in new_receipt_keys {
                 writes.put(key, [1u8]);
             }
+        }
+        for (key, value) in extra_writes {
+            if self.db.get(&key)?.is_some() {
+                return Err(StorageError::CorruptChainState);
+            }
+            writes.put(key, value);
         }
         let mut options = WriteOptions::default();
         options.set_sync(true);
@@ -583,6 +736,98 @@ mod tests {
                 Err(StorageError::InvalidSettlementRecord)
             ));
         }
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn finalized_blocks_commit_issuance_certificate_and_height_index_atomically() {
+        use crate::storage::LocalAccount;
+        let path = std::env::temp_dir().join(format!(
+            "aivoblock-finalized-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        let mut genesis = LedgerState {
+            fee_pool: 10,
+            ..LedgerState::default()
+        };
+        genesis.accounts.insert(
+            [1; 32],
+            LocalAccount {
+                balance: 90,
+                nonce: 0,
+            },
+        );
+        // fee budget 4 + issuance 6 paid to worker [2; 32].
+        let mut post = genesis.clone();
+        post.fee_pool = 6;
+        post.accounts.insert(
+            [2; 32],
+            LocalAccount {
+                balance: 10,
+                nonce: 0,
+            },
+        );
+        post.settled_batches.insert([8; 32]);
+        post.paid_receipts.insert([9; 32]);
+        let receipts = [[9; 32]];
+        let settlement = SettlementBatch {
+            batch_id: [8; 32],
+            receipt_ids: &receipts,
+            validated_response: b"evidence",
+        };
+        let write = |issued: u64, certificate: &[u8]| {
+            let store = RocksDbStore::open(&path).unwrap();
+            store.append_finalized_block(&FinalizedBlockWrite {
+                block_id: &[7; 32],
+                parent_id: &[6; 32],
+                height: 1,
+                block_bytes: b"block-1",
+                post_state: &post,
+                settlement: &settlement,
+                issued,
+                certificate,
+            })
+        };
+        {
+            let store = RocksDbStore::open(&path).unwrap();
+            store
+                .append_atomic_ledger_block(&[6; 32], &[0; 32], 0, b"genesis", &genesis, None)
+                .unwrap();
+        }
+        assert!(matches!(
+            write(5, b"qc"),
+            Err(StorageError::InvalidLedgerTransition)
+        ));
+        assert!(matches!(
+            write(7, b"qc"),
+            Err(StorageError::InvalidLedgerTransition)
+        ));
+        assert!(write(6, b"").is_err());
+        {
+            let store = RocksDbStore::open(&path).unwrap();
+            assert_eq!(store.chain_tip().unwrap(), Some(([6; 32], 0)));
+            assert_eq!(store.finalized_block_at(1).unwrap(), None);
+        }
+        write(6, b"qc").unwrap();
+        let store = RocksDbStore::open(&path).unwrap();
+        assert_eq!(store.chain_tip().unwrap(), Some(([7; 32], 1)));
+        assert_eq!(store.read_local_ledger_state().unwrap(), Some(post.clone()));
+        assert_eq!(
+            store.finalized_block_at(1).unwrap(),
+            Some(FinalizedRecord {
+                block_id: [7; 32],
+                bytes: b"block-1".to_vec(),
+                certificate: b"qc".to_vec(),
+            })
+        );
+        store.put_metadata_synced(b"vote-lock", b"x").unwrap();
+        assert_eq!(
+            store.get_metadata(b"vote-lock").unwrap(),
+            Some(b"x".to_vec())
+        );
+        drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
 

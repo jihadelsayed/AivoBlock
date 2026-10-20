@@ -193,18 +193,31 @@ pub fn expected_result_commitment_v1(
     range: WorkRange,
 ) -> Result<[u8; 32], String> {
     valid_data(task)?;
+    result_commitment_for_rows_v1(&task.weights, &task.rows, range)
+}
+
+/// Shared integer-inference result commitment for already bounds-checked
+/// data (|value| <= 1e6, at most 64 features, so every dot product fits i64).
+pub fn result_commitment_for_rows_v1(
+    weights: &[i64],
+    rows: &[Vec<i64>],
+    range: WorkRange,
+) -> Result<[u8; 32], String> {
+    if weights.is_empty() || weights.len() > 64 || rows.iter().any(|r| r.len() != weights.len()) {
+        return Err("Invalid integer-inference dimensions".into());
+    }
     let start = usize::try_from(range.start).map_err(|_| "Range start overflow")?;
     let count = usize::try_from(range.count).map_err(|_| "Range count overflow")?;
     let end = start.checked_add(count).ok_or("Range overflow")?;
-    if count == 0 || end > task.rows.len() {
+    if count == 0 || end > rows.len() {
         return Err("Claim exceeds signed task bounds".into());
     }
     let mut bytes = RESULT_DOMAIN.to_vec();
     bytes.extend_from_slice(&range.start.to_be_bytes());
     bytes.extend_from_slice(&range.count.to_be_bytes());
-    for row in &task.rows[start..end] {
-        // max 16 products of (1e6 * 1e6): at most 1.6e13.
-        let sum: i64 = row.iter().zip(&task.weights).map(|(x, w)| x * w).sum();
+    for row in &rows[start..end] {
+        // max 64 products of (1e6 * 1e6): at most 6.4e13.
+        let sum: i64 = row.iter().zip(weights).map(|(x, w)| x * w).sum();
         let ascii = sum.to_string();
         bytes.extend_from_slice(&(ascii.len() as u32).to_be_bytes());
         bytes.extend_from_slice(ascii.as_bytes());

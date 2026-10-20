@@ -3,6 +3,8 @@
 //! The `ai-health` command is the first local Rust <-> Python IPC
 //! integration. No blockchain network is started by these commands.
 
+#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
+mod ai_block_v3;
 mod ai_pipeline;
 mod ai_proof_v2;
 mod batch_commitment;
@@ -30,6 +32,7 @@ mod settlement_v3;
 mod storage;
 mod transaction_auth;
 mod transaction_commitment;
+#[allow(dead_code)] // Vote/certificate codecs are wired into the testnet runtime next.
 mod validator_certificate;
 
 use sha2::{Digest, Sha256};

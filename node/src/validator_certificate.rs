@@ -103,6 +103,15 @@ impl TrustedValidatorSetV1 {
         self.total_power
     }
 
+    pub fn power_of(&self, public_key: &[u8; 32]) -> Option<u64> {
+        self.members.get(public_key).copied()
+    }
+
+    /// Members in canonical ascending public-key order.
+    pub fn sorted_members(&self) -> Vec<[u8; 32]> {
+        self.members.keys().copied().collect()
+    }
+
     /// Same formula as Haskell AivoBlock.Consensus.requiredQuorumPower:
     /// floor(2*T/3)+1. Use u128 to avoid overflow at u64::MAX.
     pub fn required_power(&self) -> u64 {
@@ -179,6 +188,123 @@ pub fn verify_quorum_certificate_v1(
         signed_power,
         required_power: required,
         validator_set_commitment: validators.commitment,
+    })
+}
+
+/// Sign this validator's precommit for exactly (set, height, round, block).
+pub fn sign_precommit_v1(
+    signer: &ed25519_dalek::SigningKey,
+    validator_set_commitment: [u8; 32],
+    height: u64,
+    round: u64,
+    block_id: [u8; 32],
+) -> Result<SignedPrecommitV1, String> {
+    use ed25519_dalek::Signer;
+    let public_key = signer.verifying_key().to_bytes();
+    let target = QuorumCertificateV1 {
+        chain_id: CHAIN_ID,
+        height,
+        round,
+        block_id,
+        validator_set_commitment,
+        votes: Vec::new(),
+    };
+    let signature = signer
+        .sign(&precommit_signing_bytes_v1(&target, &public_key)?)
+        .to_bytes();
+    Ok(SignedPrecommitV1 {
+        public_key,
+        signature,
+    })
+}
+
+/// Authenticate ONE gossiped precommit before it is counted toward a quorum.
+/// Returns the signer's configured voting power.
+pub fn verify_precommit_v1(
+    validators: &TrustedValidatorSetV1,
+    height: u64,
+    round: u64,
+    block_id: [u8; 32],
+    vote: &SignedPrecommitV1,
+) -> Result<u64, String> {
+    let power = validators
+        .power_of(&vote.public_key)
+        .ok_or("Precommit from unknown validator")?;
+    let target = QuorumCertificateV1 {
+        chain_id: CHAIN_ID,
+        height,
+        round,
+        block_id,
+        validator_set_commitment: validators.commitment,
+        votes: Vec::new(),
+    };
+    let verifier = VerifyingKey::from_bytes(&vote.public_key)
+        .map_err(|_| "Invalid validator signature key")?;
+    verifier
+        .verify_strict(
+            &precommit_signing_bytes_v1(&target, &vote.public_key)?,
+            &Signature::from_bytes(&vote.signature),
+        )
+        .map_err(|_| "Invalid Ed25519 precommit signature")?;
+    Ok(power)
+}
+
+const CERTIFICATE_DOMAIN: &[u8] = b"AIVOBLOCK-QUORUM-CERTIFICATE-V1\0";
+const VOTE_BYTES: usize = 32 + 64;
+
+/// Canonical bytes persisted with every finalized block.
+pub fn encode_quorum_certificate_v1(certificate: &QuorumCertificateV1) -> Vec<u8> {
+    let mut raw = CERTIFICATE_DOMAIN.to_vec();
+    raw.extend_from_slice(&certificate.chain_id.to_be_bytes());
+    raw.extend_from_slice(&certificate.height.to_be_bytes());
+    raw.extend_from_slice(&certificate.round.to_be_bytes());
+    raw.extend_from_slice(&certificate.block_id);
+    raw.extend_from_slice(&certificate.validator_set_commitment);
+    raw.extend_from_slice(&(certificate.votes.len() as u32).to_be_bytes());
+    for vote in &certificate.votes {
+        raw.extend_from_slice(&vote.public_key);
+        raw.extend_from_slice(&vote.signature);
+    }
+    raw
+}
+
+/// Exact decoder; the result must still pass `verify_quorum_certificate_v1`.
+pub fn decode_quorum_certificate_v1(raw: &[u8]) -> Result<QuorumCertificateV1, String> {
+    let fixed = CERTIFICATE_DOMAIN.len() + 4 + 8 + 8 + 32 + 32 + 4;
+    if !raw.starts_with(CERTIFICATE_DOMAIN) || raw.len() < fixed {
+        return Err("Malformed quorum certificate".into());
+    }
+    let mut at = CERTIFICATE_DOMAIN.len();
+    let mut take = |count: usize| {
+        let slice = &raw[at..at + count];
+        at += count;
+        slice
+    };
+    let chain_id = u32::from_be_bytes(take(4).try_into().map_err(|_| "Bad chain")?);
+    let height = u64::from_be_bytes(take(8).try_into().map_err(|_| "Bad height")?);
+    let round = u64::from_be_bytes(take(8).try_into().map_err(|_| "Bad round")?);
+    let block_id: [u8; 32] = take(32).try_into().map_err(|_| "Bad block")?;
+    let validator_set_commitment: [u8; 32] = take(32).try_into().map_err(|_| "Bad set")?;
+    let count = u32::from_be_bytes(take(4).try_into().map_err(|_| "Bad count")?) as usize;
+    if count == 0 || count > MAX_VALIDATORS || raw.len() != fixed + count * VOTE_BYTES {
+        return Err("Quorum certificate vote count or length mismatch".into());
+    }
+    let mut votes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let public_key: [u8; 32] = take(32).try_into().map_err(|_| "Bad vote key")?;
+        let signature: [u8; 64] = take(64).try_into().map_err(|_| "Bad vote signature")?;
+        votes.push(SignedPrecommitV1 {
+            public_key,
+            signature,
+        });
+    }
+    Ok(QuorumCertificateV1 {
+        chain_id,
+        height,
+        round,
+        block_id,
+        validator_set_commitment,
+        votes,
     })
 }
 
@@ -444,6 +570,36 @@ mod tests {
         assert!(verify_quorum_certificate_v1(&set, &changed).is_err());
         let (_, different) = fixture(&[1, 1, 2]);
         assert!(verify_quorum_certificate_v1(&different, &cert).is_err());
+    }
+
+    #[test]
+    fn certificate_codec_round_trips_and_single_votes_verify() {
+        let (keys, set) = fixture(&[1, 1, 1, 1]);
+        let cert = certificate(&keys[..3], &set, 4, 1, [3; 32]);
+        let raw = encode_quorum_certificate_v1(&cert);
+        assert_eq!(decode_quorum_certificate_v1(&raw).unwrap(), cert);
+        assert_eq!(
+            verify_quorum_certificate_v1(&set, &cert)
+                .unwrap()
+                .signed_power,
+            3
+        );
+        assert!(decode_quorum_certificate_v1(&raw[..raw.len() - 1]).is_err());
+        let mut extended = raw.clone();
+        extended.push(0);
+        assert!(decode_quorum_certificate_v1(&extended).is_err());
+        let vote = sign_precommit_v1(&keys[3], set.commitment(), 4, 1, [3; 32]).unwrap();
+        assert_eq!(verify_precommit_v1(&set, 4, 1, [3; 32], &vote).unwrap(), 1);
+        assert!(verify_precommit_v1(&set, 4, 2, [3; 32], &vote).is_err());
+        assert!(verify_precommit_v1(&set, 4, 1, [4; 32], &vote).is_err());
+        let stranger = SigningKey::from_bytes(&[77; 32]);
+        let foreign = sign_precommit_v1(&stranger, set.commitment(), 4, 1, [3; 32]).unwrap();
+        assert!(verify_precommit_v1(&set, 4, 1, [3; 32], &foreign).is_err());
+        let mut forged = vote;
+        forged.signature[0] ^= 1;
+        assert!(verify_precommit_v1(&set, 4, 1, [3; 32], &forged).is_err());
+        assert_eq!(set.sorted_members().len(), 4);
+        assert_eq!(set.required_power(), 3);
     }
 
     #[test]
