@@ -300,7 +300,6 @@ pub fn demo() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn rejects_malformed_and_forged_ipc_response_envelopes() {
         for response in [
