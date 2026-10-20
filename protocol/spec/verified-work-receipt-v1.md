@@ -11,7 +11,7 @@ the following fields exactly, without JSON, separators, or length prefixes:
 
 | Field | Length | Encoding |
 | --- | ---: | --- |
-| Domain | 36 bytes | ASCII `AIVOBLOCK-VERIFIED-WORK-RECEIPT-V1` followed by `00` |
+| Domain | 35 bytes | ASCII `AIVOBLOCK-VERIFIED-WORK-RECEIPT-V1` followed by `00` |
 | Chain ID | 4 bytes | Unsigned big-endian u32 |
 | Puzzle ID | 32 bytes | Raw hash bytes |
 | Worker ID | 32 bytes | Raw Ed25519 worker public key bytes |
