@@ -7,8 +7,8 @@
 use std::env;
 use std::path::PathBuf;
 
-use sha2::{Digest, Sha256};
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 
 use crate::ipc::python::PythonWorkerClient;
 use crate::mining::auth::{assignment_signing_bytes, AssignmentAuthorizer, SignedAssignment};
@@ -148,7 +148,9 @@ pub fn demo() -> Result<(), String> {
             nonce: index as u64,
             signature: [0; 64],
         };
-        signed.signature = issuer_key.sign(&assignment_signing_bytes(&signed)).to_bytes();
+        signed.signature = issuer_key
+            .sign(&assignment_signing_bytes(&signed))
+            .to_bytes();
         let authenticated = authorizer
             .verify_and_record(&signed, 1, issuer_public_key, 1)
             .map_err(|error| format!("Assignment authorization: {error:?}"))?;
