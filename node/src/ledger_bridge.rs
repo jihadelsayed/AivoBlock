@@ -11,6 +11,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
+use crate::transaction_commitment::{
+    signed_transaction_id_v1, transaction_root_v1, ledger_state_root_v1,
+    canonical_header_v1, commit_signed_transfer_block, CommittedHeaderV1,
+};
+use sha2::{Digest, Sha256};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
 use crate::transaction_auth::{
     transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
@@ -131,7 +136,26 @@ pub fn compute_transfer_via_haskell(
     let response = core
         .exchange(request.as_bytes())
         .map_err(|error| format!("Haskell ledger IPC failure: {error:?}"))?;
-    decode_transition_response(&response)
+    let next = decode_transition_response(&response)?;
+    let identifier = signed_transaction_id_v1(&transfer)
+        .map_err(|error| format!("Rust transaction ID: {error:?}"))?;
+    let root = transaction_root_v1(&[identifier])
+        .map_err(|error| format!("Rust transaction Merkle root: {error:?}"))?;
+    let state_root = ledger_state_root_v1(&next)
+        .map_err(|error| format!("Rust ledger state root: {error:?}"))?;
+    let text = std::str::from_utf8(&response)
+        .map_err(|_| "Non-UTF8 commitment response")?;
+    for (field, expected) in [
+        ("transaction_id", hex(&identifier)),
+        ("transactions_root", hex(&root)),
+        ("state_root", hex(&state_root)),
+    ] {
+        let literal = format!(r#""{field}":"{expected}""#);
+        if text.matches(&literal).count() != 1 {
+            return Err(format!("Haskell commitment mismatch for {field}"));
+        }
+    }
+    Ok(next)
 }
 
 /// End-to-end fixture: Haskell computes each successor, Rust atomically
