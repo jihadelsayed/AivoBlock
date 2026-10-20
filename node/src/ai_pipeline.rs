@@ -326,11 +326,7 @@ pub fn demo() -> Result<(), String> {
             let store = RocksDbStore::open(&path)
                 .map_err(|error| format!("Reopen settlement replay store: {error}"))?;
             if store
-                .persist_settlement_replay_guard(
-                    &[9; 32],
-                    &receipt_ids,
-                    &settlement_response,
-                )
+                .persist_settlement_replay_guard(&[9; 32], &receipt_ids, &settlement_response)
                 .is_ok()
             {
                 return Err("Settled batch replay was accepted after reopening".to_owned());
