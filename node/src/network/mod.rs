@@ -7,6 +7,7 @@
 
 pub mod handshake;
 pub mod p2p;
+pub mod tcp;
 
 /// Identifies the wire protocol spoken by compatible nodes.
 /// Increment when making incompatible network-message changes.
