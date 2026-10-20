@@ -9,7 +9,7 @@ FROM haskell:9.6.7-slim-bullseye AS core-builder
 WORKDIR /build/core
 COPY core/aivoblock-core.cabal core/cabal.project ./
 RUN for attempt in 1 2 3 4; do cabal update && break; sleep $((attempt * 5)); done \
-    && cabal build --disable-tests --only-dependencies exe:aivoblock-core
+    && cabal build --disable-tests --only-dependencies all
 COPY core/ ./
 # Copy the binary plus every non-glibc shared library it links (GMP, FFI),
 # so it runs unchanged on the Debian bookworm runtime image.
