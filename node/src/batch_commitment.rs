@@ -137,8 +137,10 @@ mod tests {
     }
 
     fn post() -> LedgerState {
-        let mut state = LedgerState::default();
-        state.fee_pool = 3;
+        let mut state = LedgerState {
+            fee_pool: 3,
+            ..LedgerState::default()
+        };
         state.accounts.insert(
             signed(10, 2, 0).sender,
             LocalAccount {
