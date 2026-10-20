@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Local diagnostics and a bounded IPC health endpoint for the Rust node.
 -- A fixture-based block shape IPC check is available; full validation
 -- and network consensus are not implemented.
@@ -221,8 +223,8 @@ childHeaderResponse value =
       let parentHeader = blockHeader parent
           childHeader = blockHeader child
           verdict = do
-            validateBlockShape parent
-            validateBlockShape child
+            either (Left . show) Right (validateBlockShape parent)
+            either (Left . show) Right (validateBlockShape child)
             parentHash <- either (Left . const "invalid_parent_header") Right
               (hashBlockHeaderV1 parentHeader)
             either (Left . show) Right
@@ -273,7 +275,7 @@ handleIpcRequest request
             _ -> case parseEither parseFixture value of
               Right (Just True) -> Just (shapeResponse True)
               Right (Just False) -> Just (shapeResponse False)
-              _ -> fmap (map chr . BS.unpack) (case childRequest value of
+              _ -> fmap (map (chr . fromIntegral) . BS.unpack) (case childRequest value of
                 Just result -> Just result
                 Nothing -> dynamicRequest request)
   where

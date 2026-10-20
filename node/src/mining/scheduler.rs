@@ -63,10 +63,13 @@ impl MiningScheduler {
         if self.puzzles.contains_key(&task.puzzle_id) {
             return Err(AssignmentError::PuzzleAlreadyExists);
         }
-        self.puzzles.insert(task.puzzle_id, PuzzleProgress {
-            total_units: task.total_units,
-            next_unit: 0,
-        });
+        self.puzzles.insert(
+            task.puzzle_id,
+            PuzzleProgress {
+                total_units: task.total_units,
+                next_unit: 0,
+            },
+        );
         Ok(())
     }
 
@@ -82,20 +85,30 @@ impl MiningScheduler {
         if requested_units == 0 || requested_units > DEFAULT_MAX_BATCH_UNITS {
             return Err(AssignmentError::InvalidBatchSize);
         }
-        let progress = self.puzzles.get_mut(&puzzle_id)
+        let progress = self
+            .puzzles
+            .get_mut(&puzzle_id)
             .ok_or(AssignmentError::UnknownPuzzle)?;
         if progress.next_unit >= progress.total_units {
             return Err(AssignmentError::NoWorkRemaining);
         }
         let remaining = progress.total_units - progress.next_unit;
         let count = requested_units.min(remaining);
-        let range = WorkRange { start: progress.next_unit, count };
+        let range = WorkRange {
+            start: progress.next_unit,
+            count,
+        };
         progress.next_unit += count;
-        Ok(Assignment { worker_id, puzzle_id, range })
+        Ok(Assignment {
+            worker_id,
+            puzzle_id,
+            range,
+        })
     }
 
     pub fn remaining_units(&self, puzzle_id: &[u8; 32]) -> Option<u64> {
-        self.puzzles.get(puzzle_id)
+        self.puzzles
+            .get(puzzle_id)
             .map(|progress| progress.total_units - progress.next_unit)
     }
 }
@@ -105,7 +118,10 @@ mod tests {
     use super::*;
 
     fn task(units: u64) -> PuzzleTask {
-        PuzzleTask { puzzle_id: [1; 32], total_units: units }
+        PuzzleTask {
+            puzzle_id: [1; 32],
+            total_units: units,
+        }
     }
 
     #[test]
@@ -126,9 +142,15 @@ mod tests {
     #[test]
     fn rejects_invalid_inputs() {
         let mut scheduler = MiningScheduler::new();
-        assert_eq!(scheduler.add_puzzle(task(0)), Err(AssignmentError::InvalidPuzzle));
+        assert_eq!(
+            scheduler.add_puzzle(task(0)),
+            Err(AssignmentError::InvalidPuzzle)
+        );
         scheduler.add_puzzle(task(10)).unwrap();
-        assert_eq!(scheduler.add_puzzle(task(10)), Err(AssignmentError::PuzzleAlreadyExists));
+        assert_eq!(
+            scheduler.add_puzzle(task(10)),
+            Err(AssignmentError::PuzzleAlreadyExists)
+        );
         assert_eq!(
             scheduler.assign([1; 32], [0; 32], 1),
             Err(AssignmentError::InvalidWorker)

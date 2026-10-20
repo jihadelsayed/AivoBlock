@@ -71,6 +71,29 @@ cargo run -- status
 
 The Haskell and Rust test commands are development targets; successful execution across supported environments has not yet been established.
 
+## Rust-to-Python partitioned AI diagnostic
+
+After installing the editable Python package (see above), run from `node/`:
+
+```bash
+cargo run -- ai-partition-demo
+```
+
+This CLI diagnostic has Rust locally assign two non-overlapping work ranges
+to two worker identities (three input rows total). Each range is executed by
+a separate local Python worker process. Rust independently calculates the
+expected outputs and SHA-256 commitments for a fixed fixture, compares the
+full worker response, requests a second recomputation, and confirms that a
+tampered commitment is rejected. The `rust` CI job runs this command with
+Python installed.
+
+**Limitations:** The model and input hashes are placeholder fixture values,
+worker identities are not authenticated, the recomputation uses caller-supplied
+local inputs, and this test does not contact independent peers. This is
+not decentralized mining, consensus, proof-of-useful-work security, or token
+accounting. A live node must use authenticated, immutable puzzle inputs and a
+versioned typed response protocol before accepting proofs.
+
 ## Local Docker diagnostic test
 
 From the repository root:
