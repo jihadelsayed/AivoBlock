@@ -15,6 +15,7 @@ import AivoBlock.TransferAuth (transferSigningBytesV1, verifySignedTransferV1)
 import Crypto.Hash (Digest, SHA256, hash)
 import Data.ByteArray (convert)
 import qualified Data.ByteString as BS
+import qualified Data.Set as Set
 
 digest :: BS.ByteString -> Hash256
 digest input = case mkHash256 (convert (hash input :: Digest SHA256)) of
@@ -41,7 +42,7 @@ signedTransactionIdV1 tx = do
 transactionRootV1 :: [Hash256] -> Either String Hash256
 transactionRootV1 ids
   | length ids > 65536 = Left "Too many transactions in a block"
-  | length ids /= length (unique ids) = Left "Duplicate transaction ID"
+  | length ids /= Set.size (Set.fromList ids) = Left "Duplicate transaction ID"
   | null ids = Right (digest (domain "AIVOBLOCK-TX-EMPTY-V1"))
   | otherwise = Right (finish (map leaf ids))
   where
@@ -56,7 +57,6 @@ transactionRootV1 ids
       [ domain "AIVOBLOCK-TX-NODE-V1"
       , hash256Bytes left
       , hash256Bytes right ])
-    unique = foldr (\item acc -> if item `elem` acc then acc else item : acc) []
 
 -- | Local ledger commitment with domain separation, not a consensus trie.
 ledgerStateRootV1 :: Ledger -> Either String Hash256
