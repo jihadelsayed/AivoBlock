@@ -4,6 +4,7 @@ import AivoBlock.Ledger
 import AivoBlock.Transaction
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Word (Word8, Word64)
 import Test.Hspec
 import Test.QuickCheck (NonNegative(..), property)
@@ -15,6 +16,8 @@ main = hspec $ do
       balanceOf alice emptyLedger `shouldBe` 0
       nonceOf alice emptyLedger `shouldBe` 0
       ledgerFeePool emptyLedger `shouldBe` 0
+      ledgerSettledRewardBatches emptyLedger `shouldBe` Set.empty
+      ledgerPaidWorkReceipts emptyLedger `shouldBe` Set.empty
 
   describe "Verified transfers" $ do
     it "moves funds, collects fees and advances the sender nonce" $ do
@@ -51,6 +54,7 @@ main = hspec $ do
     it "rejects recipient balance overflow" $
       let ledger = Ledger
             (Map.fromList [(alice, Account 10 0), (bob, Account maxBound 0)]) 0
+            Set.empty Set.empty
       in applyVerifiedTransfer (transfer alice bob 1 0 0) ledger
            `shouldBe` Left "Unsigned 64-bit overflow"
 
@@ -84,6 +88,7 @@ address byte =
 
 funded :: Word64 -> Ledger
 funded amount = Ledger (Map.singleton alice (Account amount 0)) 0
+  Set.empty Set.empty
 
 transfer :: Address -> Address -> Word64 -> Word64 -> Word64 -> Transaction
 transfer sender recipient amount fee nonce =
