@@ -6,6 +6,8 @@
 
 use std::collections::BTreeMap;
 
+use sha2::{Digest, Sha256};
+
 use super::scheduler::{Assignment, WorkRange};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,32 @@ pub enum ReceiptError {
 #[derive(Debug, Default)]
 pub struct ReceiptRegistry {
     receipts: BTreeMap<([u8; 32], u64), VerifiedWorkReceipt>,
+}
+
+/// Canonical, domain-separated V1 receipt ID shared with the Haskell core.
+/// The identity binds chain, puzzle, worker, unit range and result hash.
+/// Caller-provided bytes do not imply that the work has been verified.
+pub fn canonical_receipt_id_v1(
+    chain_id: u32,
+    receipt: &VerifiedWorkReceipt,
+) -> Result<[u8; 32], ReceiptError> {
+    if chain_id == 0 || receipt.range.count == 0 {
+        return Err(ReceiptError::InvalidRange);
+    }
+    receipt
+        .range
+        .start
+        .checked_add(receipt.range.count)
+        .ok_or(ReceiptError::InvalidRange)?;
+    let mut hash = Sha256::new();
+    hash.update(b"AIVOBLOCK-VERIFIED-WORK-RECEIPT-V1\0");
+    hash.update(chain_id.to_be_bytes());
+    hash.update(receipt.puzzle_id);
+    hash.update(receipt.worker_id);
+    hash.update(receipt.range.start.to_be_bytes());
+    hash.update(receipt.range.count.to_be_bytes());
+    hash.update(receipt.result_commitment);
+    Ok(hash.finalize().into())
 }
 
 impl ReceiptRegistry {
@@ -102,6 +130,52 @@ mod tests {
             range: a.range,
             result_commitment: [3; 32],
         }
+    }
+
+    #[test]
+    fn canonical_id_matches_haskell_reference_vector() {
+        let receipt = VerifiedWorkReceipt {
+            puzzle_id: [1; 32],
+            worker_id: [2; 32],
+            range: WorkRange { start: 0, count: 2 },
+            result_commitment: [3; 32],
+        };
+        let id = canonical_receipt_id_v1(1, &receipt).unwrap();
+        let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex,
+            "1085d690f142951fb5fc32a9979d2b8d0afb2861fcc7cfae095d1f2cf9c80db1"
+        );
+        let mut changed = receipt;
+        changed.range.start = 1;
+        assert_ne!(canonical_receipt_id_v1(1, &changed).unwrap(), id);
+        assert_ne!(canonical_receipt_id_v1(2, &receipt).unwrap(), id);
+        changed = receipt;
+        changed.worker_id[0] ^= 1;
+        assert_ne!(canonical_receipt_id_v1(1, &changed).unwrap(), id);
+        changed = receipt;
+        changed.result_commitment[0] ^= 1;
+        assert_ne!(canonical_receipt_id_v1(1, &changed).unwrap(), id);
+    }
+
+    #[test]
+    fn canonical_id_rejects_invalid_ranges_and_chain() {
+        let mut r = receipt(&assignment(0, 2));
+        assert_eq!(
+            canonical_receipt_id_v1(0, &r),
+            Err(ReceiptError::InvalidRange)
+        );
+        r.range.count = 0;
+        assert_eq!(
+            canonical_receipt_id_v1(1, &r),
+            Err(ReceiptError::InvalidRange)
+        );
+        r.range.start = u64::MAX;
+        r.range.count = 2;
+        assert_eq!(
+            canonical_receipt_id_v1(1, &r),
+            Err(ReceiptError::InvalidRange)
+        );
     }
 
     #[test]

@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::ipc::python::PythonWorkerClient;
 use crate::mining::auth::{assignment_signing_bytes, AssignmentAuthorizer, SignedAssignment};
-use crate::mining::receipts::{ReceiptRegistry, VerifiedWorkReceipt};
+use crate::mining::receipts::{canonical_receipt_id_v1, ReceiptRegistry, VerifiedWorkReceipt};
 use crate::mining::{Assignment, MiningScheduler, PuzzleTask};
+use crate::storage::RocksDbStore;
 
 const ROWS: [[i64; 2]; 3] = [[1, 2], [3, 4], [-2, 5]];
 const WEIGHTS: [i64; 2] = [2, 3];
@@ -237,17 +238,26 @@ pub fn demo() -> Result<(), String> {
     {
         let core = HaskellValidatorClient::new(core_path)
             .map_err(|error| format!("Haskell IPC configuration: {error:?}"))?;
-        let work_json = receipts
-            .receipts_for(puzzle_id)
+        let verified_receipts = receipts.receipts_for(puzzle_id);
+        let receipt_ids = verified_receipts
             .iter()
             .map(|receipt| {
+                canonical_receipt_id_v1(1, receipt)
+                    .map_err(|error| format!("Invalid canonical receipt: {error:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let work_json = verified_receipts
+            .iter()
+            .zip(receipt_ids.iter())
+            .map(|(receipt, receipt_id)| {
                 format!(
-                    r#"{{"puzzle_id":"{}","worker_id":"{}","result_commitment":"{}","puzzle_units":3,"deadline_height":100,"start":{},"count":{},"verified":true}}"#,
+                    r#"{{"puzzle_id":"{}","worker_id":"{}","result_commitment":"{}","puzzle_units":3,"deadline_height":100,"start":{},"count":{},"verified":true,"receipt_id":"{}"}}"#,
                     hex_bytes(&receipt.puzzle_id),
                     hex_bytes(&receipt.worker_id),
                     hex_bytes(&receipt.result_commitment),
                     receipt.range.start,
-                    receipt.range.count
+                    receipt.range.count,
+                    hex_bytes(receipt_id)
                 )
             })
             .collect::<Vec<_>>()
@@ -270,9 +280,92 @@ pub fn demo() -> Result<(), String> {
             ));
         }
         println!("Haskell reward eligibility IPC: PASS (2 caller-attested receipts)");
+
+        // Synthetic fee-pool test only. This does not distribute real funds.
+        let settlement_request = format!(
+            r#"{{"protocol_version":1,"type":"settlement_fixture","chain_id":1,"height":1,"fee_pool":3,"budget":3,"batch_id":"{}","works":[{work_json}]}}"#,
+            hex32(9)
+        );
+        let settlement_response = core
+            .exchange(settlement_request.as_bytes())
+            .map_err(|error| format!("Haskell settlement fixture IPC: {error:?}"))?;
+        let settlement_text = std::str::from_utf8(&settlement_response)
+            .map_err(|_| "Haskell settlement response is not UTF-8")?;
+        if !settlement_text.contains(r#""settled":true"#)
+            || !settlement_text.contains(r#""scope":"caller_attested_synthetic_fee_pool_only""#)
+            || !settlement_text.contains(r#""fee_pool_remaining":0"#)
+            || !settlement_text.contains(r#""amount":2"#)
+            || !settlement_text.contains(r#""amount":1"#)
+            || receipt_ids
+                .iter()
+                .any(|id| !settlement_text.contains(&hex_bytes(id)))
+        {
+            return Err(format!(
+                "Haskell settlement fixture rejected: {settlement_text}"
+            ));
+        }
+
+        // A forged receipt ID or nonexistent fee funding must never settle.
+        let forged = settlement_request.replacen(&hex_bytes(&receipt_ids[0]), &hex32(4), 1);
+        let response = core
+            .exchange(forged.as_bytes())
+            .map_err(|error| format!("Forged receipt settlement IPC: {error:?}"))?;
+        let response = std::str::from_utf8(&response)
+            .map_err(|_| "Forged settlement response is not UTF-8")?;
+        if !response.contains(r#""settled":false"#)
+            || !response.contains("Canonical receipt ID mismatch")
+        {
+            return Err("Forged canonical receipt ID unexpectedly settled".to_owned());
+        }
+        let unfunded = settlement_request.replacen(r#""fee_pool":3"#, r#""fee_pool":1"#, 1);
+        let response = core
+            .exchange(unfunded.as_bytes())
+            .map_err(|error| format!("Unfunded settlement IPC: {error:?}"))?;
+        let response = std::str::from_utf8(&response)
+            .map_err(|_| "Unfunded settlement response is not UTF-8")?;
+        if !response.contains(r#""settled":false"#) || !response.contains("Insufficient fee pool") {
+            return Err("Unfunded synthetic settlement unexpectedly accepted".to_owned());
+        }
+
+        // Never persist anything for a rejected or mismatched settlement.
+        // This is a demo replay marker, NOT an atomic block/ledger commit.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock unavailable")?
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "aivoblock-reward-fixture-{}-{stamp}",
+            std::process::id()
+        ));
+        {
+            let store = RocksDbStore::open(&path)
+                .map_err(|error| format!("Open settlement replay store: {error}"))?;
+            store
+                .persist_settlement_replay_guard(&[9; 32], &receipt_ids, &settlement_response)
+                .map_err(|error| format!("Persist settlement replay marker: {error}"))?;
+        }
+        {
+            let store = RocksDbStore::open(&path)
+                .map_err(|error| format!("Reopen settlement replay store: {error}"))?;
+            if store
+                .persist_settlement_replay_guard(&[9; 32], &receipt_ids, &settlement_response)
+                .is_ok()
+            {
+                return Err("Settled batch replay was accepted after reopening".to_owned());
+            }
+            if store
+                .persist_settlement_replay_guard(&[10; 32], &receipt_ids, &settlement_response)
+                .is_ok()
+            {
+                return Err("Paid receipt replay was accepted after reopening".to_owned());
+            }
+        }
+        std::fs::remove_dir_all(&path)
+            .map_err(|error| format!("Clean up settlement fixture DB: {error}"))?;
+        println!("Haskell synthetic settlement and RocksDB replay diagnostic: PASS");
     }
     println!("AI partition IPC demo: PASS (3 units / 2 signed assignments / 2 verified receipts)");
-    println!("Scope: fixture-only issuer signatures; no P2P, consensus or rewards");
+    println!("Scope: local synthetic settlement only; no P2P, consensus or actual token payouts");
     Ok(())
 }
 

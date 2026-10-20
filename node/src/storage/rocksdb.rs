@@ -4,12 +4,13 @@
 //! callers must verify consensus rules before committing chain state.
 //! The initial API exposes individual writes, not atomic block commits.
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 use std::sync::Mutex;
 
-use rocksdb::{Options, WriteBatch, DB};
+use rocksdb::{Options, WriteBatch, WriteOptions, DB};
 
 use super::{encode_key, Column, KeyValueStore};
 
@@ -21,6 +22,9 @@ pub enum StorageError {
     WrongParent,
     WrongHeight,
     CorruptChainState,
+    InvalidSettlementRecord,
+    DuplicateRewardBatch,
+    AlreadyPaidReceipt,
     Database(rocksdb::Error),
 }
 
@@ -33,6 +37,9 @@ impl fmt::Display for StorageError {
             Self::WrongParent => write!(f, "parent hash does not match the stored tip"),
             Self::WrongHeight => write!(f, "block height must follow the stored tip"),
             Self::CorruptChainState => write!(f, "stored chain metadata is missing or malformed"),
+            Self::InvalidSettlementRecord => write!(f, "invalid receipt settlement record"),
+            Self::DuplicateRewardBatch => write!(f, "reward batch already persisted"),
+            Self::AlreadyPaidReceipt => write!(f, "reward receipt already persisted"),
             Self::Database(err) => write!(f, "RocksDB error: {err}"),
         }
     }
@@ -47,7 +54,10 @@ impl Error for StorageError {
             | Self::InvalidParentHash
             | Self::WrongParent
             | Self::WrongHeight
-            | Self::CorruptChainState => None,
+            | Self::CorruptChainState
+            | Self::InvalidSettlementRecord
+            | Self::DuplicateRewardBatch
+            | Self::AlreadyPaidReceipt => None,
         }
     }
 }
@@ -166,6 +176,62 @@ impl RocksDbStore {
         self.db.write(batch).map_err(StorageError::from)
     }
 
+    /// Atomically remember the accepted response and all paid receipt IDs.
+    ///
+    /// This is a local demo replay guard, NOT chain reward finality. Caller must
+    /// validate the Haskell settlement response and every receipt first.
+    /// Commit uses a synced WAL. Real block execution must commit balances,
+    /// receipts and tip in ONE transaction, including reorg handling.
+    pub fn persist_settlement_replay_guard(
+        &self,
+        batch_id: &[u8; 32],
+        receipt_ids: &[[u8; 32]],
+        settlement_response: &[u8],
+    ) -> Result<(), StorageError> {
+        if *batch_id == [0; 32]
+            || receipt_ids.is_empty()
+            || settlement_response.is_empty()
+            || receipt_ids.contains(&[0; 32])
+        {
+            return Err(StorageError::InvalidSettlementRecord);
+        }
+        let unique = receipt_ids.iter().collect::<BTreeSet<_>>();
+        if unique.len() != receipt_ids.len() {
+            return Err(StorageError::InvalidSettlementRecord);
+        }
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
+
+        let mut batch_suffix = b"reward-batch-v1:".to_vec();
+        batch_suffix.extend_from_slice(batch_id);
+        let batch_key = storage_key(Column::Metadata, &batch_suffix)?;
+        if self.db.get(&batch_key)?.is_some() {
+            return Err(StorageError::DuplicateRewardBatch);
+        }
+        let mut receipt_keys = Vec::with_capacity(receipt_ids.len());
+        for receipt_id in receipt_ids {
+            let mut suffix = b"paid-receipt-v1:".to_vec();
+            suffix.extend_from_slice(receipt_id);
+            let key = storage_key(Column::Metadata, &suffix)?;
+            if self.db.get(&key)?.is_some() {
+                return Err(StorageError::AlreadyPaidReceipt);
+            }
+            receipt_keys.push(key);
+        }
+        let mut batch = WriteBatch::default();
+        batch.put(batch_key, settlement_response);
+        for key in receipt_keys {
+            batch.put(key, [1u8]);
+        }
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        self.db
+            .write_opt(batch, &options)
+            .map_err(StorageError::from)
+    }
+
     /// Flush the database's memtable. This is not a consensus operation.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(StorageError::from)
@@ -194,6 +260,77 @@ impl KeyValueStore for RocksDbStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_settlement_guard_survives_reopen_and_rejects_replay_atomically() {
+        let path = std::env::temp_dir().join(format!(
+            "aivoblock-reward-guard-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        let id1 = [1u8; 32];
+        let id2 = [2u8; 32];
+        {
+            let db = RocksDbStore::open(&path).unwrap();
+            db.persist_settlement_replay_guard(&[9; 32], &[id1, id2], b"accepted")
+                .unwrap();
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[9; 32], &[id1], b"again"),
+                Err(StorageError::DuplicateRewardBatch)
+            ));
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[10; 32], &[id2, [3; 32]], b"again"),
+                Err(StorageError::AlreadyPaidReceipt)
+            ));
+        }
+        {
+            let db = RocksDbStore::open(&path).unwrap();
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[11; 32], &[id1], b"again"),
+                Err(StorageError::AlreadyPaidReceipt)
+            ));
+            // Failed batch containing an already-paid receipt must not have
+            // persisted its other receipt or the new batch marker.
+            db.persist_settlement_replay_guard(&[10; 32], &[[3; 32]], b"accepted2")
+                .unwrap();
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[10; 32], &[[4; 32]], b"again"),
+                Err(StorageError::DuplicateRewardBatch)
+            ));
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[12; 32], &[[3; 32]], b"again"),
+                Err(StorageError::AlreadyPaidReceipt)
+            ));
+        }
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn settlement_guard_rejects_duplicate_and_zero_identifiers() {
+        let path = std::env::temp_dir().join(format!(
+            "aivoblock-reward-invalid-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        {
+            let db = RocksDbStore::open(&path).unwrap();
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[9; 32], &[[1; 32], [1; 32]], b"record"),
+                Err(StorageError::InvalidSettlementRecord)
+            ));
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[0; 32], &[[1; 32]], b"record"),
+                Err(StorageError::InvalidSettlementRecord)
+            ));
+            assert!(matches!(
+                db.persist_settlement_replay_guard(&[9; 32], &[[0; 32]], b"record"),
+                Err(StorageError::InvalidSettlementRecord)
+            ));
+        }
+        let _ = std::fs::remove_dir_all(path);
+    }
 
     #[test]
     fn rejects_empty_key_before_database_access() {
