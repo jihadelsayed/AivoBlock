@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Local diagnostics and a bounded IPC health endpoint for the Rust node.
 -- A fixture-based block shape IPC check is available; full validation
 -- and network consensus are not implemented.
