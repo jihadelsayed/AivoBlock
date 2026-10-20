@@ -17,7 +17,10 @@ pub fn configure_stream(stream: &TcpStream) -> io::Result<()> {
 
 pub fn send_frame<W: Write>(stream: &mut W, payload: &[u8]) -> io::Result<()> {
     if payload.is_empty() || payload.len() > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid frame size"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid frame size",
+        ));
     }
     let size = u32::try_from(payload.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Frame too large"))?;
@@ -31,7 +34,10 @@ pub fn recv_frame<R: Read>(stream: &mut R) -> io::Result<Vec<u8>> {
     stream.read_exact(&mut header)?;
     let length = u32::from_be_bytes(header) as usize;
     if length == 0 || length > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid frame length"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid frame length",
+        ));
     }
     let mut payload = vec![0u8; length];
     stream.read_exact(&mut payload)?;
