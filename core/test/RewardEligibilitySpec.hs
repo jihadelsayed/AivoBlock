@@ -12,7 +12,7 @@ main :: IO ()
 main = hspec $ do
   describe "Reward eligibility (trusted inputs only)" $ do
     it "turns non-overlapping verified work into deterministic weights" $ do
-      eligibleContributions 10 [work 2 4 2 2 Verified, work 1 0 2 1 Verified,
+      eligibleContributions 10 [work 2 3 2 2 Verified, work 1 0 2 1 Verified,
                                 work 1 2 1 1 Verified]
         `shouldBe` Right [Contribution (hash 1) 3, Contribution (hash 2) 2]
 
