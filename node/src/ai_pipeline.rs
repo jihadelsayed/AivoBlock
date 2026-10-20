@@ -142,7 +142,7 @@ pub fn demo() -> Result<(), String> {
         let execution = client
             .exchange(execution_request(&assignment).as_bytes())
             .map_err(|error| format!("Python execution IPC: {error:?}"))?;
-        if execution != expected.as_bytes() {
+        if execution.as_slice() != expected.as_bytes() {
             return Err(format!(
                 "Worker {index} returned a result that disagrees with Rust's pinned fixture"
             ));
@@ -151,7 +151,7 @@ pub fn demo() -> Result<(), String> {
         let verification = client
             .exchange(verification_request(&proof).as_bytes())
             .map_err(|error| format!("Python verification IPC: {error:?}"))?;
-        if verification != VERIFIED_RESPONSE.as_bytes() {
+        if verification.as_slice() != VERIFIED_RESPONSE.as_bytes() {
             return Err(format!("Worker {index} proof failed local recomputation"));
         }
 
@@ -161,7 +161,7 @@ pub fn demo() -> Result<(), String> {
             let rejected = client
                 .exchange(verification_request(&tampered).as_bytes())
                 .map_err(|error| format!("Tampered-proof IPC: {error:?}"))?;
-            if rejected != REJECTED_RESPONSE.as_bytes() {
+            if rejected.as_slice() != REJECTED_RESPONSE.as_bytes() {
                 return Err("Tampered result commitment was not rejected".to_owned());
             }
         }
