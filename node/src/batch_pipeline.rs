@@ -14,7 +14,7 @@ use crate::batch_commitment::{
 use crate::batch_replay::replay_stored_tip;
 use crate::chain_replay::replay_local_chain;
 use crate::ipc::haskell::HaskellValidatorClient;
-use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state, LedgerState};
+use crate::storage::ledger_state::{encode_ledger_state, LedgerState};
 use crate::storage::{Column, KeyValueStore, LocalAccount, RocksDbStore};
 use crate::transaction_auth::{
     transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
@@ -66,38 +66,6 @@ fn tx_json(tx: &SignedTransferV1) -> String {
     )
 }
 
-/// Strict enough for a trusted local test executable only; replace with a
-/// typed bounded JSON parser before exposing this IPC response to peers.
-fn response_hex(response: &str, field: &str) -> Result<Vec<u8>, String> {
-    let prefix = format!(r#""{field}":""#);
-    if response.matches(&prefix).count() != 1 {
-        return Err(format!("Missing/duplicate {field} in Haskell response"));
-    }
-    let tail = response
-        .split_once(&prefix)
-        .ok_or("Missing response field")?
-        .1;
-    let value = tail.split_once('"').ok_or("Unterminated hex response")?.0;
-    if value.len() > 2 * 1024 * 1024
-        || value.len() % 2 != 0
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
-        return Err(format!("Invalid {field} hex encoding"));
-    }
-    value
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let a = (pair[0] as char).to_digit(16).ok_or("Invalid hex")?;
-            let b = (pair[1] as char).to_digit(16).ok_or("Invalid hex")?;
-            Ok(((a << 4) | b) as u8)
-        })
-        .collect::<Result<Vec<_>, &str>>()
-        .map_err(str::to_owned)
-}
-
 /// The complete batch is verified by Rust and Haskell; state is returned
 /// only after Haskell's pure sequential fold succeeds. No state is written.
 pub fn execute_signed_batch_haskell(
@@ -129,34 +97,7 @@ pub fn execute_signed_batch_haskell(
     let response = core
         .exchange(request.as_bytes())
         .map_err(|e| format!("Haskell batch IPC: {e:?}"))?;
-    let answer = std::str::from_utf8(&response).map_err(|_| "Non-UTF8 Haskell batch response")?;
-    if !answer.contains(r#""ok":true"#)
-        || !answer.contains(r#""type":"ledger_signed_batch_fixture""#)
-        || !answer.contains(r#""protocol_version":1"#)
-        || !answer.contains(r#""scope":"ed25519_verified_ordered_batch_only""#)
-        || !answer.contains(r#""accepted":true"#)
-    {
-        return Err(format!("Haskell rejected signed batch: {answer}"));
-    }
-    let state_bytes = response_hex(answer, "state_hex")?;
-    let successor =
-        decode_ledger_state(&state_bytes).map_err(|e| format!("Invalid returned state: {e:?}"))?;
-    let expected_ids = format!(
-        r#""transaction_ids":[{}]"#,
-        ids.iter()
-            .map(|id| format!(r#""{}""#, hex(id)))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    if answer.matches(&expected_ids).count() != 1
-        || response_hex(answer, "transactions_root")? != root
-        || response_hex(answer, "state_root")?
-            != ledger_state_root_v1(&successor)
-                .map_err(|e| format!("Invalid successor root: {e:?}"))?
-    {
-        return Err("Haskell and Rust batch commitments disagree".into());
-    }
-    Ok(successor)
+    crate::ipc::ledger_responses::decode_signed_batch_reply(&response, &ids, &root)
 }
 
 /// Two transfers are executed inside a SINGLE candidate block, with no
@@ -433,14 +374,3 @@ pub fn demo() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rejects_invalid_or_ambiguous_local_response_hex() {
-        assert!(response_hex(r#"{"state_hex":"00"}"#, "state_hex").is_ok());
-        assert!(response_hex(r#"{"state_hex":"0z"}"#, "state_hex").is_err());
-        assert!(response_hex(r#"{"state_hex":"00","state_hex":"00"}"#, "state_hex").is_err());
-        assert!(response_hex(r#"{"state_hex":"A0"}"#, "state_hex").is_err());
-    }
-}
