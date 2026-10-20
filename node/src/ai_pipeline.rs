@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 
+use crate::ipc::haskell::HaskellValidatorClient;
 use crate::ipc::python::PythonWorkerClient;
 use crate::mining::auth::{assignment_signing_bytes, AssignmentAuthorizer, SignedAssignment};
 use crate::mining::receipts::{ReceiptRegistry, VerifiedWorkReceipt};
@@ -228,6 +229,45 @@ pub fn demo() -> Result<(), String> {
     }
     if receipts.receipts_for(puzzle_id).len() != 2 {
         return Err("Expected two locally verified work receipts".to_owned());
+    }
+    // Optional local cross-language diagnostic. Only Rust-recomputed receipts
+    // are serialized. Haskell still relies on Rust's verification assertion.
+    if let Some(core_path) =
+        env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE").filter(|path| !path.is_empty())
+    {
+        let core = HaskellValidatorClient::new(core_path)
+            .map_err(|error| format!("Haskell IPC configuration: {error:?}"))?;
+        let work_json = receipts
+            .receipts_for(puzzle_id)
+            .iter()
+            .map(|receipt| {
+                format!(
+                    r#"{{"puzzle_id":"{}","worker_id":"{}","result_commitment":"{}","puzzle_units":3,"deadline_height":100,"start":{},"count":{},"verified":true}}"#,
+                    hex_bytes(&receipt.puzzle_id),
+                    hex_bytes(&receipt.worker_id),
+                    hex_bytes(&receipt.result_commitment),
+                    receipt.range.start,
+                    receipt.range.count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let request = format!(
+            r#"{{"protocol_version":1,"type":"reward_eligibility","height":1,"works":[{work_json}]}}"#
+        );
+        let response = core
+            .exchange(request.as_bytes())
+            .map_err(|error| format!("Haskell reward eligibility IPC: {error:?}"))?;
+        let response = std::str::from_utf8(&response)
+            .map_err(|_| "Haskell returned non-UTF8 response")?;
+        if !response.contains(r#""eligible":true"#)
+            || !response.contains(r#""scope":"caller_attested_verification_only""#)
+            || !response.contains(r#""units":2"#)
+            || !response.contains(r#""units":1"#)
+        {
+            return Err(format!("Haskell rejected validated fixture receipts: {response}"));
+        }
+        println!("Haskell reward eligibility IPC: PASS (2 caller-attested receipts)");
     }
     println!("AI partition IPC demo: PASS (3 units / 2 signed assignments / 2 verified receipts)");
     println!("Scope: fixture-only issuer signatures; no P2P, consensus or rewards");
