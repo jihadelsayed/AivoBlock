@@ -131,6 +131,7 @@ jobs:
           cargo run -- core-json
           cargo run -- ai-partition-demo
           cargo run -- ledger-transition-demo
+          cargo run -- multi-transfer-demo
 
   protobuf:
     name: Protocol schemas

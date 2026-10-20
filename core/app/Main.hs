@@ -21,6 +21,7 @@ import AivoBlock.Ledger (Ledger(..), Account(..), applyVerifiedTransfer)
 import AivoBlock.LocalLedgerSnapshot (decodeLedgerSnapshot, encodeLedgerSnapshot)
 import AivoBlock.TransferAuth (verifySignedTransferV1)
 import AivoBlock.TransactionCommitment (signedTransactionIdV1, transactionRootV1, ledgerStateRootV1)
+import AivoBlock.BatchExecution (applySignedBatchV1)
 import AivoBlock.Transaction (Transaction(..), mkAddress, addressBytes, mkAmount)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -522,6 +523,92 @@ ledgerTransitionRequest value =
       kind <- o .: "type" :: Parser String
       pure (version == 1 && kind == "ledger_signed_transfer_fixture")
 
+-- | Isolated signed-batch fixture. Every transaction is independently
+-- authenticated; execution is pure and aborts as a whole on any error.
+ledgerBatchResponse :: Value -> BS.ByteString
+ledgerBatchResponse value =
+  case parseEither parseBatch value of
+    Left _ -> answer False "invalid_signed_batch_request" Nothing
+    Right (snapshot, transfers) ->
+      let outcome = do
+            previous <- decodeLedgerSnapshot snapshot
+            (next, identifiers, txRoot, stateRoot) <-
+              applySignedBatchV1 previous transfers
+            bytes <- encodeLedgerSnapshot next
+            pure (hexBytes bytes, map hexHash identifiers,
+                  hexHash txRoot, hexHash stateRoot)
+      in case outcome of
+        Left reason -> answer False reason Nothing
+        Right computed -> answer True "none" (Just computed)
+  where
+    parseBatch = withObject "signed batch" $ \o -> do
+      version <- o .: "version" :: Parser Word64
+      chain <- o .: "chain_id" :: Parser Word64
+      when (version /= 1 || chain /= 1)
+        (fail "Unsupported signed-batch version or chain")
+      snapshotHex <- o .: "state_hex" :: Parser String
+      when (length snapshotHex > 2 * 1024 * 1024)
+        (fail "Ledger snapshot too large")
+      previous <- parseRawHex snapshotHex
+      supplied <- o .: "transactions" :: Parser [Value]
+      when (null supplied || length supplied > 64)
+        (fail "Signed-batch count must be 1 to 64")
+      transactions <- traverse (parseTransfer version chain) supplied
+      pure (previous, transactions)
+
+    parseTransfer version chain = withObject "signed transfer" $ \t -> do
+      senderHex <- t .: "sender" :: Parser String
+      recipientHex <- t .: "recipient" :: Parser String
+      senderHash <- parseHash senderHex
+      recipientHash <- parseHash recipientHex
+      sender <- either fail pure (mkAddress (hash256Bytes senderHash))
+      recipient <- either fail pure (mkAddress (hash256Bytes recipientHash))
+      amount <- t .: "amount" :: Parser Word64
+      fee <- t .: "fee" :: Parser Word64
+      nonce <- t .: "nonce" :: Parser Word64
+      keyHex <- t .: "public_key" :: Parser String
+      signatureHex <- t .: "signature" :: Parser String
+      when (length keyHex /= 64 || length signatureHex /= 128)
+        (fail "Incorrect Ed25519 field size")
+      key <- parseRawHex keyHex
+      signature <- parseRawHex signatureHex
+      pure (Transaction version chain sender recipient (mkAmount amount)
+            (mkAmount fee) nonce Nothing key signature)
+
+    parseRawHex hex
+      | odd (length hex) || not (all isHexDigit hex) =
+          fail "Invalid hex encoding"
+      | otherwise = pure (BS.pack (decodeBytes hex))
+    decodeBytes (a:b:rest) =
+      fromIntegral (16 * digitToInt a + digitToInt b) : decodeBytes rest
+    decodeBytes _ = []
+
+    answer :: Bool -> String -> Maybe (String,[String],String,String)
+           -> BS.ByteString
+    answer accepted reason result = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("ledger_signed_batch_fixture" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "accepted" .= accepted
+      , "reason" .= reason
+      , "scope" .= ("ed25519_verified_ordered_batch_only" :: String)
+      , "state_hex" .= fmap (\(a,_,_,_) -> a) result
+      , "transaction_ids" .= fmap (\(_,b,_,_) -> b) result
+      , "transactions_root" .= fmap (\(_,_,c,_) -> c) result
+      , "state_root" .= fmap (\(_,_,_,d) -> d) result
+      ]))
+
+ledgerBatchRequest :: Value -> Maybe BS.ByteString
+ledgerBatchRequest value =
+  case parseEither parser value of
+    Right True -> Just (ledgerBatchResponse value)
+    _ -> Nothing
+  where
+    parser = withObject "signed batch request" $ \o -> do
+      version <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (version == 1 && kind == "ledger_signed_batch_fixture")
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | otherwise =
@@ -539,9 +626,11 @@ handleIpcRequest request
                   Just result -> Just result
                   Nothing -> case settlementRequest value of
                     Just result -> Just result
-                    Nothing -> case ledgerTransitionRequest value of
+                    Nothing -> case ledgerBatchRequest value of
                       Just result -> Just result
-                      Nothing -> dynamicRequest request)
+                      Nothing -> case ledgerTransitionRequest value of
+                        Just result -> Just result
+                        Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
