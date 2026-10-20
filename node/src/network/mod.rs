@@ -8,7 +8,6 @@
 pub mod handshake;
 pub mod p2p;
 
-
 /// Identifies the wire protocol spoken by compatible nodes.
 /// Increment when making incompatible network-message changes.
 pub const NETWORK_PROTOCOL_VERSION: u32 = 1;
