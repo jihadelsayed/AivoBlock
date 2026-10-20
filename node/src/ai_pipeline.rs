@@ -103,7 +103,7 @@ fn proof_json(assignment: &Assignment, commitment: &str) -> String {
 
 /// Run exactly two local assignments, comparing the complete worker reply
 /// with a Rust-computed canonical commitment before asking Python to verify.
-pub fn demo() -> Result<(), String> {
+pub fn verify_demo_partitions() -> Result<Vec<VerifiedWorkReceipt>, String> {
     let executable = env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -228,9 +228,17 @@ pub fn demo() -> Result<(), String> {
     if scheduler.remaining_units(&puzzle_id) != Some(0) {
         return Err("The local scheduler left some puzzle units unassigned".to_owned());
     }
-    if receipts.receipts_for(puzzle_id).len() != 2 {
+    let verified_receipts = receipts.receipts_for(puzzle_id);
+    if verified_receipts.len() != 2 {
         return Err("Expected two locally verified work receipts".to_owned());
     }
+    Ok(verified_receipts)
+}
+
+/// Keep the original local partition demo and its synthetic compatibility
+/// diagnostics; a block-settlement demo reuses ONLY these admitted results.
+pub fn demo() -> Result<(), String> {
+    let verified_receipts = verify_demo_partitions()?;
     // Optional local cross-language diagnostic. Only Rust-recomputed receipts
     // are serialized. Haskell still relies on Rust's verification assertion.
     if let Some(core_path) =
@@ -238,7 +246,6 @@ pub fn demo() -> Result<(), String> {
     {
         let core = HaskellValidatorClient::new(core_path)
             .map_err(|error| format!("Haskell IPC configuration: {error:?}"))?;
-        let verified_receipts = receipts.receipts_for(puzzle_id);
         let receipt_ids = verified_receipts
             .iter()
             .map(|receipt| {
