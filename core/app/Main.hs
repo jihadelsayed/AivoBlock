@@ -11,12 +11,16 @@ import AivoBlock.Block (Block(..), BlockBody(..), BlockHeader(..), zeroHash, has
 import AivoBlock.Validation (validateBlockShape, validateChildHeader)
 import Data.Bits (shiftL, shiftR, (.&.))
 import qualified Data.ByteString as BS
-import AivoBlock.Block (mkHash256, Hash256)
+import AivoBlock.Block (mkHash256, hash256Bytes, Hash256)
+import AivoBlock.PuzzleProof (Puzzle(..), PuzzleProof(..), ProofStatus(..))
+import AivoBlock.RewardEligibility (VerifiedWork(..), eligibleContributions)
+import AivoBlock.Rewards (Contribution(..))
 import Data.Char (chr, ord)
 import Data.Aeson (Value, eitherDecodeStrict', encode, object, (.=), (.:), (.:?), withObject)
 import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (digitToInt, isHexDigit)
+import Numeric (showHex)
 import Data.Word (Word32, Word64)
 
 import System.Environment (getArgs)
@@ -264,6 +268,71 @@ childRequest value =
       kind <- o .: "type" :: Parser String
       pure (protocol == 1 && kind == "validate_child_header")
 
+-- | This framed endpoint screens caller-asserted verification results.
+-- The Rust caller MUST authenticate and independently verify each receipt.
+-- Passing "verified":true is not cryptographic proof or payment authority.
+parseRewardWork :: Value -> Parser VerifiedWork
+parseRewardWork = withObject "verified work" $ \o -> do
+  puzzleIdHex <- o .: "puzzle_id" :: Parser String
+  workerHex <- o .: "worker_id" :: Parser String
+  resultHex <- o .: "result_commitment" :: Parser String
+  puzzleIdValue <- parseHash puzzleIdHex
+  worker <- parseHash workerHex
+  resultHash <- parseHash resultHex
+  units <- o .: "puzzle_units" :: Parser Word64
+  deadline <- o .: "deadline_height" :: Parser Word64
+  start <- o .: "start" :: Parser Word64
+  count <- o .: "count" :: Parser Word64
+  verified <- o .: "verified" :: Parser Bool
+  let puzzle = Puzzle puzzleIdValue 1 zeroHash zeroHash zeroHash units deadline
+      proof = PuzzleProof puzzleIdValue worker start count resultHash Nothing
+  pure (VerifiedWork puzzle proof (if verified then Verified else Rejected))
+
+hexHash :: Hash256 -> String
+hexHash value = concatMap byteHex (BS.unpack (hash256Bytes value))
+  where
+    byteHex byte = let digits = showHex byte "" in
+      if length digits == 1 then '0' : digits else digits
+
+rewardEligibilityResponse :: Value -> BS.ByteString
+rewardEligibilityResponse value =
+  case parseEither parser value of
+    Left _ -> response False "invalid_reward_eligibility_request" []
+    Right (height, works) ->
+      case eligibleContributions height works of
+        Left err -> response False err []
+        Right entries -> response True "none" entries
+  where
+    parser = withObject "reward eligibility request" $ \o -> do
+      height <- o .: "height" :: Parser Word64
+      workValues <- o .: "works" :: Parser [Value]
+      when (length workValues > 1024) (fail "Too many work receipts")
+      works <- traverse parseRewardWork workValues
+      pure (height, works)
+    response eligible reason entries = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("reward_eligibility" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "eligible" .= eligible
+      , "reason" .= reason
+      , "scope" .= ("caller_attested_verification_only" :: String)
+      , "contributions" .=
+          [ object [ "worker_id" .= hexHash (contributionWorker entry)
+                   , "units" .= contributionWeight entry ]
+          | entry <- entries ]
+      ]))
+
+rewardRequest :: Value -> Maybe BS.ByteString
+rewardRequest value =
+  case parseEither parseKind value of
+    Right True -> Just (rewardEligibilityResponse value)
+    _ -> Nothing
+  where
+    parseKind = withObject "request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (protocol == 1 && kind == "reward_eligibility")
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | otherwise =
@@ -277,7 +346,9 @@ handleIpcRequest request
               Right (Just False) -> Just (shapeResponse False)
               _ -> fmap (map (chr . fromIntegral) . BS.unpack) (case childRequest value of
                 Just result -> Just result
-                Nothing -> dynamicRequest request)
+                Nothing -> case rewardRequest value of
+                  Just result -> Just result
+                  Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
