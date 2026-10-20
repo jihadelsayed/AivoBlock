@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use super::scheduler::Assignment;
+use super::DEFAULT_MAX_BATCH_UNITS;
 
 const DOMAIN: &[u8] = b"AIVOBLOCK-SIGNED-WORK-ASSIGNMENT-V1\0";
 
@@ -83,6 +84,7 @@ impl AssignmentAuthorizer {
         }
         if signed.assignment.puzzle_id == [0; 32]
             || signed.assignment.range.count == 0
+            || signed.assignment.range.count > DEFAULT_MAX_BATCH_UNITS
             || signed
                 .assignment
                 .range
@@ -197,6 +199,22 @@ mod tests {
         assert_eq!(
             auth.verify_and_record(&signed, 1, signed.issuer_public_key, 10),
             Err(AssignmentAuthError::ReplayedNonce)
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_assignment_even_when_signed() {
+        let (key, mut signed) = signed_fixture();
+        signed.assignment.range.count = DEFAULT_MAX_BATCH_UNITS + 1;
+        signed.signature = key.sign(&assignment_signing_bytes(&signed)).to_bytes();
+        assert_eq!(
+            AssignmentAuthorizer::new().verify_and_record(
+                &signed,
+                1,
+                signed.issuer_public_key,
+                10,
+            ),
+            Err(AssignmentAuthError::InvalidRange)
         );
     }
 
