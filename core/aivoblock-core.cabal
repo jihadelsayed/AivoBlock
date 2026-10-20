@@ -29,6 +29,7 @@ library
       AivoBlock.RewardEligibility
       AivoBlock.Settlement
       AivoBlock.ReceiptId
+      AivoBlock.LocalLedgerSnapshot
       AivoBlock.Validation
   build-depends:
       bytestring >=0.11 && <0.13,
@@ -111,4 +112,15 @@ test-suite receipt-id-spec
   build-depends:
       aivoblock-core,
       bytestring >=0.11 && <0.13,
+      hspec >=2.10 && <3
+
+test-suite local-ledger-snapshot-spec
+  import:           shared-settings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          LocalLedgerSnapshotSpec.hs
+  build-depends:
+      aivoblock-core,
+      bytestring >=0.11 && <0.13,
+      containers >=0.6 && <0.9,
       hspec >=2.10 && <3

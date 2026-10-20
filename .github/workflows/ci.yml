@@ -130,6 +130,7 @@ jobs:
           cargo run -- core-validate
           cargo run -- core-json
           cargo run -- ai-partition-demo
+          cargo run -- ledger-transition-demo
 
   protobuf:
     name: Protocol schemas
