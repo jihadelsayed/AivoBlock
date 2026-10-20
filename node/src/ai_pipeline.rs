@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 
 use crate::ipc::python::PythonWorkerClient;
+use crate::mining::receipts::{ReceiptRegistry, VerifiedWorkReceipt};
 use crate::mining::{Assignment, MiningScheduler, PuzzleTask};
 
 const ROWS: [[i64; 2]; 3] = [[1, 2], [3, 4], [-2, 5]];
@@ -118,6 +119,7 @@ pub fn demo() -> Result<(), String> {
         })
         .map_err(|error| format!("Puzzle scheduling: {error:?}"))?;
 
+    let mut receipts = ReceiptRegistry::new();
     for (index, worker_id) in [[5; 32], [6; 32]].into_iter().enumerate() {
         let assignment = scheduler
             .assign(puzzle_id, worker_id, 2)
@@ -164,6 +166,25 @@ pub fn demo() -> Result<(), String> {
             }
         }
 
+        // Receipt admission is intentionally after both independent Rust
+        // fixture comparison and the Python recomputation verifier.
+        let mut result_commitment = [0u8; 32];
+        for (position, byte) in result_commitment.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&commitment[position * 2..position * 2 + 2], 16)
+                .map_err(|_| "Invalid result commitment encoding")?;
+        }
+        receipts
+            .record_verified(
+                &assignment,
+                VerifiedWorkReceipt {
+                    puzzle_id: assignment.puzzle_id,
+                    worker_id: assignment.worker_id,
+                    range: assignment.range,
+                    result_commitment,
+                },
+            )
+            .map_err(|error| format!("Receipt admission: {error:?}"))?;
+
         println!(
             "Partition {index}: range [{}..{}), outputs {:?}, proof recomputed",
             assignment.range.start,
@@ -175,7 +196,10 @@ pub fn demo() -> Result<(), String> {
     if scheduler.remaining_units(&puzzle_id) != Some(0) {
         return Err("The local scheduler left some puzzle units unassigned".to_owned());
     }
-    println!("AI partition IPC demo: PASS (3 units / 2 workers)");
+    if receipts.receipts_for(puzzle_id).len() != 2 {
+        return Err("Expected two locally verified work receipts".to_owned());
+    }
+    println!("AI partition IPC demo: PASS (3 units / 2 workers / 2 verified receipts)");
     println!("Scope: local trusted fixture only; no P2P, signatures, consensus or rewards");
     Ok(())
 }
