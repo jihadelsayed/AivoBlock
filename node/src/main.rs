@@ -24,6 +24,7 @@ mod reward_pipeline;
 mod storage;
 mod transaction_auth;
 mod transaction_commitment;
+mod validator_certificate;
 
 use sha2::{Digest, Sha256};
 use std::env;
@@ -68,6 +69,7 @@ fn print_help() {
            ai-partition-demo  Execute and verify two locally scheduled AI work ranges\n\
            ai-reward-block-demo  Commit verified local AI receipts in a fee-funded reward block\n\
            ai-proof-v2-demo  Independently verify a signed AI task and reward history\n\
+           validator-quorum-demo  Verify signed weighted validator precommits\n\
            ledger-transition-demo  Verify transaction/state roots and store Haskell-executed blocks\n\
            multi-transfer-demo  Execute ordered signed transactions in one atomic block\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
@@ -620,6 +622,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-partition-demo" => ai_pipeline::demo(),
         [command] if command == "ai-reward-block-demo" => reward_pipeline::demo(),
         [command] if command == "ai-proof-v2-demo" => proof_pipeline_v2::demo(),
+        [command] if command == "validator-quorum-demo" => validator_certificate::demo(),
         [command] if command == "ledger-transition-demo" => ledger_bridge::demo(),
         [command] if command == "multi-transfer-demo" => batch_pipeline::demo(),
         [command] if command == "storage-demo" => storage_demo(),
@@ -677,6 +680,7 @@ mod tests {
         assert!(run(&["ai-partition-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-reward-block-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-proof-v2-demo".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["validator-quorum-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ledger-transition-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
