@@ -67,6 +67,20 @@ fn fixture_proof(authority: &SigningKey) -> Result<RewardProofV2, String> {
     })
 }
 
+fn block_input<'a>(
+    proof: &'a RewardProofV2,
+    prior: &'a LedgerState,
+    parent: &'a [u8; 32],
+) -> ProofBlockInput<'a> {
+    ProofBlockInput {
+        expected_prior: prior,
+        parent_id: parent,
+        height: 1,
+        timestamp_ms: 1001,
+        proof,
+    }
+}
+
 pub fn demo() -> Result<(), String> {
     let executable = env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE")
         .filter(|v| !v.is_empty())
@@ -117,13 +131,9 @@ pub fn demo() -> Result<(), String> {
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
         let genesis_id = initialize_signed_genesis(&db, &checkpoint, &trusted_key)?;
-        let input = |proof: &RewardProofV2| ProofBlockInput {
-            expected_prior: &initial, parent_id: &genesis_id, height: 1,
-            timestamp_ms: 1001, proof,
-        };
         let mut forged = proof.clone();
         forged.claims[0].receipt.result_commitment[0] ^= 1;
-        if commit_proof_block_v2(&db, &core, &trusted_key, input(&forged)).is_ok() {
+        if commit_proof_block_v2(&db, &core, &trusted_key, block_input(&forged, &initial, &genesis_id)).is_ok() {
             return Err("Forged AI result paid a worker".into());
         }
         forged = proof.clone();
@@ -133,7 +143,7 @@ pub fn demo() -> Result<(), String> {
         }
         if commit_proof_block_v2(&db, &core,
             &SigningKey::from_bytes(&[18; 32]).verifying_key().to_bytes(),
-            input(&proof)).is_ok()
+            block_input(&proof, &initial, &genesis_id)).is_ok()
         {
             return Err("Untrusted work authority authorized a payout".into());
         }
