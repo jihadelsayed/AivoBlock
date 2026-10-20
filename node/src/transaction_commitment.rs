@@ -316,6 +316,21 @@ mod tests {
     }
 
     #[test]
+    fn even_and_odd_merkle_vectors_match_haskell() {
+        let a = [1u8; 32];
+        let b = [2u8; 32];
+        let c = [3u8; 32];
+        assert_eq!(
+            hex(&transaction_root_v1(&[a, b]).unwrap()),
+            "59cdd667d6549503267625933df3bfa85016948f59f8bb91af0b945f926a6477"
+        );
+        assert_eq!(
+            hex(&transaction_root_v1(&[a, b, c]).unwrap()),
+            "0dbe0e823658b8f97440d5b79bc1b1aa7b0943ab43a1e9e930f1b4c881f2e822"
+        );
+    }
+
+    #[test]
     fn unsigned_or_tampered_tx_has_no_valid_identifier() {
         let original = tx(10, 0);
         assert_eq!(
