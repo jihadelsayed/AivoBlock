@@ -305,6 +305,30 @@ pub fn demo() -> Result<(), String> {
             ));
         }
 
+        // A forged receipt ID or nonexistent fee funding must never settle.
+        let forged = settlement_request.replacen(&hex_bytes(&receipt_ids[0]), &hex32(4), 1);
+        let response = core
+            .exchange(forged.as_bytes())
+            .map_err(|error| format!("Forged receipt settlement IPC: {error:?}"))?;
+        let response = std::str::from_utf8(&response)
+            .map_err(|_| "Forged settlement response is not UTF-8")?;
+        if !response.contains(r#""settled":false"#)
+            || !response.contains("Canonical receipt ID mismatch")
+        {
+            return Err("Forged canonical receipt ID unexpectedly settled".to_owned());
+        }
+        let unfunded = settlement_request.replacen(r#""fee_pool":3"#, r#""fee_pool":1"#, 1);
+        let response = core
+            .exchange(unfunded.as_bytes())
+            .map_err(|error| format!("Unfunded settlement IPC: {error:?}"))?;
+        let response = std::str::from_utf8(&response)
+            .map_err(|_| "Unfunded settlement response is not UTF-8")?;
+        if !response.contains(r#""settled":false"#)
+            || !response.contains("Insufficient fee pool")
+        {
+            return Err("Unfunded synthetic settlement unexpectedly accepted".to_owned());
+        }
+
         // Never persist anything for a rejected or mismatched settlement.
         // This is a demo replay marker, NOT an atomic block/ledger commit.
         let stamp = std::time::SystemTime::now()
