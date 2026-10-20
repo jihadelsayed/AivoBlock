@@ -330,19 +330,25 @@ pub fn demo() -> Result<(), String> {
 
         // A second *distinct* signed batch proves history replay uses the
         // state calculated for each predecessor, not a supplied tip ledger.
-        let subsequent = [
-            signed(&signer, bob, 4, 1, 2),
-            signed(&signer, bob, 3, 1, 3),
-        ];
+        let subsequent = [signed(&signer, bob, 4, 1, 2), signed(&signer, bob, 3, 1, 3)];
         final_expected = execute_signed_batch_haskell(&core, &computed, &subsequent)?;
         if final_expected.fee_pool != 5
-            || final_expected.accounts.get(&alice).map(|account| (account.balance, account.nonce))
+            || final_expected
+                .accounts
+                .get(&alice)
+                .map(|account| (account.balance, account.nonce))
                 != Some((73, 4))
-            || final_expected.accounts.get(&bob).map(|account| account.balance) != Some(22)
+            || final_expected
+                .accounts
+                .get(&bob)
+                .map(|account| account.balance)
+                != Some(22)
         {
             return Err("Second signed block Haskell balances mismatch".into());
         }
-        let ids = subsequent.iter().map(signed_transaction_id_v1)
+        let ids = subsequent
+            .iter()
+            .map(signed_transaction_id_v1)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("{error:?}"))?;
         let next_header = CommittedHeaderV1 {
@@ -357,13 +363,15 @@ pub fn demo() -> Result<(), String> {
                 .map_err(|error| format!("Followup state root: {error:?}"))?,
             timestamp_ms: 1002,
         };
-        final_id = commit_verified_batch_block(
-            &db, &next_header, &subsequent, &computed, &final_expected
-        ).map_err(|error| format!("Second batch atomic commit: {error:?}"))?;
+        final_id =
+            commit_verified_batch_block(&db, &next_header, &subsequent, &computed, &final_expected)
+                .map_err(|error| format!("Second batch atomic commit: {error:?}"))?;
 
         let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
-        if report.ledger != final_expected || report.signed_blocks != 2
-            || report.signed_transfers != 4 || report.tip_id != final_id
+        if report.ledger != final_expected
+            || report.signed_blocks != 2
+            || report.signed_transfers != 4
+            || report.tip_id != final_id
         {
             return Err("Full trusted-genesis replay produced wrong chain state".into());
         }
@@ -404,8 +412,10 @@ pub fn demo() -> Result<(), String> {
     {
         let db = RocksDbStore::open(&path).map_err(|error| error.to_string())?;
         let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
-        if report.tip_id != final_id || report.ledger != final_expected
-            || report.signed_blocks != 2 || report.signed_transfers != 4
+        if report.tip_id != final_id
+            || report.ledger != final_expected
+            || report.signed_blocks != 2
+            || report.signed_transfers != 4
         {
             return Err("Full replay across database reopen failed".into());
         }
