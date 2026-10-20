@@ -10,14 +10,14 @@ mod batch_replay;
 mod block_replay;
 mod chain_replay;
 mod genesis_checkpoint;
-mod reward_block;
-mod reward_pipeline;
 #[allow(dead_code)]
 // IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
 mod ledger_bridge;
 #[allow(dead_code)]
 mod mining;
+mod reward_block;
+mod reward_pipeline;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
 mod transaction_auth;
