@@ -81,16 +81,21 @@ fn hash(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn valid_data(task: &InferenceTaskV2) -> Result<(), String> {
-    if task.rows.is_empty() || task.rows.len() > MAX_ROWS
-        || task.weights.is_empty() || task.weights.len() > MAX_FEATURES
-        || task.authorized_budget == 0 || task.deadline_height == 0
+    if task.rows.is_empty()
+        || task.rows.len() > MAX_ROWS
+        || task.weights.is_empty()
+        || task.weights.len() > MAX_FEATURES
+        || task.authorized_budget == 0
+        || task.deadline_height == 0
     {
         return Err("Unsupported task size or reward budget".into());
     }
-    if task.weights.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
+    if task
+        .weights
+        .iter()
+        .any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
         || task.rows.iter().any(|row| {
-            row.len() != task.weights.len()
-                || row.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
+            row.len() != task.weights.len() || row.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
         })
     {
         return Err("Invalid integer-inference values or dimensions".into());
@@ -99,7 +104,8 @@ fn valid_data(task: &InferenceTaskV2) -> Result<(), String> {
 }
 
 pub fn model_commitment_v1(weights: &[i64]) -> Result<[u8; 32], String> {
-    if weights.is_empty() || weights.len() > MAX_FEATURES
+    if weights.is_empty()
+        || weights.len() > MAX_FEATURES
         || weights.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
     {
         return Err("Invalid model weights".into());
@@ -114,10 +120,13 @@ pub fn model_commitment_v1(weights: &[i64]) -> Result<[u8; 32], String> {
 }
 
 pub fn input_commitment_v1(rows: &[Vec<i64>], width: usize) -> Result<[u8; 32], String> {
-    if rows.is_empty() || rows.len() > MAX_ROWS || width == 0 || width > MAX_FEATURES
-        || rows.iter().any(|row| {
-            row.len() != width || row.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v))
-        })
+    if rows.is_empty()
+        || rows.len() > MAX_ROWS
+        || width == 0
+        || width > MAX_FEATURES
+        || rows
+            .iter()
+            .any(|row| row.len() != width || row.iter().any(|v| !(-MAX_ABS..=MAX_ABS).contains(v)))
     {
         return Err("Invalid inference input rows".into());
     }
@@ -213,7 +222,8 @@ pub fn verify_proof_v2(
 ) -> Result<Vec<RewardWorkV1>, String> {
     let task = &proof.task;
     valid_data(task)?;
-    if height == 0 || height > task.deadline_height
+    if height == 0
+        || height > task.deadline_height
         || task.model_commitment != model_commitment_v1(&task.weights)?
         || task.input_commitment != input_commitment_v1(&task.rows, task.weights.len())?
         || task.rules_commitment != rules_commitment_v1()
@@ -224,10 +234,12 @@ pub fn verify_proof_v2(
     }
     let issuer = VerifyingKey::from_bytes(trusted_task_authority)
         .map_err(|_| "Unrecognized task authority key")?;
-    issuer.verify_strict(
-        &task_signing_bytes_v2(task),
-        &Signature::from_bytes(&task.authority_signature),
-    ).map_err(|_| "Unauthorized task signature")?;
+    issuer
+        .verify_strict(
+            &task_signing_bytes_v2(task),
+            &Signature::from_bytes(&task.authority_signature),
+        )
+        .map_err(|_| "Unauthorized task signature")?;
 
     if proof.claims.is_empty() || proof.claims.len() > MAX_RECEIPTS {
         return Err("Invalid number of signed inference claims".into());
@@ -239,7 +251,9 @@ pub fn verify_proof_v2(
         if r.puzzle_id != task.puzzle_id || r.range.start != next_start {
             return Err("Claims must cover the task exactly once, in order".into());
         }
-        next_start = next_start.checked_add(r.range.count).ok_or("Work range overflow")?;
+        next_start = next_start
+            .checked_add(r.range.count)
+            .ok_or("Work range overflow")?;
         if next_start > task.rows.len() as u64
             || r.result_commitment != expected_result_commitment_v1(task, r.range)?
         {
@@ -247,10 +261,12 @@ pub fn verify_proof_v2(
         }
         let worker = VerifyingKey::from_bytes(&r.worker_id)
             .map_err(|_| "Invalid worker Ed25519 identity")?;
-        worker.verify_strict(
-            &worker_signing_bytes_v2(r),
-            &Signature::from_bytes(&claim.signature),
-        ).map_err(|_| "Invalid worker result signature")?;
+        worker
+            .verify_strict(
+                &worker_signing_bytes_v2(r),
+                &Signature::from_bytes(&claim.signature),
+            )
+            .map_err(|_| "Invalid worker result signature")?;
         works.push(RewardWorkV1 {
             receipt: *r,
             puzzle_units: task.rows.len() as u64,
@@ -287,8 +303,8 @@ fn serialize_payload(proof: &RewardProofV2) -> Vec<u8> {
     }
     raw.extend_from_slice(&(proof.claims.len() as u32).to_be_bytes());
     for claim in &proof.claims {
-        let id = canonical_receipt_id_v1(1, &claim.receipt)
-            .expect("verified bounded V2 work receipt");
+        let id =
+            canonical_receipt_id_v1(1, &claim.receipt).expect("verified bounded V2 work receipt");
         raw.extend_from_slice(&id);
         raw.extend_from_slice(&claim.receipt.worker_id);
         raw.extend_from_slice(&claim.receipt.range.start.to_be_bytes());
@@ -310,7 +326,9 @@ fn take<const N: usize>(raw: &[u8], at: &mut usize) -> Result<[u8; N], String> {
     let end = at.checked_add(N).ok_or("Proof field overflow")?;
     let value = raw.get(*at..end).ok_or("Truncated AI proof block")?;
     *at = end;
-    value.try_into().map_err(|_| "Malformed AI proof field".into())
+    value
+        .try_into()
+        .map_err(|_| "Malformed AI proof field".into())
 }
 
 fn u32_at(raw: &[u8], at: &mut usize) -> Result<u32, String> {
@@ -369,9 +387,7 @@ pub fn decode_proof_block_v2(
         rows.push(row);
     }
     let count = u32_at(raw, &mut at)? as usize;
-    if count == 0 || count > MAX_RECEIPTS
-        || raw.len().saturating_sub(at) != count * CLAIM_BYTES
-    {
+    if count == 0 || count > MAX_RECEIPTS || raw.len().saturating_sub(at) != count * CLAIM_BYTES {
         return Err("Invalid V2 receipt record length".into());
     }
     let mut claims = Vec::with_capacity(count);
@@ -395,8 +411,8 @@ pub fn decode_proof_block_v2(
         }
         claims.push(SignedInferenceClaimV2 { receipt, signature });
     }
-    if at != raw.len() || header.transactions_root != transaction_root_v1(&[])
-        .map_err(|e| format!("{e:?}"))?
+    if at != raw.len()
+        || header.transactions_root != transaction_root_v1(&[]).map_err(|e| format!("{e:?}"))?
         || header.puzzle_proofs_root != proof_root_from_payload(&raw[payload_at..])
     {
         return Err("Wrong V2 proof-root commitment or noncanonical bytes".into());
@@ -404,8 +420,15 @@ pub fn decode_proof_block_v2(
     let proof = RewardProofV2 {
         batch_id,
         task: InferenceTaskV2 {
-            puzzle_id, model_commitment, input_commitment, rules_commitment,
-            deadline_height, authorized_budget, weights, rows, authority_signature,
+            puzzle_id,
+            model_commitment,
+            input_commitment,
+            rules_commitment,
+            deadline_height,
+            authorized_budget,
+            weights,
+            rows,
+            authority_signature,
         },
         claims,
     };
@@ -413,7 +436,11 @@ pub fn decode_proof_block_v2(
     if serialize_payload(&proof).as_slice() != &raw[payload_at..] {
         return Err("Noncanonical V2 AI proof body".into());
     }
-    Ok(DecodedProofBlockV2 { header, proof, works })
+    Ok(DecodedProofBlockV2 {
+        header,
+        proof,
+        works,
+    })
 }
 
 pub fn encode_proof_block_v2(
@@ -449,38 +476,46 @@ pub fn commit_proof_block_v2(
     input: ProofBlockInput<'_>,
 ) -> Result<[u8; 32], String> {
     let ProofBlockInput {
-        expected_prior, parent_id, height, timestamp_ms, proof,
+        expected_prior,
+        parent_id,
+        height,
+        timestamp_ms,
+        proof,
     } = input;
     let works = verify_proof_v2(proof, height, trusted_task_authority)?;
-    if db.read_local_ledger_state().map_err(|e| e.to_string())?
-        != Some(expected_prior.clone())
-    {
+    if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(expected_prior.clone()) {
         return Err("Stale or uninitialized prior ledger".into());
     }
     let (post, response) = execute_reward_haskell(
-        core, expected_prior, &proof.batch_id, proof.task.authorized_budget,
-        &works, height,
+        core,
+        expected_prior,
+        &proof.batch_id,
+        proof.task.authorized_budget,
+        &works,
+        height,
     )?;
     let header = CommittedHeaderV1 {
-        version: 1, chain_id: 1, height, parent_hash: *parent_id,
+        version: 1,
+        chain_id: 1,
+        height,
+        parent_hash: *parent_id,
         transactions_root: transaction_root_v1(&[]).map_err(|e| format!("{e:?}"))?,
         puzzle_proofs_root: proof_root_from_payload(&serialize_payload(proof)),
         state_root: ledger_state_root_v1(&post).map_err(|e| format!("{e:?}"))?,
         timestamp_ms,
     };
-    let (id, raw) = encode_proof_block_v2(
-        &header, proof, &post, trusted_task_authority
-    )?;
+    let (id, raw) = encode_proof_block_v2(&header, proof, &post, trusted_task_authority)?;
     let receipt_ids = checked_receipt_ids(&works, height)?;
     let settlement = SettlementBatch {
         batch_id: proof.batch_id,
         receipt_ids: &receipt_ids,
         validated_response: &response,
     };
-    db.append_atomic_ledger_block(
-        &id, parent_id, height, &raw, &post, Some(&settlement),
-    ).map_err(|e| format!("Persist independently validated AI proof: {e}"))?;
-    let stored = db.get(Column::Blocks, &id).map_err(|e| e.to_string())?
+    db.append_atomic_ledger_block(&id, parent_id, height, &raw, &post, Some(&settlement))
+        .map_err(|e| format!("Persist independently validated AI proof: {e}"))?;
+    let stored = db
+        .get(Column::Blocks, &id)
+        .map_err(|e| e.to_string())?
         .ok_or("Missing stored V2 proof block")?;
     if decode_proof_block_v2(&stored, &id, trusted_task_authority)?.header != header {
         return Err("Stored AI proof block differs from verified data".into());
@@ -498,9 +533,8 @@ mod tests {
         let mut task = InferenceTaskV2 {
             puzzle_id: [0; 32],
             model_commitment: model_commitment_v1(&[2, 3]).unwrap(),
-            input_commitment: input_commitment_v1(
-                &[vec![1, 2], vec![3, 4], vec![-2, 5]], 2,
-            ).unwrap(),
+            input_commitment: input_commitment_v1(&[vec![1, 2], vec![3, 4], vec![-2, 5]], 2)
+                .unwrap(),
             rules_commitment: rules_commitment_v1(),
             deadline_height: 100,
             authorized_budget: 3,
@@ -517,32 +551,44 @@ mod tests {
                 puzzle_id: task.puzzle_id,
                 worker_id: key.verifying_key().to_bytes(),
                 range: WorkRange { start, count },
-                result_commitment: expected_result_commitment_v1(
-                    &task, WorkRange { start, count },
-                ).unwrap(),
+                result_commitment: expected_result_commitment_v1(&task, WorkRange { start, count })
+                    .unwrap(),
             };
             claims.push(SignedInferenceClaimV2 {
                 signature: key.sign(&worker_signing_bytes_v2(&receipt)).to_bytes(),
                 receipt,
             });
         }
-        (RewardProofV2 {
-            batch_id: task_reward_batch_id_v2(&task.puzzle_id), task, claims,
-        }, authority.verifying_key().to_bytes())
+        (
+            RewardProofV2 {
+                batch_id: task_reward_batch_id_v2(&task.puzzle_id),
+                task,
+                claims,
+            },
+            authority.verifying_key().to_bytes(),
+        )
     }
 
     #[test]
     fn canonical_model_input_and_python_result_vectors_match() {
         let (proof, _) = fixture();
         let h = |bytes: &[u8; 32]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        assert_eq!(h(&proof.task.model_commitment),
-            "841c1f0051800864f7189935a818c964893e1b96fe1c610136c23a1284a254bc");
-        assert_eq!(h(&proof.task.input_commitment),
-            "548121e870e795733aaabbca753b290431797562a55a1301fcf6113f568c0e3d");
-        assert_eq!(h(&proof.task.rules_commitment),
-            "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902");
-        assert_eq!(h(&proof.claims[0].receipt.result_commitment),
-            "edf2eb1a8f906b42910faa5dff56d8e6a3a54ece44d5369f62ead8f44acdd982");
+        assert_eq!(
+            h(&proof.task.model_commitment),
+            "841c1f0051800864f7189935a818c964893e1b96fe1c610136c23a1284a254bc"
+        );
+        assert_eq!(
+            h(&proof.task.input_commitment),
+            "548121e870e795733aaabbca753b290431797562a55a1301fcf6113f568c0e3d"
+        );
+        assert_eq!(
+            h(&proof.task.rules_commitment),
+            "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902"
+        );
+        assert_eq!(
+            h(&proof.claims[0].receipt.result_commitment),
+            "edf2eb1a8f906b42910faa5dff56d8e6a3a54ece44d5369f62ead8f44acdd982"
+        );
     }
 
     #[test]
@@ -586,16 +632,27 @@ mod tests {
         let state = LedgerState::default();
         let payload = serialize_payload(&proof);
         let header = CommittedHeaderV1 {
-            version: 1, chain_id: 1, height: 1, parent_hash: [7; 32],
+            version: 1,
+            chain_id: 1,
+            height: 1,
+            parent_hash: [7; 32],
             transactions_root: transaction_root_v1(&[]).unwrap(),
             puzzle_proofs_root: proof_root_from_payload(&payload),
             state_root: ledger_state_root_v1(&state).unwrap(),
             timestamp_ms: 1001,
         };
         let (id, raw) = encode_proof_block_v2(&header, &proof, &state, &authority).unwrap();
-        assert_eq!(decode_proof_block_v2(&raw, &id, &authority).unwrap().proof, proof);
-        for offset in [0, BODY_DOMAIN_V2.len(), BODY_DOMAIN_V2.len() + HEADER_BYTES,
-            raw.len() - 1, raw.len() - CLAIM_BYTES] {
+        assert_eq!(
+            decode_proof_block_v2(&raw, &id, &authority).unwrap().proof,
+            proof
+        );
+        for offset in [
+            0,
+            BODY_DOMAIN_V2.len(),
+            BODY_DOMAIN_V2.len() + HEADER_BYTES,
+            raw.len() - 1,
+            raw.len() - CLAIM_BYTES,
+        ] {
             let mut corrupt = raw.clone();
             corrupt[offset] ^= 1;
             assert!(decode_proof_block_v2(&corrupt, &id, &authority).is_err());
@@ -603,6 +660,6 @@ mod tests {
         let mut extended = raw.clone();
         extended.push(0);
         assert!(decode_proof_block_v2(&extended, &id, &authority).is_err());
-        assert!(decode_proof_block_v2(&raw[..raw.len()-1], &id, &authority).is_err());
+        assert!(decode_proof_block_v2(&raw[..raw.len() - 1], &id, &authority).is_err());
     }
 }
