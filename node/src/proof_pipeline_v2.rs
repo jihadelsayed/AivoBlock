@@ -24,6 +24,9 @@ use crate::ipc::haskell::HaskellValidatorClient;
 use crate::mining::receipts::VerifiedWorkReceipt;
 use crate::mining::scheduler::WorkRange;
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
+use crate::validator_certificate::{
+    local_quorum_fixture_v1, verify_audited_tip_certificate_v1,
+};
 use crate::transaction_commitment::{
     canonical_header_v1, ledger_state_root_v1, transaction_root_v1, CommittedHeaderV1,
 };
@@ -240,6 +243,29 @@ pub fn demo() -> Result<(), String> {
         {
             return Err("Independent V2 history recomputation differs from state".into());
         }
+        // The ledger state and every stored AI proof have already been
+        // independently replayed from signed genesis. Only now do we
+        // authenticate a separate, fixed-set weighted precommit certificate
+        // for the actual audited tip; this is NOT a BFT finality claim.
+        let (validators, certificate) = local_quorum_fixture_v1(block_id, 1, 0)?;
+        let quorum = verify_audited_tip_certificate_v1(
+            &db, &audited, &validators, &certificate,
+        )?;
+        if quorum.signed_power != 5 || quorum.required_power != 5 {
+            return Err("Weighted validator certificate has the wrong quorum".into());
+        }
+        let (_, wrong_tip) = local_quorum_fixture_v1([8; 32], 1, 0)?;
+        if verify_audited_tip_certificate_v1(
+            &db, &audited, &validators, &wrong_tip,
+        ).is_ok() {
+            return Err("Attestation of a different block passed local tip audit".into());
+        }
+        let (_, wrong_height) = local_quorum_fixture_v1(block_id, 2, 0)?;
+        if verify_audited_tip_certificate_v1(
+            &db, &audited, &validators, &wrong_height,
+        ).is_ok() {
+            return Err("Certificate for a different height passed chain-tip audit".into());
+        }
         let raw = db
             .get(Column::Blocks, &block_id)
             .map_err(|e| e.to_string())?
@@ -264,6 +290,7 @@ pub fn demo() -> Result<(), String> {
     println!("Worker-signed claims, task issuer and canonical commitments: PASS");
     println!("Haskell funded 2 + 1 reward, RocksDB atomic restart/replay: PASS");
     println!("Forgery, changed model, untrusted issuer and corrupted storage: REJECTED");
+    println!("Audited V2 tip with signed 5/6 validator power: PASS; wrong tip/height REJECTED");
     println!(
         "Scope: tiny deterministic integer inference only; no succinct proofs, P2P or consensus"
     );
