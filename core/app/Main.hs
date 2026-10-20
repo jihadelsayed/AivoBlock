@@ -480,6 +480,7 @@ ledgerTransitionResponse value =
         decodeHex (a:b:rest) =
           fromIntegral (16 * digitToInt a + digitToInt b) : decodeHex rest
         decodeHex _ = []
+    decision :: Bool -> String -> Maybe String -> BS.ByteString
     decision accepted reason nextState = BL.toStrict (encode (object
       [ "ok" .= True
       , "type" .= ("ledger_transfer_fixture" :: String)
