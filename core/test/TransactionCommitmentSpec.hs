@@ -27,6 +27,16 @@ main = hspec $ do
             Right "4cd0e95f1262d79dd9a479ac1cd9471a64552f5cf44a40ce4d8249b8d9f7f385"
           transactionRootV1 [identifier,identifier]
             `shouldBe` Left "Duplicate transaction ID"
+    it "matches Rust even- and odd-leaf Merkle vectors" $ do
+      let h n = case mkHash256 (BS.replicate 32 n) of
+            Right value -> value
+            Left err -> error err
+      fmap toHex (transactionRootV1 [h 1,h 2]) `shouldBe`
+        Right "59cdd667d6549503267625933df3bfa85016948f59f8bb91af0b945f926a6477"
+      fmap toHex (transactionRootV1 [h 1,h 2,h 3]) `shouldBe`
+        Right "0dbe0e823658b8f97440d5b79bc1b1aa7b0943ab43a1e9e930f1b4c881f2e822"
+      transactionRootV1 [h 1,h 2,h 3] `shouldNotBe`
+        transactionRootV1 [h 1,h 3,h 2]
     it "rejects signed envelope tampering" $ do
       signedTransactionIdV1 (tx {txFee=mkAmount 3}) `shouldSatisfy` isLeft
       signedTransactionIdV1 (tx {txNonce=1}) `shouldSatisfy` isLeft
