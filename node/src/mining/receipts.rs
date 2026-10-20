@@ -102,6 +102,13 @@ impl ReceiptRegistry {
         Ok(())
     }
 
+    /// Membership check for the locally admitted, recomputed receipt.
+    /// Only trusted local code may call record_verified; this is not a
+    /// cryptographic proof suitable for remote consensus validation.
+    pub fn contains_verified(&self, receipt: &VerifiedWorkReceipt) -> bool {
+        self.receipts.get(&(receipt.puzzle_id, receipt.range.start)) == Some(receipt)
+    }
+
     pub fn receipts_for(&self, puzzle_id: [u8; 32]) -> Vec<VerifiedWorkReceipt> {
         self.receipts
             .values()

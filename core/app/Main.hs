@@ -421,6 +421,89 @@ hexBytes bytes = concatMap byteHex (BS.unpack bytes)
     byteHex byte = let digits = showHex byte "" in
       if length digits == 1 then '0' : digits else digits
 
+-- | One fee-funded local reward transition starting from an actual typed
+-- ledger snapshot, NOT from a caller-invented fee-pool balance. The Rust
+-- caller must have independently authenticated assignments and recomputed
+-- the AI work before it can attest "verified":true. Haskell recomputes IDs,
+-- eligibility and funded payout, never mints a subsidy.
+ledgerRewardBlockResponse :: Value -> BS.ByteString
+ledgerRewardBlockResponse value =
+  case parseEither parser value of
+    Left _ -> reply False "invalid_reward_block_request" Nothing
+    Right (chainId, height, snapshot, budget, batchId, claimed, works) ->
+      let outcome = do
+            prior <- decodeLedgerSnapshot snapshot
+            _ <- eligibleContributions height works
+            actual <- traverse (receiptIdFor chainId) works
+            when (actual /= claimed) (Left "Canonical receipt ID mismatch")
+            entitlements <- traverse makeEntitlement (zip works actual)
+            next <- settleFundedRewards batchId budget entitlements prior
+            encoded <- encodeLedgerSnapshot next
+            root <- ledgerStateRootV1 next
+            pure (hexBytes encoded, hexHash root, map hexHash actual)
+      in case outcome of
+        Left reason -> reply False reason Nothing
+        Right result -> reply True "none" (Just result)
+  where
+    parser = withObject "local reward block" $ \o -> do
+      chainId <- o .: "chain_id" :: Parser Word32
+      height <- o .: "height" :: Parser Word64
+      when (chainId /= 1 || height == 0) (fail "Unsupported chain or genesis height")
+      snapshotHex <- o .: "state_hex" :: Parser String
+      when (length snapshotHex > 2 * 1024 * 1024) (fail "Snapshot too large")
+      snapshot <- decodeRaw snapshotHex
+      budget <- o .: "budget" :: Parser Word64
+      batchHex <- o .: "batch_id" :: Parser String
+      batchId <- parseHash batchHex
+      values <- o .: "works" :: Parser [Value]
+      when (null values || length values > 64) (fail "Expected 1..64 works")
+      claims <- traverse claimedId values
+      works <- traverse parseRewardWork values
+      pure (chainId, height, snapshot, budget, batchId, claims, works)
+    decodeRaw hex
+      | odd (length hex) || not (all isHexDigit hex) =
+          fail "Invalid hex snapshot"
+      | otherwise = pure (BS.pack (decodeBytes hex))
+    decodeBytes (a:b:rest) =
+      fromIntegral (16 * digitToInt a + digitToInt b) : decodeBytes rest
+    decodeBytes _ = []
+    claimedId = withObject "claimed work" $ \o -> do
+      receiptHex <- o .: "receipt_id" :: Parser String
+      parseHash receiptHex
+    receiptIdFor chainId work =
+      let proof = workProof work
+      in canonicalReceiptIdV1 chainId (proofPuzzleId proof)
+           (proofWorkerId proof) (proofStartUnit proof)
+           (proofUnitCount proof) (proofResultCommitment proof)
+    makeEntitlement (work, receiptId) = do
+      let proof = workProof work
+      address <- mkAddress (hash256Bytes (proofWorkerId proof))
+      pure (RewardEntitlement receiptId (proofWorkerId proof)
+            address (proofUnitCount proof))
+    reply :: Bool -> String -> Maybe (String, String, [String]) -> BS.ByteString
+    reply accepted reason result = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("ledger_reward_block_fixture" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "accepted" .= accepted
+      , "reason" .= (reason :: String)
+      , "scope" .= ("caller_attested_fee_funded_reward_block_only" :: String)
+      , "state_hex" .= fmap (\(a,_,_) -> a) result
+      , "state_root" .= fmap (\(_,b,_) -> b) result
+      , "receipt_ids" .= fmap (\(_,_,c) -> c) result
+      ]))
+
+ledgerRewardBlockRequest :: Value -> Maybe BS.ByteString
+ledgerRewardBlockRequest value =
+  case parseEither parser value of
+    Right True -> Just (ledgerRewardBlockResponse value)
+    _ -> Nothing
+  where
+    parser = withObject "reward block request" $ \o -> do
+      version <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (version == 1 && kind == "ledger_reward_block_fixture")
+
 settlementRequest :: Value -> Maybe BS.ByteString
 settlementRequest value =
   case parseEither parseKind value of
@@ -624,13 +707,15 @@ handleIpcRequest request
                 Just result -> Just result
                 Nothing -> case rewardRequest value of
                   Just result -> Just result
-                  Nothing -> case settlementRequest value of
+                  Nothing -> case ledgerRewardBlockRequest value of
                     Just result -> Just result
-                    Nothing -> case ledgerBatchRequest value of
+                    Nothing -> case settlementRequest value of
                       Just result -> Just result
-                      Nothing -> case ledgerTransitionRequest value of
+                      Nothing -> case ledgerBatchRequest value of
                         Just result -> Just result
-                        Nothing -> dynamicRequest request)
+                        Nothing -> case ledgerTransitionRequest value of
+                          Just result -> Just result
+                          Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
