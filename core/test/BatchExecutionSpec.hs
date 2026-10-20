@@ -34,7 +34,8 @@ main = hspec $ describe "Ordered signed block execution" $ do
     applySignedBatchV1 initial [second, first] `shouldSatisfy` isLeft
 
   it "rejects a valid signed later overspend without partial application" $ do
-    let overspend = second {txAmount = mkAmount 500}
+    let overspend = second {txAmount = mkAmount 500, txSignature = fromHex
+          "48b8454f1859372f1f03d3775fe187f2455c861ff00dbe4c8f918e1324ef14b0e5feab1acc80bd3e81d7968d857f43404f981b1cb7db2c069ab38a0758467306"}
     applySignedBatchV1 initial [first, overspend] `shouldSatisfy` isLeft
 
   it "rejects tampering even on the second transaction" $ do
