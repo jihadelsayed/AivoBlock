@@ -11,15 +11,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
-use crate::transaction_commitment::{
-    signed_transaction_id_v1, transaction_root_v1, ledger_state_root_v1,
-    canonical_header_v1, commit_signed_transfer_block, verify_stored_single_transfer_block, CommittedHeaderV1,
-};
-use sha2::{Digest, Sha256};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
 use crate::transaction_auth::{
     transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
 };
+use crate::transaction_commitment::{
+    canonical_header_v1, commit_signed_transfer_block, ledger_state_root_v1,
+    signed_transaction_id_v1, transaction_root_v1, verify_stored_single_transfer_block,
+    CommittedHeaderV1,
+};
+use sha2::{Digest, Sha256};
 
 /// Fixed demo signing key: do NOT use this seed for real accounts.
 fn fixture_transfer(
@@ -143,8 +144,7 @@ pub fn compute_transfer_via_haskell(
         .map_err(|error| format!("Rust transaction Merkle root: {error:?}"))?;
     let state_root = ledger_state_root_v1(&next)
         .map_err(|error| format!("Rust ledger state root: {error:?}"))?;
-    let text = std::str::from_utf8(&response)
-        .map_err(|_| "Non-UTF8 commitment response")?;
+    let text = std::str::from_utf8(&response).map_err(|_| "Non-UTF8 commitment response")?;
     for (field, expected) in [
         ("transaction_id", hex(&identifier)),
         ("transactions_root", hex(&root)),
@@ -164,8 +164,8 @@ fn signed_block_header(
     transfer: &SignedTransferV1,
     state: &LedgerState,
 ) -> Result<CommittedHeaderV1, String> {
-    let identifier = signed_transaction_id_v1(transfer)
-        .map_err(|error| format!("Transaction ID: {error:?}"))?;
+    let identifier =
+        signed_transaction_id_v1(transfer).map_err(|error| format!("Transaction ID: {error:?}"))?;
     Ok(CommittedHeaderV1 {
         version: 1,
         chain_id: 1,
@@ -229,9 +229,8 @@ pub fn demo() -> Result<(), String> {
     let genesis_id: [u8; 32] = Sha256::digest(genesis_bytes).into();
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
-        db.append_atomic_ledger_block(
-            &genesis_id, &[0; 32], 0, &genesis_bytes, &initial, None
-        ).map_err(|e| format!("Genesis commit: {e}"))?;
+        db.append_atomic_ledger_block(&genesis_id, &[0; 32], 0, &genesis_bytes, &initial, None)
+            .map_err(|e| format!("Genesis commit: {e}"))?;
     }
     let after_first;
     let first_id;
@@ -255,9 +254,9 @@ pub fn demo() -> Result<(), String> {
             return Err("Haskell transfer #1 returned unexpected balances".to_owned());
         }
         let header = signed_block_header(1, genesis_id, &first_transfer, &after_first)?;
-        first_id = commit_signed_transfer_block(
-            &db, &header, &first_transfer, &prior, &after_first
-        ).map_err(|e| format!("First committed ledger transfer: {e:?}"))?;
+        first_id =
+            commit_signed_transfer_block(&db, &header, &first_transfer, &prior, &after_first)
+                .map_err(|e| format!("First committed ledger transfer: {e:?}"))?;
 
         // An invalid nonce or overspend must be rejected by Haskell; neither
         // request may change the already-persisted chain state.
@@ -328,9 +327,8 @@ pub fn demo() -> Result<(), String> {
         if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(prior.clone()) {
             return Err("Rejected block commitment unexpectedly changed ledger".to_owned());
         }
-        second_id = commit_signed_transfer_block(
-            &db, &header, &second_transfer, &prior, &next
-        ).map_err(|e| format!("Second committed ledger transfer: {e:?}"))?;
+        second_id = commit_signed_transfer_block(&db, &header, &second_transfer, &prior, &next)
+            .map_err(|e| format!("Second committed ledger transfer: {e:?}"))?;
     }
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
