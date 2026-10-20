@@ -29,13 +29,21 @@ pub fn demo() -> Result<(), String> {
         .map_err(|e| format!("Haskell executable: {e:?}"))?;
     let registry = verify_demo_partitions()?;
     let receipts = registry.receipts_for([1; 32]);
-    let works: Vec<RewardWorkV1> = receipts.into_iter().map(|receipt| RewardWorkV1 {
-        receipt, puzzle_units: 3, deadline_height: 100,
-    }).collect();
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|_| "Clock before epoch")?.as_nanos();
+    let works: Vec<RewardWorkV1> = receipts
+        .into_iter()
+        .map(|receipt| RewardWorkV1 {
+            receipt,
+            puzzle_units: 3,
+            deadline_height: 100,
+        })
+        .collect();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Clock before epoch")?
+        .as_nanos();
     let path = env::temp_dir().join(format!(
-        "aivoblock-atomic-reward-{}-{timestamp}", std::process::id()
+        "aivoblock-atomic-reward-{}-{timestamp}",
+        std::process::id()
     ));
 
     // The authority is deliberately a hard-coded fixture. No production key
@@ -81,19 +89,39 @@ pub fn demo() -> Result<(), String> {
         let mut forged_works = works.clone();
         forged_works[0].receipt.result_commitment[0] ^= 1;
         if commit_reward_block(
-            &db, &core, &registry, &initial, &genesis_id, 1, 1001,
-            &batch_id, 3, &forged_works,
-        ).is_ok() {
+            &db,
+            &core,
+            &registry,
+            &initial,
+            &genesis_id,
+            1,
+            1001,
+            &batch_id,
+            3,
+            &forged_works,
+        )
+        .is_ok()
+        {
             return Err("Unverified forged reward claim was accepted".into());
         }
         if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(initial.clone()) {
             return Err("Forged reward claim mutated the genesis state".into());
         }
         reward_id = commit_reward_block(
-            &db, &core, &registry, &initial, &genesis_id, 1, 1001,
-            &batch_id, 3, &works,
+            &db,
+            &core,
+            &registry,
+            &initial,
+            &genesis_id,
+            1,
+            1001,
+            &batch_id,
+            3,
+            &works,
         )?;
-        expected = db.read_local_ledger_state().map_err(|e| e.to_string())?
+        expected = db
+            .read_local_ledger_state()
+            .map_err(|e| e.to_string())?
             .ok_or("Missing committed reward state")?;
         if expected.fee_pool != 0
             || !expected.settled_batches.contains(&batch_id)
@@ -115,9 +143,19 @@ pub fn demo() -> Result<(), String> {
         // cannot change the tip, state, receipt markers or balances.
         for proposed_batch in [batch_id, [12; 32]] {
             if commit_reward_block(
-                &db, &core, &registry, &expected, &reward_id, 2, 1002,
-                &proposed_batch, 1, &works,
-            ).is_ok() {
+                &db,
+                &core,
+                &registry,
+                &expected,
+                &reward_id,
+                2,
+                1002,
+                &proposed_batch,
+                1,
+                &works,
+            )
+            .is_ok()
+            {
                 return Err("Paid receipt or duplicate batch was accepted".into());
             }
         }
