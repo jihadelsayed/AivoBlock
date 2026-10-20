@@ -45,8 +45,8 @@ fn verify_trusted_genesis(
     }
     let header = decode_header_v1(stored)
         .map_err(|error| format!("Invalid stored genesis header: {error:?}"))?;
-    let empty_root = transaction_root_v1(&[])
-        .map_err(|error| format!("Empty transaction root: {error:?}"))?;
+    let empty_root =
+        transaction_root_v1(&[]).map_err(|error| format!("Empty transaction root: {error:?}"))?;
     if header.height != 0
         || header.parent_hash != [0; 32]
         || header.puzzle_proofs_root != [0; 32]
@@ -116,9 +116,7 @@ pub fn replay_local_chain(
         }
         let decoded = decode_signed_batch_v1(&raw, &current)
             .map_err(|error| format!("Invalid signed ancestor: {error:?}"))?;
-        if decoded.header.height != expected_height
-            || decoded.header.parent_hash == [0; 32]
-        {
+        if decoded.header.height != expected_height || decoded.header.parent_hash == [0; 32] {
             return Err("Invalid signed ancestor height or parent".into());
         }
         current = decoded.header.parent_hash;
@@ -162,7 +160,13 @@ mod tests {
 
     fn trusted_genesis() -> (LedgerState, [u8; 178], [u8; 32]) {
         let mut ledger = LedgerState::default();
-        ledger.accounts.insert([3; 32], LocalAccount { balance: 100, nonce: 0 });
+        ledger.accounts.insert(
+            [3; 32],
+            LocalAccount {
+                balance: 100,
+                nonce: 0,
+            },
+        );
         let header = CommittedHeaderV1 {
             version: 1,
             chain_id: 1,
