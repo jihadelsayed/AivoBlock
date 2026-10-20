@@ -101,6 +101,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Rust RocksDB prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install local Python worker for cross-language reward diagnostic
+        run: python -m pip install -e "./ai-engine"
       - name: Build Haskell IPC executable
         working-directory: core
         run: |
@@ -115,6 +120,7 @@ jobs:
           cargo run -- core-health
           cargo run -- core-validate
           cargo run -- core-json
+          cargo run -- ai-partition-demo
 
   protobuf:
     name: Protocol schemas
