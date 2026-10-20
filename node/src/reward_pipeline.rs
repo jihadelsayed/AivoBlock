@@ -12,7 +12,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use crate::ai_pipeline::verify_demo_partitions;
 use crate::genesis_checkpoint::{
     genesis_checkpoint_signing_bytes_v1, initialize_signed_genesis,
-    replay_chain_from_signed_checkpoint, SignedGenesisCheckpointV1,
+    replay_chain_from_signed_checkpoint, replay_chain_from_signed_checkpoint_legacy_v1,
+    SignedGenesisCheckpointV1,
 };
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::reward_block::{commit_reward_block, RewardBlockInput, RewardWorkV1};
@@ -176,7 +177,10 @@ pub fn demo() -> Result<(), String> {
     }
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
-        let report = replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key)?;
+        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key).is_ok() {
+            return Err("Strict auditor accepted legacy caller-attested V1 AI payouts".into());
+        }
+        let report = replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?;
         if report.ledger != expected
             || report.tip_id != reward_id
             || report.reward_blocks != 1
@@ -185,7 +189,7 @@ pub fn demo() -> Result<(), String> {
         {
             return Err("Full signed-genesis reward chain replay disagreed".into());
         }
-        if replay_chain_from_signed_checkpoint(
+        if replay_chain_from_signed_checkpoint_legacy_v1(
             &db,
             &core,
             &checkpoint,
@@ -208,7 +212,7 @@ pub fn demo() -> Result<(), String> {
         }
         db.put(Column::Blocks, &reward_id, &raw)
             .map_err(|e| e.to_string())?;
-        if replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key)?.ledger
+        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?.ledger
             != expected
         {
             return Err("Restored reward history did not replay".into());
