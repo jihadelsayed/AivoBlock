@@ -169,6 +169,7 @@ impl NodeHandle {
     }
 
     /// Stop all threads and release the database and sockets.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn stop(self) -> Result<(), String> {
         self.shutdown.store(true, Ordering::Relaxed);
         self.wait()
@@ -414,7 +415,15 @@ impl Node {
                     self.note(format!("peer {} disconnected", short(&peer)));
                 }
             }
-            Event::Inbound { peer, message, .. } => {
+            Event::Inbound {
+                peer,
+                link_id,
+                message,
+            } => {
+                // Ignore frames still in flight from a replaced connection.
+                if !self.peers.get(&peer).is_some_and(|link| link.id == link_id) {
+                    return;
+                }
                 let kind = message.kind();
                 let verdict = self.on_message(Some(peer), message);
                 if let Verdict::Rejected(reason) = &verdict {
@@ -1233,6 +1242,7 @@ impl Node {
             "worker": hex(&self.own_worker),
             "settlement_engine": self.engine.name(),
             "worker_backend": self.worker.name(),
+            "holds_task_authority_key": self.keys.authority.is_some(),
             "height": self.chain.height,
             "tip": hex(&self.chain.tip),
             "state_root": self.chain.state_root(),

@@ -11,7 +11,6 @@ use std::path::Path;
 
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{hex, unhex, unhex_array};
 use crate::genesis_checkpoint::{verify_signed_genesis_checkpoint, SignedGenesisCheckpointV1};
@@ -371,8 +370,4 @@ pub fn load_node_keys(dir: &Path) -> Result<NodeKeys, String> {
             None
         },
     })
-}
-
-pub fn genesis_digest(header: &[u8; 178]) -> [u8; 32] {
-    Sha256::digest(header).into()
 }
