@@ -52,7 +52,12 @@ jobs:
           ghc-version: "9.6.7"
           cabal-version: "3.12"
       - name: Update package index
-        run: cabal update
+        run: |
+          for attempt in 1 2 3 4; do
+            if cabal update; then exit 0; fi
+            if [ "$attempt" -eq 4 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
       - name: Build
         run: cabal build all
       - name: Test
@@ -109,7 +114,11 @@ jobs:
       - name: Build Haskell IPC executable
         working-directory: core
         run: |
-          cabal update
+          for attempt in 1 2 3 4; do
+            if cabal update; then break; fi
+            if [ "$attempt" -eq 4 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
           cabal build exe:aivoblock-core
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
       - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
