@@ -373,4 +373,3 @@ pub fn demo() -> Result<(), String> {
     println!("Scope: synthetic genesis; no validator consensus or real payments");
     Ok(())
 }
-
