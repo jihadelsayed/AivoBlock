@@ -27,7 +27,8 @@ pub fn demo() -> Result<(), String> {
         .ok_or("Set AIVOBLOCK_HASKELL_EXECUTABLE for the local reward block diagnostic")?;
     let core = HaskellValidatorClient::new(PathBuf::from(executable))
         .map_err(|e| format!("Haskell executable: {e:?}"))?;
-    let receipts = verify_demo_partitions()?;
+    let registry = verify_demo_partitions()?;
+    let receipts = registry.receipts_for([1; 32]);
     let works: Vec<RewardWorkV1> = receipts.into_iter().map(|receipt| RewardWorkV1 {
         receipt, puzzle_units: 3, deadline_height: 100,
     }).collect();
@@ -66,7 +67,7 @@ pub fn demo() -> Result<(), String> {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
         let genesis_id = initialize_signed_genesis(&db, &checkpoint, &trusted_key)?;
         reward_id = commit_reward_block(
-            &db, &core, &initial, &genesis_id, 1, 1001,
+            &db, &core, &registry, &initial, &genesis_id, 1, 1001,
             &batch_id, 3, &works,
         )?;
         expected = db.read_local_ledger_state().map_err(|e| e.to_string())?
@@ -83,7 +84,7 @@ pub fn demo() -> Result<(), String> {
         // cannot change the tip, state, receipt markers or balances.
         for proposed_batch in [batch_id, [12; 32]] {
             if commit_reward_block(
-                &db, &core, &expected, &reward_id, 2, 1002,
+                &db, &core, &registry, &expected, &reward_id, 2, 1002,
                 &proposed_batch, 1, &works,
             ).is_ok() {
                 return Err("Paid receipt or duplicate batch was accepted".into());
