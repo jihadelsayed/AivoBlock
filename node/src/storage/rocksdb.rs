@@ -227,7 +227,9 @@ impl RocksDbStore {
         }
         let mut options = WriteOptions::default();
         options.set_sync(true);
-        self.db.write_opt(batch, &options).map_err(StorageError::from)
+        self.db
+            .write_opt(batch, &options)
+            .map_err(StorageError::from)
     }
 
     /// Flush the database's memtable. This is not a consensus operation.
