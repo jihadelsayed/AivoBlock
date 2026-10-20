@@ -274,6 +274,18 @@ pub fn execute_reward_haskell(
     Ok((state, response))
 }
 
+/// All externally supplied settlement parameters in one auditable object.
+/// The verifier registry is separately required by commit_reward_block.
+pub struct RewardBlockInput<'a> {
+    pub expected_prior: &'a LedgerState,
+    pub parent_id: &'a [u8; 32],
+    pub height: u64,
+    pub timestamp_ms: u64,
+    pub batch_id: &'a [u8; 32],
+    pub budget: u64,
+    pub works: &'a [RewardWorkV1],
+}
+
 /// The caller MUST provide works admitted by a locally trusted verifier.
 /// Persist the Haskell transition, canonical block, fee pool, receipts,
 /// batch marker and height/tip under one synced RocksDB atomic write.
@@ -281,14 +293,17 @@ pub fn commit_reward_block(
     db: &RocksDbStore,
     core: &HaskellValidatorClient,
     verifier_registry: &ReceiptRegistry,
-    expected_prior: &LedgerState,
-    parent_id: &[u8; 32],
-    height: u64,
-    timestamp_ms: u64,
-    batch_id: &[u8; 32],
-    budget: u64,
-    works: &[RewardWorkV1],
+    input: RewardBlockInput<'_>,
 ) -> Result<[u8; 32], String> {
+    let RewardBlockInput {
+        expected_prior,
+        parent_id,
+        height,
+        timestamp_ms,
+        batch_id,
+        budget,
+        works,
+    } = input;
     if works
         .iter()
         .any(|work| !verifier_registry.contains_verified(&work.receipt))
