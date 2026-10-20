@@ -289,11 +289,16 @@ pub fn commit_reward_block(
     budget: u64,
     works: &[RewardWorkV1],
 ) -> Result<[u8; 32], String> {
-    if works.iter().any(|work| !verifier_registry.contains_verified(&work.receipt)) {
+    if works
+        .iter()
+        .any(|work| !verifier_registry.contains_verified(&work.receipt))
+    {
         return Err("Reward claim has not passed the trusted local work verifier".into());
     }
-    let on_disk = db.read_local_ledger_state()
-        .map_err(|e| e.to_string())?.ok_or("Missing initialized ledger")?;
+    let on_disk = db
+        .read_local_ledger_state()
+        .map_err(|e| e.to_string())?
+        .ok_or("Missing initialized ledger")?;
     if &on_disk != expected_prior {
         return Err("Stale or forged prior ledger".into());
     }
