@@ -167,7 +167,10 @@ pub fn mirror_settle_issued_rewards(
     if unique.len() != receipt_ids.len() || receipt_ids.contains(&[0; 32]) {
         return Err("Duplicate or zero work receipt in reward batch".into());
     }
-    if receipt_ids.iter().any(|id| prior.paid_receipts.contains(id)) {
+    if receipt_ids
+        .iter()
+        .any(|id| prior.paid_receipts.contains(id))
+    {
         return Err("Work receipt already paid".into());
     }
     let mut weights = BTreeMap::<[u8; 32], u64>::new();
@@ -272,7 +275,10 @@ pub mod tests {
     fn largest_remainder_split_matches_haskell_tie_breaking() {
         let weights: BTreeMap<_, _> = [([1; 32], 1), ([2; 32], 1), ([3; 32], 1)].into();
         let split = distribute_rewards(80, &weights).unwrap();
-        assert_eq!(split.values().copied().collect::<Vec<_>>(), vec![27, 27, 26]);
+        assert_eq!(
+            split.values().copied().collect::<Vec<_>>(),
+            vec![27, 27, 26]
+        );
         let uneven: BTreeMap<_, _> = [([1; 32], 2), ([2; 32], 1)].into();
         let split = distribute_rewards(3, &uneven).unwrap();
         assert_eq!(split.values().copied().collect::<Vec<_>>(), vec![2, 1]);

@@ -598,7 +598,10 @@ mod tests {
         let original: Value = serde_json::from_slice(&good).unwrap();
         for (key, bad) in [
             ("accepted", json!(false)),
-            ("scope", json!("caller_attested_fee_funded_reward_block_only")),
+            (
+                "scope",
+                json!("caller_attested_fee_funded_reward_block_only"),
+            ),
             ("receipt_ids", json!([hex(&receipts[1]), hex(&receipts[0])])),
             ("state_root", json!(hex(&[0; 32]))),
             ("supply_after", json!(null)),
