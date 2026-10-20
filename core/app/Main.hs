@@ -19,6 +19,7 @@ import AivoBlock.ReceiptId (canonicalReceiptIdV1)
 import AivoBlock.Settlement (RewardEntitlement(..), settleFundedRewards)
 import AivoBlock.Ledger (Ledger(..), Account(..), applyVerifiedTransfer)
 import AivoBlock.LocalLedgerSnapshot (decodeLedgerSnapshot, encodeLedgerSnapshot)
+import AivoBlock.TransferAuth (verifySignedTransferV1)
 import AivoBlock.Transaction (Transaction(..), mkAddress, addressBytes, mkAmount)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -430,8 +431,9 @@ settlementRequest value =
       pure (protocol == 1 && kind == "settlement_fixture")
 
 -- | Transfer fixture: the Rust caller supplies the stored previous
--- snapshot and asserts prior authentication. Haskell, not Rust, applies the
--- deterministic transfer rule. No signature validation or consensus here.
+-- snapshot plus a signed V1 transaction. Haskell authenticates Ed25519
+-- ownership and signature before running pure transfer rules; consensus is
+-- not implemented.
 ledgerTransitionResponse :: Value -> BS.ByteString
 ledgerTransitionResponse value =
   case parseEither parseTransferFixture value of
@@ -439,6 +441,7 @@ ledgerTransitionResponse value =
     Right (priorBytes, tx) ->
       let verdict = do
             previous <- decodeLedgerSnapshot priorBytes
+            verifySignedTransferV1 tx
             updated <- applyVerifiedTransfer tx previous
             encodeLedgerSnapshot updated
       in case verdict of
@@ -446,8 +449,6 @@ ledgerTransitionResponse value =
         Right bytes -> decision True "none" (Just (hexBytes bytes))
   where
     parseTransferFixture = withObject "ledger transfer fixture" $ \o -> do
-      attested <- o .: "caller_attested" :: Parser Bool
-      when (not attested) (fail "Missing local caller attestation")
       version <- o .: "version" :: Parser Word64
       chain <- o .: "chain_id" :: Parser Word64
       when (version /= 1 || chain /= 1)
@@ -465,13 +466,20 @@ ledgerTransitionResponse value =
         amount <- t .: "amount" :: Parser Word64
         fee <- t .: "fee" :: Parser Word64
         nonce <- t .: "nonce" :: Parser Word64
+        publicHex <- t .: "public_key" :: Parser String
+        signatureHex <- t .: "signature" :: Parser String
+        publicKey <- parseFixedHex 32 publicHex
+        signature <- parseFixedHex 64 signatureHex
         pure (Transaction version chain sender recipient
                 (mkAmount amount) (mkAmount fee) nonce Nothing
-                BS.empty BS.empty)) transferValue
+                publicKey signature)) transferValue
       pure (prior, tx)
     parseAddress string = do
       digest <- parseHash string
       either fail pure (mkAddress (hash256Bytes digest))
+    parseFixedHex size hex = do
+      when (length hex /= size * 2) (fail "Invalid signature or key width")
+      parseHexString hex
     parseHexString hex
       | odd (length hex) || not (all isHexDigit hex) =
           fail "Invalid hex ledger snapshot"
@@ -483,11 +491,11 @@ ledgerTransitionResponse value =
     decision :: Bool -> String -> Maybe String -> BS.ByteString
     decision accepted reason nextState = BL.toStrict (encode (object
       [ "ok" .= True
-      , "type" .= ("ledger_transfer_fixture" :: String)
+      , "type" .= ("ledger_signed_transfer_fixture" :: String)
       , "protocol_version" .= (1 :: Int)
       , "accepted" .= accepted
       , "reason" .= (reason :: String)
-      , "scope" .= ("caller_attested_haskell_transfer_only" :: String)
+      , "scope" .= ("ed25519_verified_local_transfer_only" :: String)
       , "state_hex" .= nextState
       ]))
 
@@ -500,7 +508,7 @@ ledgerTransitionRequest value =
     parser = withObject "ledger transition request" $ \o -> do
       version <- o .: "protocol_version" :: Parser Int
       kind <- o .: "type" :: Parser String
-      pure (version == 1 && kind == "ledger_transfer_fixture")
+      pure (version == 1 && kind == "ledger_signed_transfer_fixture")
 
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request

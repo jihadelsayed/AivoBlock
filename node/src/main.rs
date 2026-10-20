@@ -12,6 +12,7 @@ mod ledger_bridge;
 mod mining;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
+mod transaction_auth;
 
 use sha2::{Digest, Sha256};
 use std::env;
@@ -54,7 +55,7 @@ fn print_help() {
            ai-demo      Execute a sample AI puzzle using Python IPC\n\
            ai-verify    Verify a sample proof and reject a tampered proof\n\
            ai-partition-demo  Execute and verify two locally scheduled AI work ranges\n\
-           ledger-transition-demo  Store Haskell-computed fixture transfers in RocksDB\n\
+           ledger-transition-demo  Verify signed transfers and store Haskell-computed state\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
            validated-storage-demo Check JSON block structure before saving a fixture\n\
            header-hash  Verify Rust canonical header SHA-256 test vector\n\

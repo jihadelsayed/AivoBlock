@@ -4,6 +4,7 @@
 //! Transfer signature authentication, block header hashes, state roots,
 //! consensus and chain rollback are deliberately NOT implemented here.
 
+use ed25519_dalek::{Signer, SigningKey};
 use std::env;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,14 +12,34 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
+use crate::transaction_auth::{
+    transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
+};
 
-#[derive(Debug, Clone, Copy)]
-pub struct AttestedTransfer {
-    pub sender: [u8; 32],
-    pub recipient: [u8; 32],
-    pub amount: u64,
-    pub fee: u64,
-    pub nonce: u64,
+/// Fixed demo signing key: do NOT use this seed for real accounts.
+fn fixture_transfer(
+    key: &SigningKey,
+    recipient: [u8; 32],
+    amount: u64,
+    fee: u64,
+    nonce: u64,
+) -> SignedTransferV1 {
+    let sender = key.verifying_key().to_bytes();
+    let mut tx = SignedTransferV1 {
+        chain_id: 1,
+        version: 1,
+        sender,
+        recipient,
+        amount,
+        fee,
+        nonce,
+        public_key: sender,
+        signature: [0; 64],
+    };
+    tx.signature = key
+        .sign(&transfer_signing_bytes_v1(&tx).expect("valid local fixture"))
+        .to_bytes();
+    tx
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -50,8 +71,8 @@ fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
 /// Replace with a versioned JSON/Protobuf decoder for untrusted deployments.
 fn decode_transition_response(response: &[u8]) -> Result<LedgerState, String> {
     let text = std::str::from_utf8(response).map_err(|_| "Non-UTF8 Haskell ledger response")?;
-    if !text.contains(r#""type":"ledger_transfer_fixture""#)
-        || !text.contains(r#""scope":"caller_attested_haskell_transfer_only""#)
+    if !text.contains(r#""type":"ledger_signed_transfer_fixture""#)
+        || !text.contains(r#""scope":"ed25519_verified_local_transfer_only""#)
         || !text.contains(r#""protocol_version":1"#)
         || !text.contains(r#""ok":true"#)
         || !text.contains(r#""accepted":true"#)
@@ -80,24 +101,32 @@ fn decode_transition_response(response: &[u8]) -> Result<LedgerState, String> {
     decode_ledger_state(&bytes).map_err(|error| format!("Malformed Haskell ledger: {error:?}"))
 }
 
-/// Invoke Haskell's pure applyVerifiedTransfer against the caller-supplied
-/// previous snapshot. It authenticates NEITHER the prior state nor the
-/// transaction signature. The caller must load its previous state from
-/// trusted storage and validate authorization before invoking this.
+/// Authenticate the canonical Ed25519 transfer locally, then invoke Haskell
+/// to independently authenticate it and compute the ledger transition.
+/// The caller must load prior state from trusted RocksDB; this function does
+/// not authenticate blocks, genesis allocations or validator consensus.
 pub fn compute_transfer_via_haskell(
     core: &HaskellValidatorClient,
     prior: &LedgerState,
-    transfer: AttestedTransfer,
+    transfer: SignedTransferV1,
 ) -> Result<LedgerState, String> {
+    // Cryptographic verification is mandatory before sending any state
+    // transition to Haskell. Haskell repeats it independently.
+    verify_signed_transfer_v1(&transfer)
+        .map_err(|error| format!("Unauthenticated transfer: {error:?}"))?;
     let bytes = encode_ledger_state(prior).map_err(|e| format!("Snapshot encode: {e:?}"))?;
     let request = format!(
-        r#"{{"protocol_version":1,"type":"ledger_transfer_fixture","caller_attested":true,"version":1,"chain_id":1,"state_hex":"{}","transfer":{{"sender":"{}","recipient":"{}","amount":{},"fee":{},"nonce":{}}}}}"#,
+        r#"{{"protocol_version":1,"type":"ledger_signed_transfer_fixture","version":{},"chain_id":{},"state_hex":"{}","transfer":{{"sender":"{}","recipient":"{}","amount":{},"fee":{},"nonce":{},"public_key":"{}","signature":"{}"}}}}"#,
+        transfer.version,
+        transfer.chain_id,
         hex(&bytes),
         hex(&transfer.sender),
         hex(&transfer.recipient),
         transfer.amount,
         transfer.fee,
-        transfer.nonce
+        transfer.nonce,
+        hex(&transfer.public_key),
+        hex(&transfer.signature)
     );
     let response = core
         .exchange(request.as_bytes())
@@ -123,7 +152,8 @@ pub fn demo() -> Result<(), String> {
         std::process::id()
     ));
 
-    let alice = [1u8; 32];
+    let fixture_key = SigningKey::from_bytes(&[7u8; 32]);
+    let alice = fixture_key.verifying_key().to_bytes();
     let bob = [2u8; 32];
     let mut initial = LedgerState::default();
     initial.accounts.insert(
@@ -149,13 +179,7 @@ pub fn demo() -> Result<(), String> {
         after_first = compute_transfer_via_haskell(
             &core,
             &prior,
-            AttestedTransfer {
-                sender: alice,
-                recipient: bob,
-                amount: 10,
-                fee: 2,
-                nonce: 0,
-            },
+            fixture_transfer(&fixture_key, bob, 10, 2, 0),
         )?;
         if after_first.fee_pool != 2
             || after_first
@@ -180,23 +204,35 @@ pub fn demo() -> Result<(), String> {
         // An invalid nonce or overspend must be rejected by Haskell; neither
         // request may change the already-persisted chain state.
         for transfer in [
-            AttestedTransfer {
-                sender: alice,
-                recipient: bob,
-                amount: 1,
-                fee: 0,
-                nonce: 0,
-            },
-            AttestedTransfer {
-                sender: alice,
-                recipient: bob,
-                amount: 100,
-                fee: 0,
-                nonce: 1,
-            },
+            fixture_transfer(&fixture_key, bob, 1, 0, 0),
+            fixture_transfer(&fixture_key, bob, 100, 0, 1),
         ] {
             if compute_transfer_via_haskell(&core, &after_first, transfer).is_ok() {
                 return Err("Haskell accepted invalid transfer".to_owned());
+            }
+        }
+        // A tampered message and a wrong-key sender never reach Haskell.
+        let signed = fixture_transfer(&fixture_key, bob, 1, 0, 1);
+        for forged in [
+            SignedTransferV1 {
+                amount: 2,
+                ..signed
+            },
+            SignedTransferV1 {
+                sender: [4; 32],
+                ..signed
+            },
+            SignedTransferV1 {
+                signature: [0; 64],
+                ..signed
+            },
+            SignedTransferV1 {
+                chain_id: 2,
+                ..signed
+            },
+        ] {
+            if compute_transfer_via_haskell(&core, &after_first, forged).is_ok() {
+                return Err("Invalid signature, owner or chain reached Haskell".to_owned());
             }
         }
         if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(after_first.clone()) {
@@ -215,13 +251,7 @@ pub fn demo() -> Result<(), String> {
         let next = compute_transfer_via_haskell(
             &core,
             &prior,
-            AttestedTransfer {
-                sender: alice,
-                recipient: bob,
-                amount: 5,
-                fee: 1,
-                nonce: 1,
-            },
+            fixture_transfer(&fixture_key, bob, 5, 1, 1),
         )?;
         if next.fee_pool != 3
             || next.accounts.get(&alice).map(|x| (x.balance, x.nonce)) != Some((82, 2))
@@ -253,7 +283,8 @@ pub fn demo() -> Result<(), String> {
     println!("Haskell-computed transfer -> atomic RocksDB persistence: PASS");
     println!("Two transfers: alice=82, bob=15, fee pool=3; total funds=100");
     println!("Rejected nonce/overspend: PASS; reopen and state recovery: PASS");
-    println!("Scope: caller-attested fixture; no signature consensus or real payments");
+    println!("Ed25519 signature, owner and chain checks: PASS (Rust + Haskell)");
+    println!("Scope: local signed fixture; no validator consensus or real payments");
     Ok(())
 }
 
@@ -264,8 +295,8 @@ mod tests {
     fn rejects_malformed_and_forged_ipc_response_envelopes() {
         for response in [
             br#"{"accepted":true,"state_hex":"00"}"#.as_slice(),
-            br#"{"ok":true,"type":"ledger_transfer_fixture","protocol_version":1,"scope":"caller_attested_haskell_transfer_only","accepted":false,"state_hex":"00"}"#,
-            br#"{"ok":true,"type":"ledger_transfer_fixture","protocol_version":1,"scope":"caller_attested_haskell_transfer_only","accepted":true,"state_hex":"zz"}"#,
+            br#"{"ok":true,"type":"ledger_signed_transfer_fixture","protocol_version":1,"scope":"ed25519_verified_local_transfer_only","accepted":false,"state_hex":"00"}"#,
+            br#"{"ok":true,"type":"ledger_signed_transfer_fixture","protocol_version":1,"scope":"ed25519_verified_local_transfer_only","accepted":true,"state_hex":"zz"}"#,
         ] {
             assert!(decode_transition_response(response).is_err());
         }
