@@ -76,3 +76,9 @@ def test_commitments_are_deterministic_and_domain_separated():
     assert input_commitment(ROWS) == input_commitment([row[:] for row in ROWS])
     assert model_commitment(WEIGHTS) != input_commitment(ROWS)
     assert len(rules_commitment()) == 32
+
+
+def test_published_cross_language_vectors():
+    assert model_commitment(WEIGHTS).hex() == "841c1f0051800864f7189935a818c964893e1b96fe1c610136c23a1284a254bc"
+    assert input_commitment(ROWS).hex() == "548121e870e795733aaabbca753b290431797562a55a1301fcf6113f568c0e3d"
+    assert rules_commitment().hex() == "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902"
