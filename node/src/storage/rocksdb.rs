@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use rocksdb::{Options, WriteBatch, WriteOptions, DB};
+use sha2::{Digest, Sha256};
 
+use super::ledger_state::{decode_ledger_state, encode_ledger_state, LedgerState};
 use super::{encode_key, Column, KeyValueStore};
 
 #[derive(Debug)]
@@ -25,6 +27,8 @@ pub enum StorageError {
     InvalidSettlementRecord,
     DuplicateRewardBatch,
     AlreadyPaidReceipt,
+    InvalidLedgerTransition,
+    IncompatibleStorageMode,
     Database(rocksdb::Error),
 }
 
@@ -40,6 +44,8 @@ impl fmt::Display for StorageError {
             Self::InvalidSettlementRecord => write!(f, "invalid receipt settlement record"),
             Self::DuplicateRewardBatch => write!(f, "reward batch already persisted"),
             Self::AlreadyPaidReceipt => write!(f, "reward receipt already persisted"),
+            Self::InvalidLedgerTransition => write!(f, "invalid local ledger state transition"),
+            Self::IncompatibleStorageMode => write!(f, "cannot mix legacy storage with atomic ledger blocks"),
             Self::Database(err) => write!(f, "RocksDB error: {err}"),
         }
     }
@@ -57,7 +63,9 @@ impl Error for StorageError {
             | Self::CorruptChainState
             | Self::InvalidSettlementRecord
             | Self::DuplicateRewardBatch
-            | Self::AlreadyPaidReceipt => None,
+            | Self::AlreadyPaidReceipt
+            | Self::InvalidLedgerTransition
+            | Self::IncompatibleStorageMode => None,
         }
     }
 }
@@ -70,6 +78,34 @@ impl From<rocksdb::Error> for StorageError {
 
 fn storage_key(column: Column, key: &[u8]) -> Result<Vec<u8>, StorageError> {
     encode_key(column, key).map_err(|_| StorageError::EmptyKey)
+}
+
+/// Authenticated-by-caller settlement to be committed with a validated block.
+/// The storage engine checks identifiers and atomicity, NOT proof correctness.
+#[derive(Debug)]
+pub struct SettlementBatch<'a> {
+    pub batch_id: [u8; 32],
+    pub receipt_ids: &'a [[u8; 32]],
+    pub validated_response: &'a [u8],
+}
+
+const LOCAL_STATE_KEY: &[u8] = b"local-ledger-snapshot-v1";
+const LOCAL_DIGEST_KEY: &[u8] = b"local-ledger-digest-v1";
+const LEGACY_REPLAY_USED_KEY: &[u8] = b"legacy-replay-guard-used-v1";
+
+fn marker_key(prefix: &[u8], id: &[u8; 32]) -> Result<Vec<u8>, StorageError> {
+    let mut suffix = prefix.to_vec();
+    suffix.extend_from_slice(id);
+    storage_key(Column::Metadata, &suffix)
+}
+
+fn local_supply(state: &LedgerState) -> u128 {
+    state
+        .accounts
+        .values()
+        .map(|account| u128::from(account.balance))
+        .sum::<u128>()
+        + u128::from(state.fee_pool)
 }
 
 /// Persistent database owned by a single node instance.
