@@ -4,6 +4,7 @@
 //! integration. No blockchain network is started by these commands.
 
 mod ai_pipeline;
+mod ai_proof_v2;
 mod batch_commitment;
 mod batch_pipeline;
 mod batch_replay;
@@ -18,6 +19,7 @@ mod ledger_bridge;
 mod mining;
 mod reward_block;
 mod reward_pipeline;
+mod proof_pipeline_v2;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
 mod transaction_auth;
@@ -65,6 +67,7 @@ fn print_help() {
            ai-verify    Verify a sample proof and reject a tampered proof\n\
            ai-partition-demo  Execute and verify two locally scheduled AI work ranges\n\
            ai-reward-block-demo  Commit verified local AI receipts in a fee-funded reward block\n\
+           ai-proof-v2-demo  Independently verify a signed AI task and reward history\n\
            ledger-transition-demo  Verify transaction/state roots and store Haskell-executed blocks\n\
            multi-transfer-demo  Execute ordered signed transactions in one atomic block\n\
            storage-demo Persist and reopen a sample block in RocksDB\n\
@@ -616,6 +619,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-verify" => ai_verify(),
         [command] if command == "ai-partition-demo" => ai_pipeline::demo(),
         [command] if command == "ai-reward-block-demo" => reward_pipeline::demo(),
+        [command] if command == "ai-proof-v2-demo" => proof_pipeline_v2::demo(),
         [command] if command == "ledger-transition-demo" => ledger_bridge::demo(),
         [command] if command == "multi-transfer-demo" => batch_pipeline::demo(),
         [command] if command == "storage-demo" => storage_demo(),
@@ -672,6 +676,7 @@ mod tests {
         assert!(run(&["ai-verify".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-partition-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ai-reward-block-demo".to_owned(), "extra".to_owned()]).is_err());
+        assert!(run(&["ai-proof-v2-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["ledger-transition-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["storage-demo".to_owned(), "extra".to_owned()]).is_err());
         assert!(run(&["validated-storage-demo".to_owned(), "extra".to_owned()]).is_err());
