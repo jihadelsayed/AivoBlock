@@ -379,7 +379,7 @@ impl RocksDbStore {
             (Some(tip), Some(height_bytes), Some(snapshot), Some(digest))
                 if tip.len() == 32 && height_bytes.len() == 8 && digest.len() == 32 =>
             {
-                if parent_hash.as_slice() != tip.as_ref() {
+                if parent_hash.as_slice() != tip.as_slice() {
                     return Err(StorageError::WrongParent);
                 }
                 let mut saved_height = [0; 8];
