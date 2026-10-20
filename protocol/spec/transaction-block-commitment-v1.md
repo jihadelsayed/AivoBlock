@@ -56,6 +56,16 @@ root for the fixed single transfer:
 d0ea168dc83df1fd8bf95b46bf20d434d4bd2ae12b1a9ce7cf77cadac19283c3
 ```
 
+Additional independent ordered Merkle vectors (raw 32-byte IDs made from
+repeated bytes `01`, `02` and `03`; no signatures implied):
+
+```text
+two IDs [01,02]:
+59cdd667d6549503267625933df3bfa85016948f59f8bb91af0b945f926a6477
+three IDs [01,02,03] with last leaf duplicated:
+0dbe0e823658b8f97440d5b79bc1b1aa7b0943ab43a1e9e930f1b4c881f2e822
+```
+
 ## Ledger state root and candidate V1 header
 
 The *local* ledger state root is
