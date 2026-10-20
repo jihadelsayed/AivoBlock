@@ -17,6 +17,7 @@ import AivoBlock.RewardEligibility (VerifiedWork(..), eligibleContributions)
 import AivoBlock.Rewards (Contribution(..))
 import AivoBlock.ReceiptId (canonicalReceiptIdV1)
 import AivoBlock.Settlement (RewardEntitlement(..), settleFundedRewards)
+import AivoBlock.Issuance (ledgerSupply, mkIssuancePolicy, settleIssuedRewards)
 import AivoBlock.Ledger (Ledger(..), Account(..), applyVerifiedTransfer)
 import AivoBlock.LocalLedgerSnapshot (decodeLedgerSnapshot, encodeLedgerSnapshot)
 import AivoBlock.TransferAuth (verifySignedTransferV1)
@@ -493,6 +494,101 @@ ledgerRewardBlockResponse value =
       , "receipt_ids" .= fmap (\(_,_,c) -> c) result
       ]))
 
+-- | Settle one consensus-finalized V3 AI-work block from the exact prior
+-- typed ledger. Haskell recomputes receipt IDs, eligibility, the scheduled
+-- Sayed Token issuance for this height and the funded payout. The Rust
+-- caller must have authenticated the task, assignments and worker
+-- signatures and recomputed every result before attesting "verified":true.
+ledgerAiWorkBlockV3Response :: Value -> BS.ByteString
+ledgerAiWorkBlockV3Response value =
+  case parseEither parser value of
+    Left _ -> reply False "invalid_ai_work_block_request" Nothing
+    Right (chainId, height, snapshot, feeBudget, issuance, policy, batchId, claimed, works) ->
+      let outcome = do
+            prior <- decodeLedgerSnapshot snapshot
+            _ <- eligibleContributions height works
+            actual <- traverse (receiptIdFor chainId) works
+            when (actual /= claimed) (Left "Canonical receipt ID mismatch")
+            entitlements <- traverse makeEntitlement (zip works actual)
+            next <- settleIssuedRewards policy height batchId feeBudget issuance
+                      entitlements prior
+            encoded <- encodeLedgerSnapshot next
+            root <- ledgerStateRootV1 next
+            pure ( hexBytes encoded, hexHash root, map hexHash actual
+                 , ledgerSupply prior, ledgerSupply next )
+      in case outcome of
+        Left reason -> reply False reason Nothing
+        Right result -> reply True "none" (Just result)
+  where
+    parser = withObject "ai work block v3" $ \o -> do
+      chainId <- o .: "chain_id" :: Parser Word32
+      height <- o .: "height" :: Parser Word64
+      when (chainId /= 1 || height == 0) (fail "Unsupported chain or genesis height")
+      snapshotHex <- o .: "state_hex" :: Parser String
+      when (length snapshotHex > 2 * 1024 * 1024) (fail "Snapshot too large")
+      snapshot <- decodeRaw snapshotHex
+      feeBudget <- o .: "fee_budget" :: Parser Word64
+      issuance <- o .: "issuance" :: Parser Word64
+      policyValue <- o .: "policy"
+      policy <- withObject "issuance policy" (\p -> do
+        initial <- p .: "initial_reward" :: Parser Word64
+        interval <- p .: "halving_interval" :: Parser Word64
+        cap <- p .: "max_supply" :: Parser Word64
+        either fail pure (mkIssuancePolicy initial interval cap)) policyValue
+      batchHex <- o .: "batch_id" :: Parser String
+      batchId <- parseHash batchHex
+      values <- o .: "works" :: Parser [Value]
+      when (null values || length values > 64) (fail "Expected 1..64 works")
+      claims <- traverse claimedId values
+      works <- traverse parseRewardWork values
+      pure (chainId, height, snapshot, feeBudget, issuance, policy, batchId, claims, works)
+    decodeRaw hex
+      | odd (length hex) || not (all isHexDigit hex) =
+          fail "Invalid hex snapshot"
+      | otherwise = pure (BS.pack (decodeBytes hex))
+    decodeBytes (a:b:rest) =
+      fromIntegral (16 * digitToInt a + digitToInt b) : decodeBytes rest
+    decodeBytes _ = []
+    claimedId = withObject "claimed work" $ \o -> do
+      receiptHex <- o .: "receipt_id" :: Parser String
+      parseHash receiptHex
+    receiptIdFor chainId work =
+      let proof = workProof work
+      in canonicalReceiptIdV1 chainId (proofPuzzleId proof)
+           (proofWorkerId proof) (proofStartUnit proof)
+           (proofUnitCount proof) (proofResultCommitment proof)
+    makeEntitlement (work, receiptId) = do
+      let proof = workProof work
+      address <- mkAddress (hash256Bytes (proofWorkerId proof))
+      pure (RewardEntitlement receiptId (proofWorkerId proof)
+            address (proofUnitCount proof))
+    reply :: Bool -> String -> Maybe (String, String, [String], Integer, Integer)
+          -> BS.ByteString
+    reply accepted reason result = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("ledger_ai_work_block_v3" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "accepted" .= accepted
+      , "reason" .= (reason :: String)
+      , "scope" .= ("rust_recomputed_ai_work_with_scheduled_issuance" :: String)
+      , "state_hex" .= fmap (\(a,_,_,_,_) -> a) result
+      , "state_root" .= fmap (\(_,b,_,_,_) -> b) result
+      , "receipt_ids" .= fmap (\(_,_,c,_,_) -> c) result
+      , "supply_before" .= fmap (\(_,_,_,d,_) -> d) result
+      , "supply_after" .= fmap (\(_,_,_,_,e) -> e) result
+      ]))
+
+ledgerAiWorkBlockV3Request :: Value -> Maybe BS.ByteString
+ledgerAiWorkBlockV3Request value =
+  case parseEither parser value of
+    Right True -> Just (ledgerAiWorkBlockV3Response value)
+    _ -> Nothing
+  where
+    parser = withObject "ai work block request" $ \o -> do
+      version <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (version == 1 && kind == "ledger_ai_work_block_v3")
+
 ledgerRewardBlockRequest :: Value -> Maybe BS.ByteString
 ledgerRewardBlockRequest value =
   case parseEither parser value of
@@ -707,7 +803,9 @@ handleIpcRequest request
                 Just result -> Just result
                 Nothing -> case rewardRequest value of
                   Just result -> Just result
-                  Nothing -> case ledgerRewardBlockRequest value of
+                  Nothing -> case ledgerAiWorkBlockV3Request value of
+                   Just result -> Just result
+                   Nothing -> case ledgerRewardBlockRequest value of
                     Just result -> Just result
                     Nothing -> case settlementRequest value of
                       Just result -> Just result

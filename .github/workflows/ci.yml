@@ -127,6 +127,7 @@ jobs:
         run: |
           cargo test haskell_json_ipc_validation_cases -- --nocapture
           cargo test haskell_rejects_malformed_ipc_frames -- --nocapture
+          cargo test haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
           cargo run -- core-health
           cargo run -- core-validate
           cargo run -- core-json

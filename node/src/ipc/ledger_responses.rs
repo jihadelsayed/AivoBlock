@@ -61,6 +61,32 @@ struct RewardBlockReply {
     receipt_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AiWorkBlockV3Reply {
+    #[serde(rename = "type")]
+    kind: String,
+    ok: bool,
+    protocol_version: u32,
+    accepted: bool,
+    reason: String,
+    scope: String,
+    state_hex: Option<String>,
+    state_root: Option<String>,
+    receipt_ids: Option<Vec<String>>,
+    supply_before: Option<u64>,
+    supply_after: Option<u64>,
+}
+
+/// Exact parameters the Rust caller sent for one V3 AI-work settlement.
+pub struct ExpectedAiWorkSettlement<'a> {
+    pub batch_id: &'a [u8; 32],
+    pub fee_budget: u64,
+    pub issuance: u64,
+    pub max_supply: u64,
+    pub receipts: &'a [[u8; 32]],
+}
+
 fn check_envelope(
     kind: &str,
     scope: &str,
@@ -288,6 +314,95 @@ pub fn decode_reward_block_reply(
     Ok(state)
 }
 
+/// Strictly decode a Haskell V3 AI-work settlement and independently check
+/// every economic invariant in Rust: exact receipts and order, replay
+/// markers, untouched nonces, fee pool reduced by exactly the fee budget,
+/// supply grown by exactly the scheduled issuance and never above the cap.
+pub fn decode_ai_work_block_v3_reply(
+    response: &[u8],
+    expected: &ExpectedAiWorkSettlement<'_>,
+    prior: &LedgerState,
+) -> Result<LedgerState, String> {
+    let reply: AiWorkBlockV3Reply = parse_json(response)?;
+    check_envelope(
+        &reply.kind,
+        &reply.scope,
+        (
+            "ledger_ai_work_block_v3",
+            "rust_recomputed_ai_work_with_scheduled_issuance",
+        ),
+        reply.ok,
+        reply.protocol_version,
+        reply.accepted,
+        &reply.reason,
+    )?;
+    if *expected.batch_id == [0; 32]
+        || expected.receipts.is_empty()
+        || expected.receipts.len() > 64
+        || prior.fee_pool < expected.fee_budget
+    {
+        return Err("Invalid V3 reward batch, receipt count or fee budget".into());
+    }
+    let reported = reply.receipt_ids.ok_or("Missing settled receipt IDs")?;
+    if reported.len() != expected.receipts.len() {
+        return Err("Haskell V3 receipt count mismatch".into());
+    }
+    for (reported_id, wanted) in reported.iter().zip(expected.receipts) {
+        if parse_hash(reported_id)? != *wanted {
+            return Err("Haskell V3 receipt ID or order mismatch".into());
+        }
+    }
+    let state = parse_ledger_and_state_root(reply.state_hex, reply.state_root)?;
+    if state.fee_pool != prior.fee_pool - expected.fee_budget {
+        return Err("V3 settlement changed the wrong amount of fees".into());
+    }
+    let mut batches = prior.settled_batches.clone();
+    if !batches.insert(*expected.batch_id) || state.settled_batches != batches {
+        return Err("V3 reward batch markers were forged or replayed".into());
+    }
+    let mut paid = prior.paid_receipts.clone();
+    for id in expected.receipts {
+        if *id == [0; 32] || !paid.insert(*id) {
+            return Err("V3 reward receipt reused or forged".into());
+        }
+    }
+    if state.paid_receipts != paid {
+        return Err("V3 reward receipt markers were not fully committed".into());
+    }
+    for (address, account) in &prior.accounts {
+        match state.accounts.get(address) {
+            Some(next) if next.nonce == account.nonce && next.balance >= account.balance => {}
+            _ => return Err("V3 settlement modified an existing account or nonce".into()),
+        }
+    }
+    if state
+        .accounts
+        .iter()
+        .any(|(address, account)| !prior.accounts.contains_key(address) && account.nonce != 0)
+    {
+        return Err("New V3 reward account has an invalid nonce".into());
+    }
+    let supply = |ledger: &LedgerState| {
+        ledger
+            .accounts
+            .values()
+            .map(|a| u128::from(a.balance))
+            .sum::<u128>()
+            + u128::from(ledger.fee_pool)
+    };
+    let before = supply(prior);
+    let after = supply(&state);
+    if after != before + u128::from(expected.issuance) || after > u128::from(expected.max_supply) {
+        return Err("V3 settlement violated the issuance supply invariant".into());
+    }
+    if reply.supply_before.map(u128::from) != Some(before)
+        || reply.supply_after.map(u128::from) != Some(after)
+    {
+        return Err("Haskell V3 supply report disagrees with ledgers".into());
+    }
+    Ok(state)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +525,99 @@ mod tests {
             &prior
         )
         .is_err());
+    }
+
+    #[test]
+    fn v3_issuance_reply_parser_enforces_supply_fees_and_markers() {
+        use crate::storage::LocalAccount;
+        let batch_id = [12; 32];
+        let receipts = [[3; 32], [4; 32]];
+        let mut prior = LedgerState {
+            fee_pool: 10,
+            ..LedgerState::default()
+        };
+        prior.accounts.insert(
+            [9; 32],
+            LocalAccount {
+                balance: 90,
+                nonce: 2,
+            },
+        );
+        // fee budget 4 + issuance 6 = 10 paid; pool 10 + 6 - 10 = 6.
+        let mut post = prior.clone();
+        post.fee_pool = 6;
+        post.settled_batches.insert(batch_id);
+        post.paid_receipts.extend(receipts);
+        for (address, balance) in [([5; 32], 5), ([6; 32], 5)] {
+            post.accounts
+                .insert(address, LocalAccount { balance, nonce: 0 });
+        }
+        let reply = |state: &LedgerState, before: u64, after: u64| {
+            json!({
+                "ok": true,
+                "type": "ledger_ai_work_block_v3",
+                "protocol_version": 1,
+                "scope": "rust_recomputed_ai_work_with_scheduled_issuance",
+                "accepted": true,
+                "reason": "none",
+                "state_hex": hex(&encode_ledger_state(state).unwrap()),
+                "state_root": hex(&ledger_state_root_v1(state).unwrap()),
+                "receipt_ids": [hex(&receipts[0]), hex(&receipts[1])],
+                "supply_before": before,
+                "supply_after": after,
+            })
+        };
+        let expected = ExpectedAiWorkSettlement {
+            batch_id: &batch_id,
+            fee_budget: 4,
+            issuance: 6,
+            max_supply: 1_000,
+            receipts: &receipts,
+        };
+        let good = serde_json::to_vec(&reply(&post, 100, 106)).unwrap();
+        assert_eq!(
+            decode_ai_work_block_v3_reply(&good, &expected, &prior),
+            Ok(post.clone())
+        );
+        let lying_supply = serde_json::to_vec(&reply(&post, 100, 107)).unwrap();
+        assert!(decode_ai_work_block_v3_reply(&lying_supply, &expected, &prior).is_err());
+        let mut minted = post.clone();
+        minted.accounts.get_mut(&[5; 32]).unwrap().balance += 1;
+        let over = serde_json::to_vec(&reply(&minted, 100, 107)).unwrap();
+        assert!(decode_ai_work_block_v3_reply(&over, &expected, &prior).is_err());
+        let capped = ExpectedAiWorkSettlement {
+            max_supply: 105,
+            ..expected
+        };
+        assert!(decode_ai_work_block_v3_reply(&good, &capped, &prior).is_err());
+        let wrong_issuance = ExpectedAiWorkSettlement {
+            issuance: 5,
+            ..expected
+        };
+        assert!(decode_ai_work_block_v3_reply(&good, &wrong_issuance, &prior).is_err());
+        let original: Value = serde_json::from_slice(&good).unwrap();
+        for (key, bad) in [
+            ("accepted", json!(false)),
+            ("scope", json!("caller_attested_fee_funded_reward_block_only")),
+            ("receipt_ids", json!([hex(&receipts[1]), hex(&receipts[0])])),
+            ("state_root", json!(hex(&[0; 32]))),
+            ("supply_after", json!(null)),
+        ] {
+            let mut changed = original.clone();
+            changed[key] = bad;
+            assert!(
+                decode_ai_work_block_v3_reply(
+                    &serde_json::to_vec(&changed).unwrap(),
+                    &expected,
+                    &prior
+                )
+                .is_err(),
+                "bad V3 field: {key}"
+            );
+        }
+        let mut replay = prior.clone();
+        replay.paid_receipts.insert(receipts[0]);
+        assert!(decode_ai_work_block_v3_reply(&good, &expected, &replay).is_err());
     }
 
     #[test]
