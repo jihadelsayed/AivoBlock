@@ -27,9 +27,9 @@ fn puzzle_json() -> String {
     format!(
         r#"{{"puzzle_id":"{}","version":1,"model_commitment":"{}","input_commitment":"{}","rules_commitment":"{}","units":3,"deadline_height":100}}"#,
         hex32(1),
-        hex32(2),
-        hex32(3),
-        hex32(4)
+        "841c1f0051800864f7189935a818c964893e1b96fe1c610136c23a1284a254bc",
+        "548121e870e795733aaabbca753b290431797562a55a1301fcf6113f568c0e3d",
+        "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902"
     )
 }
 

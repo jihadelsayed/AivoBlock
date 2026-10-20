@@ -12,6 +12,7 @@ import struct
 import sys
 from typing import BinaryIO
 
+from aivoblock_ai.commitments import validate_commitments
 from aivoblock_ai.executor import execute_integer_inference
 from aivoblock_ai.proof import PuzzleProof, proof_from_result, verify_by_recomputation
 from aivoblock_ai.puzzle import Puzzle, WorkRange
@@ -97,6 +98,7 @@ def _execute_request(request: dict) -> dict:
     rows = [_integer_vector(row, "row") for row in rows_data]
     weights = _integer_vector(request.get("weights"), "weights")
 
+    validate_commitments(task.model_commitment, task.input_commitment, task.rules_commitment, rows, weights)
     result = execute_integer_inference(rows, weights, work)
     proof = proof_from_result(task, worker_id, result)
 
@@ -160,6 +162,7 @@ def _verify_request(request: dict) -> dict:
     )
     if proof.unit_count > MAX_REQUEST_ROWS:
         raise ValueError("proof exceeds verification limit")
+    validate_commitments(puzzle.model_commitment, puzzle.input_commitment, puzzle.rules_commitment, rows, weights)
     valid = verify_by_recomputation(puzzle, proof, rows, weights)
     return {
         "ok": True,
