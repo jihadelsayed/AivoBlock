@@ -3,8 +3,10 @@
 //! Storage is owned by each node independently. Persistence must not
 //! substitute for cryptographic verification or consensus validation.
 
+pub mod ledger_state;
 pub mod rocksdb;
 
+pub use ledger_state::{LedgerState, LocalAccount};
 pub use rocksdb::RocksDbStore;
 
 /// Namespaces prevent keys for different record types from colliding.
