@@ -49,8 +49,7 @@ fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
 /// validates the response envelope, then strictly decodes typed binary state.
 /// Replace with a versioned JSON/Protobuf decoder for untrusted deployments.
 fn decode_transition_response(response: &[u8]) -> Result<LedgerState, String> {
-    let text = std::str::from_utf8(response)
-        .map_err(|_| "Non-UTF8 Haskell ledger response")?;
+    let text = std::str::from_utf8(response).map_err(|_| "Non-UTF8 Haskell ledger response")?;
     if !text.contains(r#""type":"ledger_transfer_fixture""#)
         || !text.contains(r#""scope":"caller_attested_haskell_transfer_only""#)
         || !text.contains(r#""protocol_version":1"#)
@@ -71,7 +70,10 @@ fn decode_transition_response(response: &[u8]) -> Result<LedgerState, String> {
         .split_once('"')
         .ok_or("Unterminated Haskell state hex")?
         .0;
-    if !hex_value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+    if !hex_value
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return Err("Noncanonical Haskell hex encoding".to_owned());
     }
     let bytes = decode_hex(hex_value)?;
@@ -156,22 +158,41 @@ pub fn demo() -> Result<(), String> {
             },
         )?;
         if after_first.fee_pool != 2
-            || after_first.accounts.get(&alice).map(|x| (x.balance, x.nonce)) != Some((88, 1))
+            || after_first
+                .accounts
+                .get(&alice)
+                .map(|x| (x.balance, x.nonce))
+                != Some((88, 1))
             || after_first.accounts.get(&bob).map(|x| x.balance) != Some(10)
         {
             return Err("Haskell transfer #1 returned unexpected balances".to_owned());
         }
-        db.append_atomic_ledger_block(&[3; 32], &[1; 32], 1, b"fixture-transfer-1", &after_first, None)
-            .map_err(|e| format!("First atomic ledger commit: {e}"))?;
+        db.append_atomic_ledger_block(
+            &[3; 32],
+            &[1; 32],
+            1,
+            b"fixture-transfer-1",
+            &after_first,
+            None,
+        )
+        .map_err(|e| format!("First atomic ledger commit: {e}"))?;
 
         // An invalid nonce or overspend must be rejected by Haskell; neither
         // request may change the already-persisted chain state.
         for transfer in [
             AttestedTransfer {
-                sender: alice, recipient: bob, amount: 1, fee: 0, nonce: 0,
+                sender: alice,
+                recipient: bob,
+                amount: 1,
+                fee: 0,
+                nonce: 0,
             },
             AttestedTransfer {
-                sender: alice, recipient: bob, amount: 100, fee: 0, nonce: 1,
+                sender: alice,
+                recipient: bob,
+                amount: 100,
+                fee: 0,
+                nonce: 1,
             },
         ] {
             if compute_transfer_via_haskell(&core, &after_first, transfer).is_ok() {
@@ -195,7 +216,11 @@ pub fn demo() -> Result<(), String> {
             &core,
             &prior,
             AttestedTransfer {
-                sender: alice, recipient: bob, amount: 5, fee: 1, nonce: 1,
+                sender: alice,
+                recipient: bob,
+                amount: 5,
+                fee: 1,
+                nonce: 1,
             },
         )?;
         if next.fee_pool != 3
@@ -216,7 +241,9 @@ pub fn demo() -> Result<(), String> {
         if final_state.fee_pool != 3
             || final_state.accounts.get(&alice).map(|x| x.balance) != Some(82)
             || final_state.accounts.get(&bob).map(|x| x.balance) != Some(15)
-            || db.get(Column::ChainState, b"tip").map_err(|e| e.to_string())?
+            || db
+                .get(Column::ChainState, b"tip")
+                .map_err(|e| e.to_string())?
                 != Some(vec![4; 32])
         {
             return Err("Atomic Haskell ledger state not recovered".to_owned());
