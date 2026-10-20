@@ -11,8 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
-use crate::transaction_auth::{transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
+use crate::transaction_auth::{
+    transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
+};
 
 /// Fixed demo signing key: do NOT use this seed for real accounts.
 fn fixture_transfer(
@@ -212,10 +214,22 @@ pub fn demo() -> Result<(), String> {
         // A tampered message and a wrong-key sender never reach Haskell.
         let signed = fixture_transfer(&fixture_key, bob, 1, 0, 1);
         for forged in [
-            SignedTransferV1 { amount: 2, ..signed },
-            SignedTransferV1 { sender: [4; 32], ..signed },
-            SignedTransferV1 { signature: [0; 64], ..signed },
-            SignedTransferV1 { chain_id: 2, ..signed },
+            SignedTransferV1 {
+                amount: 2,
+                ..signed
+            },
+            SignedTransferV1 {
+                sender: [4; 32],
+                ..signed
+            },
+            SignedTransferV1 {
+                signature: [0; 64],
+                ..signed
+            },
+            SignedTransferV1 {
+                chain_id: 2,
+                ..signed
+            },
         ] {
             if compute_transfer_via_haskell(&core, &after_first, forged).is_ok() {
                 return Err("Invalid signature, owner or chain reached Haskell".to_owned());
