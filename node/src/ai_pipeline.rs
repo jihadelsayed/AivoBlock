@@ -2,7 +2,7 @@
 //!
 //! This is a pinned, deterministic fixture only. A Python verifier receives
 //! the same locally trusted inputs; no independent data availability,
-//! signatures, network coordination, consensus or rewards are established.
+//! network coordination, durable replay state, consensus or rewards are established.
 
 use std::env;
 use std::path::PathBuf;
@@ -93,7 +93,7 @@ fn proof_json(assignment: &Assignment, commitment: &str) -> String {
     format!(
         r#"{{"puzzle_id":"{}","worker_id":"{}","start_unit":{},"unit_count":{},"result_commitment":"{commitment}","witness_commitment":null}}"#,
         hex_bytes(&assignment.puzzle_id),
-        hex32(assignment.worker_id[0]),
+        hex_bytes(&assignment.worker_id),
         assignment.range.start,
         assignment.range.count
     )
