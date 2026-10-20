@@ -48,15 +48,14 @@ struct SignedTransferReply {
 
 fn check_envelope(
     kind: &str,
-    expected_kind: &str,
     scope: &str,
-    expected_scope: &str,
+    expected: (&str, &str),
     ok: bool,
     version: u32,
     accepted: bool,
     reason: &str,
 ) -> Result<(), String> {
-    if kind != expected_kind || scope != expected_scope || !ok || version != 1 {
+    if kind != expected.0 || scope != expected.1 || !ok || version != 1 {
         return Err("Invalid Haskell signed-ledger response envelope".into());
     }
     if !accepted {
@@ -135,9 +134,8 @@ pub fn decode_signed_batch_reply(
     let reply: SignedBatchReply = parse_json(response)?;
     check_envelope(
         &reply.kind,
-        "ledger_signed_batch_fixture",
         &reply.scope,
-        "ed25519_verified_ordered_batch_only",
+        ("ledger_signed_batch_fixture", "ed25519_verified_ordered_batch_only"),
         reply.ok,
         reply.protocol_version,
         reply.accepted,
@@ -171,9 +169,8 @@ pub fn decode_signed_transfer_reply(
     let reply: SignedTransferReply = parse_json(response)?;
     check_envelope(
         &reply.kind,
-        "ledger_signed_transfer_fixture",
         &reply.scope,
-        "ed25519_verified_local_transfer_only",
+        ("ledger_signed_transfer_fixture", "ed25519_verified_local_transfer_only"),
         reply.ok,
         reply.protocol_version,
         reply.accepted,
