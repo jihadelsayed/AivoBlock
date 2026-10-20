@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::block_replay::decode_header_v1;
 use crate::ipc::haskell::HaskellValidatorClient;
-use crate::mining::receipts::{canonical_receipt_id_v1, VerifiedWorkReceipt};
+use crate::mining::receipts::{canonical_receipt_id_v1, ReceiptRegistry, VerifiedWorkReceipt};
 use crate::mining::scheduler::WorkRange;
 use crate::storage::ledger_state::{encode_ledger_state, LedgerState};
 use crate::storage::rocksdb::SettlementBatch;
@@ -263,6 +263,7 @@ pub fn execute_reward_haskell(
 pub fn commit_reward_block(
     db: &RocksDbStore,
     core: &HaskellValidatorClient,
+    verifier_registry: &ReceiptRegistry,
     expected_prior: &LedgerState,
     parent_id: &[u8; 32],
     height: u64,
@@ -271,6 +272,9 @@ pub fn commit_reward_block(
     budget: u64,
     works: &[RewardWorkV1],
 ) -> Result<[u8; 32], String> {
+    if works.iter().any(|work| !verifier_registry.contains_verified(&work.receipt)) {
+        return Err("Reward claim has not passed the trusted local work verifier".into());
+    }
     let on_disk = db.read_local_ledger_state()
         .map_err(|e| e.to_string())?.ok_or("Missing initialized ledger")?;
     if &on_disk != expected_prior {
