@@ -12,7 +12,9 @@ use crate::storage::{Column, KeyValueStore, RocksDbStore};
 use crate::transaction_commitment::ledger_state_root_v1;
 
 fn id32(bytes: &[u8]) -> Result<[u8; 32], String> {
-    bytes.try_into().map_err(|_| "Wrong stored block ID length".to_owned())
+    bytes
+        .try_into()
+        .map_err(|_| "Wrong stored block ID length".to_owned())
 }
 
 /// Validate the current local tip against a caller-provided trusted prior
@@ -42,8 +44,10 @@ pub fn replay_stored_tip(
         .get(Column::ChainState, b"height")
         .map_err(|e| format!("Read chain height: {e}"))?
         .ok_or("Missing chain height")?;
-    let height_bytes: [u8; 8] = recorded_height.as_slice()
-        .try_into().map_err(|_| "Corrupt stored chain height")?;
+    let height_bytes: [u8; 8] = recorded_height
+        .as_slice()
+        .try_into()
+        .map_err(|_| "Corrupt stored chain height")?;
     if u64::from_be_bytes(height_bytes) != decoded.header.height {
         return Err("Stored height disagrees with signed block header".into());
     }
@@ -58,8 +62,7 @@ pub fn replay_stored_tip(
         if hash != parent_id {
             return Err("Predecessor header hash mismatch".into());
         }
-        decode_header_v1(&parent_bytes)
-            .map_err(|e| format!("Invalid predecessor header: {e:?}"))?
+        decode_header_v1(&parent_bytes).map_err(|e| format!("Invalid predecessor header: {e:?}"))?
     } else {
         decode_signed_batch_v1(&parent_bytes, &parent_id)
             .map_err(|e| format!("Invalid predecessor batch: {e:?}"))?
@@ -76,13 +79,9 @@ pub fn replay_stored_tip(
 
     // Haskell independently re-verifies Ed25519 envelopes, sequential
     // nonces, funds and fees from the exact decoded stored transactions.
-    let recalculated = execute_signed_batch_haskell(
-        core,
-        trusted_prior,
-        &decoded.transactions,
-    )?;
-    let resulting_root = ledger_state_root_v1(&recalculated)
-        .map_err(|e| format!("Invalid replay state: {e:?}"))?;
+    let recalculated = execute_signed_batch_haskell(core, trusted_prior, &decoded.transactions)?;
+    let resulting_root =
+        ledger_state_root_v1(&recalculated).map_err(|e| format!("Invalid replay state: {e:?}"))?;
     if resulting_root != decoded.header.state_root {
         return Err("Block state root disagrees with Haskell replay".into());
     }
