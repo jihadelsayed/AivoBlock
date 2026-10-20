@@ -66,6 +66,17 @@ pub fn demo() -> Result<(), String> {
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
         let genesis_id = initialize_signed_genesis(&db, &checkpoint, &trusted_key)?;
+        let mut forged_works = works.clone();
+        forged_works[0].receipt.result_commitment[0] ^= 1;
+        if commit_reward_block(
+            &db, &core, &registry, &initial, &genesis_id, 1, 1001,
+            &batch_id, 3, &forged_works,
+        ).is_ok() {
+            return Err("Unverified forged reward claim was accepted".into());
+        }
+        if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(initial.clone()) {
+            return Err("Forged reward claim mutated the genesis state".into());
+        }
         reward_id = commit_reward_block(
             &db, &core, &registry, &initial, &genesis_id, 1, 1001,
             &batch_id, 3, &works,
