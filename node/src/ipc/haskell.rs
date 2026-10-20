@@ -71,9 +71,10 @@ impl HaskellValidatorClient {
             .spawn()?;
 
         let result = (|| {
-            let mut stdin = child.stdin.take().ok_or_else(|| {
-                HaskellIpcError::Io(std::io::Error::other("missing child stdin"))
-            })?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| HaskellIpcError::Io(std::io::Error::other("missing child stdin")))?;
             stdin.write_all(&frame)?;
             drop(stdin);
 
@@ -84,7 +85,9 @@ impl HaskellValidatorClient {
             if let Err(error) = stdout.read_exact(&mut header) {
                 return if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     Err(HaskellIpcError::IncompleteResponse)
-                } else { Err(HaskellIpcError::Io(error)) };
+                } else {
+                    Err(HaskellIpcError::Io(error))
+                };
             }
             let length = u32::from_be_bytes(header) as usize;
             if length == 0 {
@@ -97,7 +100,9 @@ impl HaskellValidatorClient {
             if let Err(error) = stdout.read_exact(&mut response) {
                 return if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     Err(HaskellIpcError::IncompleteResponse)
-                } else { Err(HaskellIpcError::Io(error)) };
+                } else {
+                    Err(HaskellIpcError::Io(error))
+                };
             }
             let mut trailing = [0u8; 1];
             if stdout.read(&mut trailing)? != 0 {
@@ -132,7 +137,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn rejects_request_above_frame_limit_before_spawning() {
         let client = HaskellValidatorClient::new("not-a-real-validator").unwrap();
@@ -145,10 +149,13 @@ mod tests {
 
     #[test]
     fn reports_missing_haskell_executable() {
-        let client = HaskellValidatorClient::new(
-            "aivoblock-haskell-executable-that-does-not-exist"
-        ).unwrap();
-        assert!(matches!(client.exchange(b"{}"), Err(HaskellIpcError::Io(_))));
+        let client =
+            HaskellValidatorClient::new("aivoblock-haskell-executable-that-does-not-exist")
+                .unwrap();
+        assert!(matches!(
+            client.exchange(b"{}"),
+            Err(HaskellIpcError::Io(_))
+        ));
     }
 
     #[test]
