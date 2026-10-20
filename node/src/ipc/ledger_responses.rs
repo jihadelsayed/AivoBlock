@@ -60,7 +60,9 @@ fn check_envelope(
         return Err("Invalid Haskell signed-ledger response envelope".into());
     }
     if !accepted {
-        return Err(format!("Haskell rejected signed ledger transition: {reason}"));
+        return Err(format!(
+            "Haskell rejected signed ledger transition: {reason}"
+        ));
     }
     if reason != "none" {
         return Err("Accepted Haskell result carries a nonempty error reason".into());
@@ -79,21 +81,31 @@ fn parse_json<'a, T: Deserialize<'a>>(response: &'a [u8]) -> Result<T, String> {
 /// Decode only even-length lowercase ASCII hex, never an escaped string,
 /// whitespace or a mix of interpretations of the same encoded bytes.
 fn decode_hex(raw: &str, max_chars: usize) -> Result<Vec<u8>, String> {
-    if raw.is_empty() || raw.len() % 2 != 0 || raw.len() > max_chars
-        || !raw.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    if raw.is_empty()
+        || raw.len() % 2 != 0
+        || raw.len() > max_chars
+        || !raw
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
     {
         return Err("Noncanonical or oversized ledger hex field".into());
     }
-    raw.as_bytes().chunks_exact(2).map(|pair| {
-        let a = (pair[0] as char).to_digit(16).ok_or("Invalid hex")?;
-        let b = (pair[1] as char).to_digit(16).ok_or("Invalid hex")?;
-        Ok(((a << 4) | b) as u8)
-    }).collect::<Result<Vec<_>, &str>>().map_err(str::to_owned)
+    raw.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let a = (pair[0] as char).to_digit(16).ok_or("Invalid hex")?;
+            let b = (pair[1] as char).to_digit(16).ok_or("Invalid hex")?;
+            Ok(((a << 4) | b) as u8)
+        })
+        .collect::<Result<Vec<_>, &str>>()
+        .map_err(str::to_owned)
 }
 
 fn parse_hash(raw: &str) -> Result<[u8; 32], String> {
     let decoded = decode_hex(raw, 64)?;
-    decoded.try_into().map_err(|_| "Commitment must be 32 bytes".into())
+    decoded
+        .try_into()
+        .map_err(|_| "Commitment must be 32 bytes".into())
 }
 
 fn parse_ledger_and_state_root(
@@ -105,8 +117,8 @@ fn parse_ledger_and_state_root(
     let ledger = decode_ledger_state(&bytes)
         .map_err(|e| format!("Noncanonical Haskell ledger snapshot: {e:?}"))?;
     let claimed = parse_hash(&state_root.ok_or("Missing Haskell state commitment")?)?;
-    let calculated = ledger_state_root_v1(&ledger)
-        .map_err(|e| format!("Invalid successor ledger: {e:?}"))?;
+    let calculated =
+        ledger_state_root_v1(&ledger).map_err(|e| format!("Invalid successor ledger: {e:?}"))?;
     if claimed != calculated {
         return Err("Haskell response state commitment mismatch".into());
     }
@@ -122,9 +134,14 @@ pub fn decode_signed_batch_reply(
 ) -> Result<LedgerState, String> {
     let reply: SignedBatchReply = parse_json(response)?;
     check_envelope(
-        &reply.kind, "ledger_signed_batch_fixture",
-        &reply.scope, "ed25519_verified_ordered_batch_only",
-        reply.ok, reply.protocol_version, reply.accepted, &reply.reason,
+        &reply.kind,
+        "ledger_signed_batch_fixture",
+        &reply.scope,
+        "ed25519_verified_ordered_batch_only",
+        reply.ok,
+        reply.protocol_version,
+        reply.accepted,
+        &reply.reason,
     )?;
     if expected_ids.is_empty() || expected_ids.len() > 64 {
         return Err("Unsupported signed-batch transaction count".into());
@@ -153,9 +170,14 @@ pub fn decode_signed_transfer_reply(
 ) -> Result<LedgerState, String> {
     let reply: SignedTransferReply = parse_json(response)?;
     check_envelope(
-        &reply.kind, "ledger_signed_transfer_fixture",
-        &reply.scope, "ed25519_verified_local_transfer_only",
-        reply.ok, reply.protocol_version, reply.accepted, &reply.reason,
+        &reply.kind,
+        "ledger_signed_transfer_fixture",
+        &reply.scope,
+        "ed25519_verified_local_transfer_only",
+        reply.ok,
+        reply.protocol_version,
+        reply.accepted,
+        &reply.reason,
     )?;
     if parse_hash(&reply.transaction_id.ok_or("Missing transfer ID")?)? != *expected_id {
         return Err("Haskell single-transfer ID mismatch".into());
@@ -220,7 +242,7 @@ mod tests {
         let altered = s.replacen(
             r#""accepted":true"#,
             r#""accepted":true,"accepted":false"#,
-            1
+            1,
         );
         assert!(decode_signed_batch_reply(altered.as_bytes(), &[id], &root).is_err());
     }
@@ -231,15 +253,15 @@ mod tests {
         let mut value: Value = serde_json::from_slice(&bytes).unwrap();
         value["accepted"] = json!(false);
         value["reason"] = json!(r#"mock \"accepted\":true and \"ok\":true"#);
-        assert!(decode_signed_batch_reply(
-            &serde_json::to_vec(&value).unwrap(), &[id], &root
-        ).is_err());
+        assert!(
+            decode_signed_batch_reply(&serde_json::to_vec(&value).unwrap(), &[id], &root).is_err()
+        );
         value["accepted"] = json!(true);
         value["reason"] = json!("none");
         value["extra"] = json!({"accepted":true});
-        assert!(decode_signed_batch_reply(
-            &serde_json::to_vec(&value).unwrap(), &[id], &root
-        ).is_err());
+        assert!(
+            decode_signed_batch_reply(&serde_json::to_vec(&value).unwrap(), &[id], &root).is_err()
+        );
     }
 
     #[test]
@@ -261,8 +283,8 @@ mod tests {
             let mut v = original.clone();
             v[field] = changed;
             assert!(
-                decode_signed_batch_reply(&serde_json::to_vec(&v).unwrap(), &[id], &root)
-                    .is_err(), "should reject {field}"
+                decode_signed_batch_reply(&serde_json::to_vec(&v).unwrap(), &[id], &root).is_err(),
+                "should reject {field}"
             );
         }
         assert!(decode_signed_batch_reply(&bytes, &[[5; 32]], &root).is_err());
@@ -272,8 +294,10 @@ mod tests {
     #[test]
     fn rejects_oversized_and_malformed_response() {
         let (bytes, id, root) = fixture_batch();
-        assert!(decode_signed_batch_reply(&vec![32; MAX_IPC_PAYLOAD_BYTES+1], &[id], &root).is_err());
-        assert!(decode_signed_batch_reply(&bytes[..bytes.len()-1], &[id], &root).is_err());
+        assert!(
+            decode_signed_batch_reply(&vec![32; MAX_IPC_PAYLOAD_BYTES + 1], &[id], &root).is_err()
+        );
+        assert!(decode_signed_batch_reply(&bytes[..bytes.len() - 1], &[id], &root).is_err());
         assert!(decode_signed_batch_reply(&[0xff, 0xfe], &[id], &root).is_err());
     }
 
@@ -291,9 +315,9 @@ mod tests {
             Ok(LedgerState::default())
         );
         v["transaction_id"] = json!(hex(&[0; 32]));
-        assert!(decode_signed_transfer_reply(
-            &serde_json::to_vec(&v).unwrap(), &id, &root
-        ).is_err());
+        assert!(
+            decode_signed_transfer_reply(&serde_json::to_vec(&v).unwrap(), &id, &root).is_err()
+        );
         assert!(decode_signed_transfer_reply(&bytes, &id, &root).is_err());
     }
 }
