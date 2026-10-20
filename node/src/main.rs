@@ -17,6 +17,8 @@ mod ipc;
 mod ledger_bridge;
 #[allow(dead_code)]
 mod mining;
+#[allow(dead_code)]
+mod network;
 mod proof_pipeline_v2;
 mod reward_block;
 mod reward_pipeline;
