@@ -309,6 +309,7 @@ rewardEligibilityResponse value =
       when (length workValues > 1024) (fail "Too many work receipts")
       works <- traverse parseRewardWork workValues
       pure (height, works)
+    response :: Bool -> String -> [Contribution] -> BS.ByteString
     response eligible reason entries = BL.toStrict (encode (object
       [ "ok" .= True
       , "type" .= ("reward_eligibility" :: String)
