@@ -65,8 +65,8 @@ pub fn respond_to_challenge(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::tcp::{configure_stream, IO_TIMEOUT};
+    use super::*;
     use std::net::TcpListener;
     use std::thread;
 
@@ -77,9 +77,9 @@ mod tests {
             let (mut connection, _) = listener.accept().unwrap();
             configure_stream(&connection).unwrap();
             let expected = SigningKey::from_bytes(&[expected_key_seed; 32])
-                .verifying_key().to_bytes();
-            accept_authenticated_hello(&mut connection, server_chain, [9; 32], &expected)
-                .is_ok()
+                .verifying_key()
+                .to_bytes();
+            accept_authenticated_hello(&mut connection, server_chain, [9; 32], &expected).is_ok()
         });
         let mut connection = TcpStream::connect_timeout(&addr, IO_TIMEOUT).unwrap();
         configure_stream(&connection).unwrap();
