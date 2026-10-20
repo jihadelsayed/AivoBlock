@@ -135,7 +135,10 @@ pub fn decode_signed_batch_reply(
     check_envelope(
         &reply.kind,
         &reply.scope,
-        ("ledger_signed_batch_fixture", "ed25519_verified_ordered_batch_only"),
+        (
+            "ledger_signed_batch_fixture",
+            "ed25519_verified_ordered_batch_only",
+        ),
         reply.ok,
         reply.protocol_version,
         reply.accepted,
@@ -170,7 +173,10 @@ pub fn decode_signed_transfer_reply(
     check_envelope(
         &reply.kind,
         &reply.scope,
-        ("ledger_signed_transfer_fixture", "ed25519_verified_local_transfer_only"),
+        (
+            "ledger_signed_transfer_fixture",
+            "ed25519_verified_local_transfer_only",
+        ),
         reply.ok,
         reply.protocol_version,
         reply.accepted,
