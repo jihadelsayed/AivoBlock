@@ -158,6 +158,28 @@ pub fn compute_transfer_via_haskell(
     Ok(next)
 }
 
+fn signed_block_header(
+    height: u64,
+    parent_hash: [u8; 32],
+    transfer: &SignedTransferV1,
+    state: &LedgerState,
+) -> Result<CommittedHeaderV1, String> {
+    let identifier = signed_transaction_id_v1(transfer)
+        .map_err(|error| format!("Transaction ID: {error:?}"))?;
+    Ok(CommittedHeaderV1 {
+        version: 1,
+        chain_id: 1,
+        height,
+        parent_hash,
+        transactions_root: transaction_root_v1(&[identifier])
+            .map_err(|error| format!("Merkle root: {error:?}"))?,
+        puzzle_proofs_root: [0; 32],
+        state_root: ledger_state_root_v1(state)
+            .map_err(|error| format!("State root: {error:?}"))?,
+        timestamp_ms: 1000 + height,
+    })
+}
+
 /// End-to-end fixture: Haskell computes each successor, Rust atomically
 /// stores the typed result and reloads it from RocksDB after process reopen.
 pub fn demo() -> Result<(), String> {
@@ -188,23 +210,40 @@ pub fn demo() -> Result<(), String> {
         },
     );
 
+    // Trusted fixed genesis allocation is still a fixture, but its stored
+    // identifier now hashes the actual canonical header and state root.
+    let genesis_header = CommittedHeaderV1 {
+        version: 1,
+        chain_id: 1,
+        height: 0,
+        parent_hash: [0; 32],
+        transactions_root: transaction_root_v1(&[])
+            .map_err(|error| format!("Empty transactions: {error:?}"))?,
+        puzzle_proofs_root: [0; 32],
+        state_root: ledger_state_root_v1(&initial)
+            .map_err(|error| format!("Genesis state root: {error:?}"))?,
+        timestamp_ms: 1000,
+    };
+    let genesis_bytes = canonical_header_v1(&genesis_header)
+        .map_err(|error| format!("Genesis encoding: {error:?}"))?;
+    let genesis_id: [u8; 32] = Sha256::digest(genesis_bytes).into();
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
-        db.append_atomic_ledger_block(&[1; 32], &[0; 32], 0, b"fixture-genesis", &initial, None)
-            .map_err(|e| format!("Genesis commit: {e}"))?;
+        db.append_atomic_ledger_block(
+            &genesis_id, &[0; 32], 0, &genesis_bytes, &initial, None
+        ).map_err(|e| format!("Genesis commit: {e}"))?;
     }
     let after_first;
+    let first_id;
+    let second_id;
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
         let prior = db
             .read_local_ledger_state()
             .map_err(|e| e.to_string())?
             .ok_or("Missing durable genesis")?;
-        after_first = compute_transfer_via_haskell(
-            &core,
-            &prior,
-            fixture_transfer(&fixture_key, bob, 10, 2, 0),
-        )?;
+        let first_transfer = fixture_transfer(&fixture_key, bob, 10, 2, 0);
+        after_first = compute_transfer_via_haskell(&core, &prior, first_transfer)?;
         if after_first.fee_pool != 2
             || after_first
                 .accounts
@@ -215,15 +254,10 @@ pub fn demo() -> Result<(), String> {
         {
             return Err("Haskell transfer #1 returned unexpected balances".to_owned());
         }
-        db.append_atomic_ledger_block(
-            &[3; 32],
-            &[1; 32],
-            1,
-            b"fixture-transfer-1",
-            &after_first,
-            None,
-        )
-        .map_err(|e| format!("First atomic ledger commit: {e}"))?;
+        let header = signed_block_header(1, genesis_id, &first_transfer, &after_first)?;
+        first_id = commit_signed_transfer_block(
+            &db, &header, &first_transfer, &prior, &after_first
+        ).map_err(|e| format!("First committed ledger transfer: {e:?}"))?;
 
         // An invalid nonce or overspend must be rejected by Haskell; neither
         // request may change the already-persisted chain state.
@@ -272,19 +306,31 @@ pub fn demo() -> Result<(), String> {
         if prior != after_first {
             return Err("Recovered ledger mismatch after reopen".to_owned());
         }
-        let next = compute_transfer_via_haskell(
-            &core,
-            &prior,
-            fixture_transfer(&fixture_key, bob, 5, 1, 1),
-        )?;
+        let second_transfer = fixture_transfer(&fixture_key, bob, 5, 1, 1);
+        let next = compute_transfer_via_haskell(&core, &prior, second_transfer)?;
         if next.fee_pool != 3
             || next.accounts.get(&alice).map(|x| (x.balance, x.nonce)) != Some((82, 2))
             || next.accounts.get(&bob).map(|x| x.balance) != Some(15)
         {
             return Err("Haskell transfer #2 returned unexpected balances".to_owned());
         }
-        db.append_atomic_ledger_block(&[4; 32], &[3; 32], 2, b"fixture-transfer-2", &next, None)
-            .map_err(|e| format!("Second atomic ledger commit: {e}"))?;
+        let header = signed_block_header(2, first_id, &second_transfer, &next)?;
+        let mut forged = header;
+        forged.transactions_root = [8; 32];
+        if commit_signed_transfer_block(&db, &forged, &second_transfer, &prior, &next).is_ok() {
+            return Err("Forged transaction root unexpectedly committed".to_owned());
+        }
+        forged = header;
+        forged.state_root = [8; 32];
+        if commit_signed_transfer_block(&db, &forged, &second_transfer, &prior, &next).is_ok() {
+            return Err("Forged state root unexpectedly committed".to_owned());
+        }
+        if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(prior.clone()) {
+            return Err("Rejected block commitment unexpectedly changed ledger".to_owned());
+        }
+        second_id = commit_signed_transfer_block(
+            &db, &header, &second_transfer, &prior, &next
+        ).map_err(|e| format!("Second committed ledger transfer: {e:?}"))?;
     }
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
@@ -298,16 +344,16 @@ pub fn demo() -> Result<(), String> {
             || db
                 .get(Column::ChainState, b"tip")
                 .map_err(|e| e.to_string())?
-                != Some(vec![4; 32])
+                != Some(second_id.to_vec())
         {
             return Err("Atomic Haskell ledger state not recovered".to_owned());
         }
     }
     std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
-    println!("Haskell-computed transfer -> atomic RocksDB persistence: PASS");
+    println!("Haskell transfer -> canonical tx ID/root -> state root -> atomic block: PASS");
     println!("Two transfers: alice=82, bob=15, fee pool=3; total funds=100");
     println!("Rejected nonce/overspend: PASS; reopen and state recovery: PASS");
-    println!("Ed25519 signature, owner and chain checks: PASS (Rust + Haskell)");
+    println!("Ed25519 ownership, transaction Merkle roots and state roots: PASS");
     println!("Scope: local signed fixture; no validator consensus or real payments");
     Ok(())
 }
