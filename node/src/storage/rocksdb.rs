@@ -191,7 +191,7 @@ impl RocksDbStore {
         if *batch_id == [0; 32]
             || receipt_ids.is_empty()
             || settlement_response.is_empty()
-            || receipt_ids.iter().any(|id| *id == [0; 32])
+            || receipt_ids.contains(&[0; 32])
         {
             return Err(StorageError::InvalidSettlementRecord);
         }
