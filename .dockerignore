@@ -1,0 +1,9 @@
+.git
+**/target
+**/dist-newstyle
+**/__pycache__
+**/*.egg-info
+**/.venv
+**/.pytest_cache
+testnet/generated
+node/*-demo-data

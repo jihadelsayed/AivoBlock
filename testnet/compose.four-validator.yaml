@@ -1,0 +1,79 @@
+# AivoBlock private research testnet: four validators with equal power.
+# Quorum is 3 of 4 (strictly more than two thirds), so the network keeps
+# finalizing with one validator crashed, including the round leader.
+#
+# Generated keys/config come from `python3 scripts/testnet.py init`; the
+# harness sets AIVOBLOCK_TESTNET_DIR and AIVOBLOCK_AUTHORITY_PUBLIC_KEY.
+# PRIVATE TESTNET ONLY: no real funds, no public exposure (no host ports).
+
+x-node: &node
+  image: ${AIVOBLOCK_IMAGE:-aivoblock-node:testnet}
+  command: ["run"]
+  restart: "no"
+  stop_grace_period: 5s
+  networks: [aivoblock-testnet]
+  healthcheck:
+    test: ["CMD", "aivoblock-node", "client", "status"]
+    interval: 5s
+    timeout: 5s
+    retries: 20
+
+x-env: &env
+  AIVOBLOCK_CONFIG: /config/network.json
+  AIVOBLOCK_KEY_DIR: /keys
+  AIVOBLOCK_AUTHORITY_PUBLIC_KEY: ${AIVOBLOCK_AUTHORITY_PUBLIC_KEY:?run scripts/testnet.py init first}
+
+services:
+  node-1:
+    <<: *node
+    hostname: node-1
+    environment:
+      <<: *env
+      AIVOBLOCK_NODE_NAME: node-1
+    volumes:
+      - ${AIVOBLOCK_TESTNET_DIR:?set by scripts/testnet.py}/public:/config:ro
+      - ${AIVOBLOCK_TESTNET_DIR}/node-1:/keys:ro
+      - node1-data:/var/lib/aivoblock
+
+  node-2:
+    <<: *node
+    hostname: node-2
+    environment:
+      <<: *env
+      AIVOBLOCK_NODE_NAME: node-2
+    volumes:
+      - ${AIVOBLOCK_TESTNET_DIR}/public:/config:ro
+      - ${AIVOBLOCK_TESTNET_DIR}/node-2:/keys:ro
+      - node2-data:/var/lib/aivoblock
+
+  node-3:
+    <<: *node
+    hostname: node-3
+    environment:
+      <<: *env
+      AIVOBLOCK_NODE_NAME: node-3
+    volumes:
+      - ${AIVOBLOCK_TESTNET_DIR}/public:/config:ro
+      - ${AIVOBLOCK_TESTNET_DIR}/node-3:/keys:ro
+      - node3-data:/var/lib/aivoblock
+
+  node-4:
+    <<: *node
+    hostname: node-4
+    environment:
+      <<: *env
+      AIVOBLOCK_NODE_NAME: node-4
+    volumes:
+      - ${AIVOBLOCK_TESTNET_DIR}/public:/config:ro
+      - ${AIVOBLOCK_TESTNET_DIR}/node-4:/keys:ro
+      - node4-data:/var/lib/aivoblock
+
+networks:
+  aivoblock-testnet:
+    driver: bridge
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:

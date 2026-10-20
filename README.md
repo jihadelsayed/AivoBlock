@@ -4,7 +4,7 @@
 
 AivoBlock is an experimental decentralized blockchain backend. Its goal is to divide useful AI workloads among participating workers, verify submitted results, and record accepted work through a custom ledger and consensus protocol.
 
-> **Development status:** Early research prototype. The repository contains initial types, local scheduling, validation helpers, and tests. It does **not** yet run a functioning P2P blockchain, mine blocks, establish consensus, or provide secure proof of useful AI work.
+> **Development status:** Research prototype with a working **private Docker testnet** ([guide](docs/testnet.md)): authenticated nodes distribute a deterministic AI task across workers, every validator independently recomputes the results, a > 2/3 validator quorum finalizes the block, and native Sayed Token rewards are settled and recovered after restart. It is **not** a public network, and it does **not** cryptographically or succinctly prove arbitrary AI computation: verification is full recomputation of a small integer workload.
 
 ## What makes AivoBlock different?
 
@@ -16,7 +16,7 @@ AivoBlock investigates whether blockchain participants can contribute **useful A
 
 A correct AI result does **not**, by itself, provide Byzantine fault tolerance, finality, or Sybil resistance. These are active protocol design challenges.
 
-AivoBlock is a **new blockchain**, not an integration with Ethereum or another chain. **Sayed Token** is the intended native ledger asset; the final supply, issuance, and compatibility rules are not yet specified. This project does not propose an additional token.
+AivoBlock is a **new blockchain**, not an integration with Ethereum or another chain. **Sayed Token** is the native ledger asset. The testnet uses a genesis-bound, capped halving issuance schedule ([spec](protocol/spec/sayed-token-issuance-v1.md)) whose parameters are illustrative, not a final economic design. This project does not propose an additional token.
 
 ## Technology stack
 
@@ -26,7 +26,7 @@ AivoBlock is a **new blockchain**, not an integration with Ethereum or another c
 | Node runtime | Rust, Cargo | Local node operation, planned P2P, RocksDB persistence, IPC |
 | AI engine | Python | Puzzle workloads, deterministic inference, proof commitments |
 | Transport contracts | Protocol Buffers | Versioned messages between nodes and components |
-| Local test environment | Docker Compose | Three isolated node configurations |
+| Private testnet | Docker Compose | Three-node and four-validator networks with an end-to-end harness |
 | Automated checks | GitHub Actions | Python, Haskell, Rust and Protobuf jobs |
 
 No central PostgreSQL or FastAPI service is required.
@@ -83,21 +83,23 @@ cargo test
 cargo run -- status
 ```
 
-**Docker diagnostic containers** (from the repository root):
+**Private testnet** (Docker + Python 3.11; builds Haskell, Rust and Python inside the image):
 
 ```bash
-docker compose up --build
+python3 scripts/testnet.py all
 ```
 
-The Compose services currently print diagnostic status and exit. They do **not** establish a network. See [development instructions](docs/development.md) for installation details and caveats.
+This runs the three-node end-to-end demonstration and the four-validator fault-tolerance scenario and verifies every balance independently. See the [testnet guide](docs/testnet.md) for what is checked, results and limitations, and [development instructions](docs/development.md) for native builds.
 
 ## Design documents
 
+- [Private testnet](docs/testnet.md) — architecture diagrams, commands, verified behavior, limitations.
 - [Architecture](docs/architecture.md) — components, node responsibilities, and trust boundaries.
 - [Mining](docs/mining.md) — intended collaborative AI work lifecycle.
 - [Consensus draft](protocol/spec/consensus.md) — initial validator model and open protocol questions.
 - [Puzzle rules](protocol/spec/puzzle-rules.md) — deterministic integer inference prototype and verification.
 - [Canonical encoding draft](protocol/spec/canonical-encoding.md) — byte encodings and cross-language consistency requirements.
+- [AI-work block V3](protocol/spec/ai-work-block-v3.md), [testnet consensus](protocol/spec/testnet-consensus-v1.md), [Sayed Token issuance](protocol/spec/sayed-token-issuance-v1.md).
 
 ## Roadmap
 
@@ -108,16 +110,16 @@ The Compose services currently print diagnostic status and exit. They do **not**
 5. **Native rewards:** Sayed Token accounting for verified contributions.
 6. **Private testnet:** multi-node testing, adversarial checks and performance measurement.
 
-**First milestone:** Three independent nodes collaboratively compute a puzzle, independently verify contributions, agree on a valid block, and record rewards. This is a research goal, **not functionality that currently works**.
+**First milestone (reached on the private testnet):** three independent nodes collaboratively compute a puzzle, independently verify contributions, agree on a valid block, and record rewards; a four-validator network tolerates one crashed validator. Open problems: succinct verification of real AI workloads, permissionless validator selection, encrypted transport, a fee market.
 
 ## Security and project limitations
 
-- AI result hashes are commitments, not proofs of correctness.
-- Prototype proof verification may require full recomputation.
+- AI result hashes are commitments; correctness is established only by full recomputation of the small integer workload.
 - The private-testnet validator model is permissioned; permissionless Sybil resistance remains unresolved.
-- Consensus-critical encodings and signature rules are not finalized.
+- The P2P transport authenticates peers at handshake but is not encrypted.
+- Consensus-critical encodings and signature rules are versioned research formats, not finalized standards.
 - Do not use this prototype to protect real funds or deploy a public mainnet.
-- Build and test results have not yet been independently verified across all components.
+- Build, test and testnet results are produced by CI; see the testnet guide for the latest verified run.
 
 ## License
 MIT

@@ -1,39 +1,66 @@
-# AivoBlock Rust node container — prototype diagnostics only.
-# Build from repository root:
-#   docker build -f docker/Dockerfile.node -t aivoblock-node .
+# AivoBlock private-testnet node image: Rust node + Haskell ledger core +
+# Python AI worker. Build from the repository root:
+#   docker build -f docker/Dockerfile.node -t aivoblock-node:testnet .
 #
-# The Rust CLI currently reports status; P2P, Haskell validation,
-# and Python worker orchestration are not connected yet.
+# PRIVATE RESEARCH TESTNET ONLY. Never use for real funds or a public network.
 
-FROM rust:1.85-bookworm AS builder
-WORKDIR /build
+# --- Haskell ledger core (aivoblock-core) ---------------------------------
+FROM haskell:9.6.7-slim-bullseye AS core-builder
+WORKDIR /build/core
+COPY core/aivoblock-core.cabal core/cabal.project ./
+RUN for attempt in 1 2 3 4; do cabal update && break; sleep $((attempt * 5)); done \
+    && cabal build --disable-tests --only-dependencies all
+COPY core/ ./
+# Copy the binary plus every non-glibc shared library it links (GMP, FFI),
+# so it runs unchanged on the Debian bookworm runtime image.
+RUN cabal build --disable-tests exe:aivoblock-core \
+    && mkdir -p /out/lib \
+    && cp "$(cabal list-bin --disable-tests exe:aivoblock-core)" /out/aivoblock-core \
+    && ldd /out/aivoblock-core | awk '/=> \// {print $3}' \
+       | grep -Ev '/(libc|libm|libdl|librt|libpthread|ld-linux[^/]*)\.so' \
+       | xargs -r -I{} cp -L {} /out/lib/ \
+    && (strip /out/aivoblock-core || true)
 
-# Native build dependencies for the RocksDB Rust crate.
+# --- Rust node --------------------------------------------------------------
+FROM rust:1.85-bookworm AS node-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang libclang-dev cmake pkg-config libsnappy-dev \
     && rm -rf /var/lib/apt/lists/*
-
-COPY node/ ./node/
 WORKDIR /build/node
+COPY node/ ./
 RUN cargo build --release
 
-FROM debian:bookworm-slim
+# --- Runtime ------------------------------------------------------------------
+FROM python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libstdc++6 libgcc-s1 \
+    ca-certificates libgmp10 libstdc++6 libgcc-s1 tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 aivoblock \
     && mkdir -p /var/lib/aivoblock \
     && chown aivoblock:aivoblock /var/lib/aivoblock
 
-COPY --from=builder /build/node/target/release/aivoblock-node /usr/local/bin/aivoblock-node
+COPY ai-engine/ /opt/aivoblock/ai-engine/
+RUN pip install --no-cache-dir /opt/aivoblock/ai-engine
+
+COPY --from=core-builder /out/aivoblock-core /opt/aivoblock/core/aivoblock-core.bin
+COPY --from=core-builder /out/lib/ /opt/aivoblock/core/lib/
+COPY docker/aivoblock-core.sh /usr/local/bin/aivoblock-core
+COPY --from=node-builder /build/node/target/release/aivoblock-node /usr/local/bin/aivoblock-node
+RUN chmod 0755 /usr/local/bin/aivoblock-core \
+    && /usr/local/bin/aivoblock-core --version \
+    && /usr/local/bin/aivoblock-node --version
+
+ENV AIVOBLOCK_HASKELL_EXECUTABLE=/usr/local/bin/aivoblock-core \
+    AIVOBLOCK_PYTHON_EXECUTABLE=python3 \
+    AIVOBLOCK_PYTHON_WORKER=/opt/aivoblock/ai-engine/src/aivoblock_ai/worker.py \
+    AIVOBLOCK_DATA_DIR=/var/lib/aivoblock \
+    AIVOBLOCK_P2P_LISTEN=0.0.0.0:30333 \
+    AIVOBLOCK_CONTROL_LISTEN=127.0.0.1:30334
 
 USER aivoblock
 WORKDIR /home/aivoblock
-ENV AIVOBLOCK_DATA_DIR=/var/lib/aivoblock
 VOLUME ["/var/lib/aivoblock"]
-
-# Reserved for the future P2P transport. The current CLI doesn't listen.
 EXPOSE 30333/tcp
 
-ENTRYPOINT ["/usr/local/bin/aivoblock-node"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/aivoblock-node"]
 CMD ["status"]
