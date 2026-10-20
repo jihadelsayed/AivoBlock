@@ -15,7 +15,7 @@ use crate::genesis_checkpoint::{
     replay_chain_from_signed_checkpoint, SignedGenesisCheckpointV1,
 };
 use crate::ipc::haskell::HaskellValidatorClient;
-use crate::reward_block::{commit_reward_block, RewardWorkV1};
+use crate::reward_block::{commit_reward_block, RewardBlockInput, RewardWorkV1};
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
 use crate::transaction_commitment::{
     canonical_header_v1, ledger_state_root_v1, transaction_root_v1, CommittedHeaderV1,
@@ -92,13 +92,15 @@ pub fn demo() -> Result<(), String> {
             &db,
             &core,
             &registry,
-            &initial,
-            &genesis_id,
-            1,
-            1001,
-            &batch_id,
-            3,
-            &forged_works,
+            RewardBlockInput {
+                expected_prior: &initial,
+                parent_id: &genesis_id,
+                height: 1,
+                timestamp_ms: 1001,
+                batch_id: &batch_id,
+                budget: 3,
+                works: &forged_works,
+            },
         )
         .is_ok()
         {
@@ -111,13 +113,15 @@ pub fn demo() -> Result<(), String> {
             &db,
             &core,
             &registry,
-            &initial,
-            &genesis_id,
-            1,
-            1001,
-            &batch_id,
-            3,
-            &works,
+            RewardBlockInput {
+                expected_prior: &initial,
+                parent_id: &genesis_id,
+                height: 1,
+                timestamp_ms: 1001,
+                batch_id: &batch_id,
+                budget: 3,
+                works: &works,
+            },
         )?;
         expected = db
             .read_local_ledger_state()
@@ -146,13 +150,15 @@ pub fn demo() -> Result<(), String> {
                 &db,
                 &core,
                 &registry,
-                &expected,
-                &reward_id,
-                2,
-                1002,
-                &proposed_batch,
-                1,
-                &works,
+                RewardBlockInput {
+                    expected_prior: &expected,
+                    parent_id: &reward_id,
+                    height: 2,
+                    timestamp_ms: 1002,
+                    batch_id: &proposed_batch,
+                    budget: 1,
+                    works: &works,
+                },
             )
             .is_ok()
             {
