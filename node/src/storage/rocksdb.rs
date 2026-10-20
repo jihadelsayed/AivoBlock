@@ -45,7 +45,9 @@ impl fmt::Display for StorageError {
             Self::DuplicateRewardBatch => write!(f, "reward batch already persisted"),
             Self::AlreadyPaidReceipt => write!(f, "reward receipt already persisted"),
             Self::InvalidLedgerTransition => write!(f, "invalid local ledger state transition"),
-            Self::IncompatibleStorageMode => write!(f, "cannot mix legacy storage with atomic ledger blocks"),
+            Self::IncompatibleStorageMode => {
+                write!(f, "cannot mix legacy storage with atomic ledger blocks")
+            }
             Self::Database(err) => write!(f, "RocksDB error: {err}"),
         }
     }
@@ -316,8 +318,8 @@ impl RocksDbStore {
                 if digest.as_ref() != expected {
                     return Err(StorageError::CorruptChainState);
                 }
-                let decoded = decode_ledger_state(&state)
-                    .map_err(|_| StorageError::CorruptChainState)?;
+                let decoded =
+                    decode_ledger_state(&state).map_err(|_| StorageError::CorruptChainState)?;
                 Ok(Some(decoded))
             }
             _ => Err(StorageError::CorruptChainState),
@@ -389,8 +391,8 @@ impl RocksDbStore {
                 if digest.as_ref() != expected {
                     return Err(StorageError::CorruptChainState);
                 }
-                let state = decode_ledger_state(&snapshot)
-                    .map_err(|_| StorageError::CorruptChainState)?;
+                let state =
+                    decode_ledger_state(&snapshot).map_err(|_| StorageError::CorruptChainState)?;
                 Some(state)
             }
             _ => return Err(StorageError::IncompatibleStorageMode),
@@ -462,8 +464,8 @@ impl RocksDbStore {
             }
         }
 
-        let snapshot = encode_ledger_state(post_state)
-            .map_err(|_| StorageError::InvalidLedgerTransition)?;
+        let snapshot =
+            encode_ledger_state(post_state).map_err(|_| StorageError::InvalidLedgerTransition)?;
         let digest: [u8; 32] = Sha256::digest(&snapshot).into();
         let mut writes = WriteBatch::default();
         writes.put(block_key, block_bytes);
