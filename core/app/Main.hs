@@ -711,10 +711,10 @@ handleIpcRequest request
                     Nothing -> case settlementRequest value of
                       Just result -> Just result
                       Nothing -> case ledgerBatchRequest value of
-                      Just result -> Just result
-                      Nothing -> case ledgerTransitionRequest value of
                         Just result -> Just result
-                        Nothing -> dynamicRequest request)
+                        Nothing -> case ledgerTransitionRequest value of
+                          Just result -> Just result
+                          Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
