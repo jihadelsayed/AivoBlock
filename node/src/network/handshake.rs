@@ -41,17 +41,22 @@ pub fn verify_hello(
     if challenge != *expected_challenge {
         return Err("Unrecognized handshake challenge");
     }
-    let verifying_key = VerifyingKey::from_bytes(&public_key)
-        .map_err(|_| "Invalid peer public key")?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&public_key).map_err(|_| "Invalid peer public key")?;
     let signature_bytes: [u8; 64] = message[72..136].try_into().unwrap();
     let signature = Signature::from_bytes(&signature_bytes);
     let mut preimage = Vec::with_capacity(DOMAIN.len() + 72);
     preimage.extend_from_slice(DOMAIN);
     preimage.extend_from_slice(&message[..72]);
-    verifying_key.verify(&preimage, &signature)
+    verifying_key
+        .verify(&preimage, &signature)
         .map_err(|_| "Invalid peer hello signature")?;
     let peer_id: [u8; 32] = Sha256::digest(public_key).into();
-    Ok(VerifiedHello { peer_id, public_key, challenge })
+    Ok(VerifiedHello {
+        peer_id,
+        public_key,
+        challenge,
+    })
 }
 
 #[cfg(test)]
