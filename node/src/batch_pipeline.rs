@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::batch_commitment::{
     commit_verified_batch_block, verify_stored_batch_block, MAX_SIGNED_BLOCK_TRANSFERS,
 };
+use crate::batch_replay::replay_stored_tip;
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state, LedgerState};
 use crate::storage::{Column, KeyValueStore, LocalAccount, RocksDbStore};
@@ -288,6 +289,36 @@ pub fn demo() -> Result<(), String> {
             .ok_or("Missing stored block")?;
         verify_stored_batch_block(&block, &block_id, &block_header, &batch, &computed)
             .map_err(|e| format!("Stored block invalid: {e:?}"))?;
+        // Unlike the older test above, this audit starts from the BLOCK
+        // BYTES ON DISK, not the transaction list originally passed to
+        // the encoder. It then independently reruns Haskell's ledger rules.
+        let reconstructed = replay_stored_tip(&db, &core, &genesis)?;
+        if reconstructed != computed {
+            return Err("Independent stored-block replay gave different balances".into());
+        }
+        let mut wrong_prior = genesis.clone();
+        wrong_prior.fee_pool = 1;
+        if replay_stored_tip(&db, &core, &wrong_prior).is_ok() {
+            return Err("Accepted predecessor state not committed by parent".into());
+        }
+
+        // Deliberately corrupt the on-disk signed body; read-only replay
+        // MUST refuse to trust it. Restore the fixture after the test.
+        let mut corrupted = block.clone();
+        *corrupted.last_mut().ok_or("Empty stored body")? ^= 1;
+        db.put(Column::Blocks, &block_id, &corrupted)
+            .map_err(|e| format!("Corrupt test block: {e}"))?;
+        if replay_stored_tip(&db, &core, &genesis).is_ok() {
+            return Err("Corrupted signed block was accepted by replay".into());
+        }
+        db.put(Column::Blocks, &block_id, &block)
+            .map_err(|e| format!("Restore test block: {e}"))?;
+        if db.read_local_ledger_state().map_err(|e| e.to_string())?
+            != Some(computed.clone())
+        {
+            return Err("Failed replay unexpectedly mutated the ledger".into());
+        }
+
         if db
             .get(Column::ChainState, b"tip")
             .map_err(|e| e.to_string())?
@@ -301,6 +332,8 @@ pub fn demo() -> Result<(), String> {
     println!("Alice 82; Bob 15; fee pool 3; nonce 2; supply 100");
     println!("Duplicate, reordered, overspend and tampered batch rejection: PASS");
     println!("Atomic RocksDB reopen and signed block body verification: PASS");
+    println!("Decode-on-disk + Haskell replay + predecessor check: PASS");
+    println!("Tampered stored signature and wrong prior ledger: REJECTED");
     println!("Scope: synthetic genesis; no validator consensus or real payments");
     Ok(())
 }
