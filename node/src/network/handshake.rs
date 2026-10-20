@@ -1,7 +1,7 @@
 //! Bounded, signed peer-hello primitive. NOT a TCP transport or an authenticated
 //! session: callers must enforce fresh challenges, deadlines and replay protection
 //! before using a verified identity to admit a network peer.
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 const DOMAIN: &[u8] = b"AIVOBLOCK-PEER-HELLO-V1\0";
@@ -59,10 +59,31 @@ pub fn verify_hello(
     })
 }
 
+/// Build the signed hello answering a peer's challenge (inverse of
+/// `verify_hello`). The challenge must come from the peer for this session.
+pub fn sign_hello(chain_id: u32, key: &SigningKey, challenge: &[u8; 32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HELLO_BYTES);
+    bytes.extend_from_slice(&HELLO_VERSION.to_be_bytes());
+    bytes.extend_from_slice(&chain_id.to_be_bytes());
+    bytes.extend_from_slice(&key.verifying_key().to_bytes());
+    bytes.extend_from_slice(challenge);
+    let mut preimage = DOMAIN.to_vec();
+    preimage.extend_from_slice(&bytes);
+    bytes.extend_from_slice(&key.sign(&preimage).to_bytes());
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn sign_hello_is_accepted_by_verify_hello() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let hello = sign_hello(1, &key, &[5; 32]);
+        assert_eq!(hello, signed_hello(1, [5; 32]));
+        assert!(verify_hello(&hello, 1, &[5; 32]).is_ok());
+    }
 
     fn signed_hello(chain: u32, challenge: [u8; 32]) -> Vec<u8> {
         let key = SigningKey::from_bytes(&[7; 32]);

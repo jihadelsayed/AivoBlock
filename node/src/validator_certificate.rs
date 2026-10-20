@@ -37,7 +37,7 @@ pub struct QuorumCertificateV1 {
     pub votes: Vec<SignedPrecommitV1>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TrustedValidatorSetV1 {
     members: BTreeMap<[u8; 32], u64>,
     total_power: u64,

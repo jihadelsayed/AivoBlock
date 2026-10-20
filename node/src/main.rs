@@ -3,7 +3,7 @@
 //! The `ai-health` command is the first local Rust <-> Python IPC
 //! integration. No blockchain network is started by these commands.
 
-#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
+#[allow(dead_code)] // Some encoders are only exercised by tests and the testnet client.
 mod ai_block_v3;
 mod ai_pipeline;
 mod ai_proof_v2;
@@ -16,7 +16,7 @@ mod genesis_checkpoint;
 #[allow(dead_code)]
 // IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
-#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
+#[allow(dead_code)] // Policy helpers are shared by the runtime and cross-language tests.
 mod issuance;
 mod ledger_bridge;
 #[allow(dead_code)]
@@ -26,13 +26,13 @@ mod network;
 mod proof_pipeline_v2;
 mod reward_block;
 mod reward_pipeline;
-#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
 mod settlement_v3;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
+mod testnet;
 mod transaction_auth;
 mod transaction_commitment;
-#[allow(dead_code)] // Vote/certificate codecs are wired into the testnet runtime next.
+#[allow(dead_code)] // Audit helpers are retained for the V2 diagnostic pipeline.
 mod validator_certificate;
 
 use sha2::{Digest, Sha256};
@@ -85,6 +85,10 @@ fn print_help() {
            validated-storage-demo Check JSON block structure before saving a fixture\n\
            header-hash  Verify Rust canonical header SHA-256 test vector\n\
            two-block-demo  Test two-block RocksDB parent/height continuity\n\
+           testnet-init --out DIR [--validators N]  Generate a private testnet\n\
+           run          Run a private-testnet node (AIVOBLOCK_* environment)\n\
+           client SUB   status|submit-task|wait-height|adversarial|probe-unauthorized\n\
+           bench        Verifier, settlement and quorum-certificate benchmarks\n\
            --version    Display package version\n\
            --help       Display this help"
     );
@@ -95,8 +99,8 @@ fn print_status() {
     println!("Status: Initial development");
     println!("Core validation: Haskell (diagnostic IPC via core-health; validation not connected)");
     println!("AI puzzle worker: Python (health IPC available via ai-health)");
-    println!("P2P networking: Not implemented");
-    println!("Persistent ledger: Not implemented");
+    println!("P2P networking: authenticated TCP private testnet (use the run command)");
+    println!("Persistent ledger: RocksDB finalized chain with restart replay");
     println!("No node has been started.");
 }
 
@@ -638,6 +642,10 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "validated-storage-demo" => validated_storage_demo(),
         [command] if command == "header-hash" => header_hash_demo(),
         [command] if command == "two-block-demo" => two_block_demo(),
+        [command, rest @ ..] if command == "run" => testnet::cli::run_command(rest),
+        [command, rest @ ..] if command == "testnet-init" => testnet::cli::init_command(rest),
+        [command, rest @ ..] if command == "client" => testnet::cli::client_command(rest),
+        [command, rest @ ..] if command == "bench" => testnet::bench::bench_command(rest),
         [command] if command == "--help" || command == "-h" => {
             print_help();
             Ok(())
