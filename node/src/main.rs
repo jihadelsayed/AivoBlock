@@ -4,9 +4,11 @@
 //! integration. No blockchain network is started by these commands.
 
 mod ai_pipeline;
+#[allow(dead_code)] // IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
 #[allow(dead_code)]
 mod mining;
+#[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
 
 use sha2::{Digest, Sha256};
