@@ -43,9 +43,9 @@ pub fn genesis_checkpoint_signing_bytes_v1(
     header_bytes: &[u8; 178],
     state: &LedgerState,
 ) -> Result<Vec<u8>, GenesisCheckpointError> {
-    let header = decode_header_v1(header_bytes).map_err(|_| GenesisCheckpointError::InvalidHeader)?;
-    let empty_root =
-        transaction_root_v1(&[]).map_err(|_| GenesisCheckpointError::InvalidHeader)?;
+    let header =
+        decode_header_v1(header_bytes).map_err(|_| GenesisCheckpointError::InvalidHeader)?;
+    let empty_root = transaction_root_v1(&[]).map_err(|_| GenesisCheckpointError::InvalidHeader)?;
     let state_root =
         ledger_state_root_v1(state).map_err(|_| GenesisCheckpointError::InvalidGenesisState)?;
     if header.version != 1
@@ -63,8 +63,8 @@ pub fn genesis_checkpoint_signing_bytes_v1(
     if bytes.len() > MAX_CHECKPOINT_STATE_BYTES {
         return Err(GenesisCheckpointError::OversizedSnapshot);
     }
-    let count = u32::try_from(bytes.len())
-        .map_err(|_| GenesisCheckpointError::OversizedSnapshot)?;
+    let count =
+        u32::try_from(bytes.len()).map_err(|_| GenesisCheckpointError::OversizedSnapshot)?;
     let mut payload = Vec::with_capacity(GENESIS_DOMAIN.len() + 178 + 4 + bytes.len());
     payload.extend_from_slice(GENESIS_DOMAIN);
     payload.extend_from_slice(header_bytes);
@@ -188,13 +188,23 @@ mod tests {
     fn rejects_changed_allocations_fees_nonces_roots_and_signatures() {
         let (checkpoint, key) = fixture();
         let mut altered = checkpoint.clone();
-        altered.initial_ledger.accounts.get_mut(&[1; 32]).unwrap().balance += 1;
+        altered
+            .initial_ledger
+            .accounts
+            .get_mut(&[1; 32])
+            .unwrap()
+            .balance += 1;
         assert_eq!(
             verify_signed_genesis_checkpoint(&altered, &key),
             Err(GenesisCheckpointError::InvalidGenesisState)
         );
         altered = checkpoint.clone();
-        altered.initial_ledger.accounts.get_mut(&[1; 32]).unwrap().nonce = 1;
+        altered
+            .initial_ledger
+            .accounts
+            .get_mut(&[1; 32])
+            .unwrap()
+            .nonce = 1;
         assert!(verify_signed_genesis_checkpoint(&altered, &key).is_err());
         altered = checkpoint.clone();
         altered.initial_ledger.fee_pool = 2;
@@ -250,12 +260,18 @@ mod tests {
             assert!(initialize_signed_genesis(&db, &checkpoint, &[4; 32]).is_err());
             assert_eq!(db.get(Column::ChainState, b"tip").unwrap(), None);
             assert_eq!(db.read_local_ledger_state().unwrap(), None);
-            assert_eq!(initialize_signed_genesis(&db, &checkpoint, &trusted).unwrap(), id);
+            assert_eq!(
+                initialize_signed_genesis(&db, &checkpoint, &trusted).unwrap(),
+                id
+            );
             assert!(initialize_signed_genesis(&db, &checkpoint, &trusted).is_err());
         }
         {
             let db = RocksDbStore::open(&dir).unwrap();
-            assert_eq!(db.get(Column::ChainState, b"tip").unwrap(), Some(id.to_vec()));
+            assert_eq!(
+                db.get(Column::ChainState, b"tip").unwrap(),
+                Some(id.to_vec())
+            );
             assert_eq!(
                 db.read_local_ledger_state().unwrap(),
                 Some(checkpoint.initial_ledger)
