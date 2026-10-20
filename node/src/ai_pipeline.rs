@@ -14,8 +14,8 @@ use crate::ipc::haskell::HaskellValidatorClient;
 use crate::ipc::python::PythonWorkerClient;
 use crate::mining::auth::{assignment_signing_bytes, AssignmentAuthorizer, SignedAssignment};
 use crate::mining::receipts::{canonical_receipt_id_v1, ReceiptRegistry, VerifiedWorkReceipt};
-use crate::storage::RocksDbStore;
 use crate::mining::{Assignment, MiningScheduler, PuzzleTask};
+use crate::storage::RocksDbStore;
 
 const ROWS: [[i64; 2]; 3] = [[1, 2], [3, 4], [-2, 5]];
 const WEIGHTS: [i64; 2] = [2, 3];
@@ -292,8 +292,7 @@ pub fn demo() -> Result<(), String> {
         let settlement_text = std::str::from_utf8(&settlement_response)
             .map_err(|_| "Haskell settlement response is not UTF-8")?;
         if !settlement_text.contains(r#""settled":true"#)
-            || !settlement_text
-                .contains(r#""scope":"caller_attested_synthetic_fee_pool_only""#)
+            || !settlement_text.contains(r#""scope":"caller_attested_synthetic_fee_pool_only""#)
             || !settlement_text.contains(r#""fee_pool_remaining":0"#)
             || !settlement_text.contains(r#""amount":2"#)
             || !settlement_text.contains(r#""amount":1"#)
@@ -301,7 +300,9 @@ pub fn demo() -> Result<(), String> {
                 .iter()
                 .any(|id| !settlement_text.contains(&hex_bytes(id)))
         {
-            return Err(format!("Haskell settlement fixture rejected: {settlement_text}"));
+            return Err(format!(
+                "Haskell settlement fixture rejected: {settlement_text}"
+            ));
         }
 
         // Never persist anything for a rejected or mismatched settlement.
@@ -318,11 +319,7 @@ pub fn demo() -> Result<(), String> {
             let store = RocksDbStore::open(&path)
                 .map_err(|error| format!("Open settlement replay store: {error}"))?;
             store
-                .persist_settlement_replay_guard(
-                    &[9; 32],
-                    &receipt_ids,
-                    &settlement_response,
-                )
+                .persist_settlement_replay_guard(&[9; 32], &receipt_ids, &settlement_response)
                 .map_err(|error| format!("Persist settlement replay marker: {error}"))?;
         }
         {
@@ -339,11 +336,7 @@ pub fn demo() -> Result<(), String> {
                 return Err("Settled batch replay was accepted after reopening".to_owned());
             }
             if store
-                .persist_settlement_replay_guard(
-                    &[10; 32],
-                    &receipt_ids,
-                    &settlement_response,
-                )
+                .persist_settlement_replay_guard(&[10; 32], &receipt_ids, &settlement_response)
                 .is_ok()
             {
                 return Err("Paid receipt replay was accepted after reopening".to_owned());
