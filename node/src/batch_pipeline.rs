@@ -3,7 +3,6 @@
 //! This is a local privileged IPC fixture; no validator consensus.
 
 use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
 use std::env;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
