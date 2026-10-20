@@ -130,7 +130,11 @@ pub fn replay_chain_from_signed_checkpoint(
     let id = verify_signed_genesis_checkpoint(checkpoint, trusted_authority_public_key)
         .map_err(|e| format!("Unauthenticated genesis checkpoint: {e:?}"))?;
     replay_local_chain_with_ai_authority(
-        db, core, &id, &checkpoint.initial_ledger, trusted_authority_public_key
+        db,
+        core,
+        &id,
+        &checkpoint.initial_ledger,
+        trusted_authority_public_key,
     )
 }
 
