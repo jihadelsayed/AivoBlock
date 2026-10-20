@@ -15,6 +15,12 @@ import AivoBlock.Block (mkHash256, hash256Bytes, Hash256)
 import AivoBlock.PuzzleProof (Puzzle(..), PuzzleProof(..), ProofStatus(..))
 import AivoBlock.RewardEligibility (VerifiedWork(..), eligibleContributions)
 import AivoBlock.Rewards (Contribution(..))
+import AivoBlock.ReceiptId (canonicalReceiptIdV1)
+import AivoBlock.Settlement (RewardEntitlement(..), settleFundedRewards)
+import AivoBlock.Ledger (Ledger(..), Account(..))
+import AivoBlock.Transaction (mkAddress, addressBytes)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Char (chr, ord)
 import Data.Aeson (Value, eitherDecodeStrict', encode, object, (.=), (.:), (.:?), withObject)
 import Data.Aeson.Types (Parser, parseEither)
@@ -334,6 +340,94 @@ rewardRequest value =
       kind <- o .: "type" :: Parser String
       pure (protocol == 1 && kind == "reward_eligibility")
 
+-- | An isolated, explicitly unfunded-by-chain fixture for settlement testing.
+-- The caller supplies the synthetic fee pool and attests every verification.
+-- Never treat this endpoint as an authorization to pay or mint real tokens.
+settlementFixtureResponse :: Value -> BS.ByteString
+settlementFixtureResponse value =
+  case parseEither parser value of
+    Left _ -> rejected "invalid_settlement_fixture_request"
+    Right (chainId, height, feePool, budget, batchId, claimed, works) ->
+      let verdict = do
+            _ <- eligibleContributions height works
+            receiptIds <- traverse receiptIdFor works
+            if receiptIds /= claimed
+              then Left "Canonical receipt ID mismatch"
+              else Right ()
+            entitlements <- traverse makeEntitlement (zip works receiptIds)
+            let initial = Ledger Map.empty feePool Set.empty Set.empty
+            settled <- settleFundedRewards batchId budget entitlements initial
+            pure (settled, receiptIds)
+          receiptIdFor work =
+            let proof = workProof work in
+            canonicalReceiptIdV1 chainId (proofPuzzleId proof)
+              (proofWorkerId proof) (proofStartUnit proof)
+              (proofUnitCount proof) (proofResultCommitment proof)
+          makeEntitlement (work, receiptId) = do
+            let proof = workProof work
+            address <- mkAddress (hash256Bytes (proofWorkerId proof))
+            pure (RewardEntitlement receiptId (proofWorkerId proof)
+              address (proofUnitCount proof))
+      in case verdict of
+        Left reason -> rejected reason
+        Right (settled, receiptIds) ->
+          BL.toStrict (encode (object
+            [ "ok" .= True
+            , "type" .= ("settlement_fixture" :: String)
+            , "protocol_version" .= (1 :: Int)
+            , "settled" .= True
+            , "scope" .= ("caller_attested_synthetic_fee_pool_only" :: String)
+            , "fee_pool_remaining" .= ledgerFeePool settled
+            , "paid_receipt_ids" .= map hexHash receiptIds
+            , "credits" .=
+                [ object [ "recipient" .= hexBytes (addressBytes address)
+                         , "amount" .= accountBalance account ]
+                | (address, account) <- Map.toAscList (ledgerAccounts settled) ]
+            ]))
+  where
+    parser = withObject "settlement fixture" $ \o -> do
+      chainId <- o .: "chain_id" :: Parser Word32
+      height <- o .: "height" :: Parser Word64
+      feePool <- o .: "fee_pool" :: Parser Word64
+      budget <- o .: "budget" :: Parser Word64
+      batchIdHex <- o .: "batch_id" :: Parser String
+      batchId <- parseHash batchIdHex
+      values <- o .: "works" :: Parser [Value]
+      when (null values || length values > 1024)
+        (fail "Expected 1 to 1024 verified receipts")
+      claims <- traverse parseClaimedId values
+      works <- traverse parseRewardWork values
+      pure (chainId, height, feePool, budget, batchId, claims, works)
+    parseClaimedId = withObject "receipt claim" $ \o -> do
+      hex <- o .: "receipt_id" :: Parser String
+      parseHash hex
+    rejected :: String -> BS.ByteString
+    rejected reason = BL.toStrict (encode (object
+      [ "ok" .= True
+      , "type" .= ("settlement_fixture" :: String)
+      , "protocol_version" .= (1 :: Int)
+      , "settled" .= False
+      , "reason" .= reason
+      , "scope" .= ("caller_attested_synthetic_fee_pool_only" :: String)
+      ]))
+
+hexBytes :: BS.ByteString -> String
+hexBytes bytes = concatMap byteHex (BS.unpack bytes)
+  where
+    byteHex byte = let digits = showHex byte "" in
+      if length digits == 1 then '0' : digits else digits
+
+settlementRequest :: Value -> Maybe BS.ByteString
+settlementRequest value =
+  case parseEither parseKind value of
+    Right True -> Just (settlementFixtureResponse value)
+    _ -> Nothing
+  where
+    parseKind = withObject "request" $ \o -> do
+      protocol <- o .: "protocol_version" :: Parser Int
+      kind <- o .: "type" :: Parser String
+      pure (protocol == 1 && kind == "settlement_fixture")
+
 handleIpcRequest :: String -> Maybe String
 handleIpcRequest request
   | otherwise =
@@ -349,7 +443,9 @@ handleIpcRequest request
                 Just result -> Just result
                 Nothing -> case rewardRequest value of
                   Just result -> Just result
-                  Nothing -> dynamicRequest request)
+                  Nothing -> case settlementRequest value of
+                    Just result -> Just result
+                    Nothing -> dynamicRequest request)
   where
     parseHealth = withObject "health request" $ \o -> do
       protocol <- o .: "protocol_version" :: Parser Int
