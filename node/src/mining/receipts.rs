@@ -47,7 +47,7 @@ pub fn canonical_receipt_id_v1(
         .checked_add(receipt.range.count)
         .ok_or(ReceiptError::InvalidRange)?;
     let mut hash = Sha256::new();
-    hash.update(b"AIVOBLOCK-VERIFIED-WORK-RECEIPT-V1\\0");
+    hash.update(b"AIVOBLOCK-VERIFIED-WORK-RECEIPT-V1\0");
     hash.update(chain_id.to_be_bytes());
     hash.update(receipt.puzzle_id);
     hash.update(receipt.worker_id);
