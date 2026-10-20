@@ -96,7 +96,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   cross_language:
-    name: Rust ↔ Haskell IPC integration
+    name: Rust ? Haskell IPC integration
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -122,12 +122,13 @@ jobs:
           done
           cabal build exe:aivoblock-core
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
-      - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
+      - name: Run Rust ? Haskell health, JSON and malformed-frame tests
         working-directory: node
         run: |
           cargo test haskell_json_ipc_validation_cases -- --nocapture
           cargo test haskell_rejects_malformed_ipc_frames -- --nocapture
           cargo test haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
+          cargo test testnet:: -- --nocapture --test-threads=1
           cargo run -- core-health
           cargo run -- core-validate
           cargo run -- core-json
