@@ -321,6 +321,87 @@ mod tests {
     }
 
     #[test]
+    fn funded_reward_parser_rejects_forged_json_replays_and_minted_balances() {
+        use crate::storage::LocalAccount;
+        let batch_id = [11; 32];
+        let receipts = [[3; 32], [4; 32]];
+        let mut prior = LedgerState {
+            fee_pool: 3,
+            ..LedgerState::default()
+        };
+        prior.accounts.insert(
+            [9; 32],
+            LocalAccount {
+                balance: 97,
+                nonce: 0,
+            },
+        );
+        let mut post = prior.clone();
+        post.fee_pool = 0;
+        post.settled_batches.insert(batch_id);
+        post.paid_receipts.extend(receipts);
+        for (address, balance) in [([5; 32], 2), ([6; 32], 1)] {
+            post.accounts.insert(address, LocalAccount { balance, nonce: 0 });
+        }
+        let bytes = serde_json::to_vec(&json!({
+            "ok": true,
+            "type": "ledger_reward_block_fixture",
+            "protocol_version": 1,
+            "scope": "caller_attested_fee_funded_reward_block_only",
+            "accepted": true,
+            "reason": "none",
+            "state_hex": hex(&encode_ledger_state(&post).unwrap()),
+            "state_root": hex(&ledger_state_root_v1(&post).unwrap()),
+            "receipt_ids": [hex(&receipts[0]),hex(&receipts[1])],
+        }))
+        .unwrap();
+        assert_eq!(
+            decode_reward_block_reply(&bytes, &batch_id, 3, &receipts, &prior),
+            Ok(post.clone())
+        );
+        let raw = String::from_utf8(bytes.clone()).unwrap();
+        let duplicated = raw.replacen(
+            r#""accepted":true"#,
+            r#""accepted":true,"accepted":false"#,
+            1,
+        );
+        assert!(decode_reward_block_reply(
+            duplicated.as_bytes(), &batch_id, 3, &receipts, &prior
+        ).is_err());
+        let original: Value = serde_json::from_slice(&bytes).unwrap();
+        for (key, bad) in [
+            ("accepted", json!(false)),
+            ("reason", json!("none fake accepted true")),
+            ("state_hex", json!("zz")),
+            ("receipt_ids", json!([hex(&receipts[1]), hex(&receipts[0])])),
+            ("scope", json!("caller_attested_synthetic_fee_pool_only")),
+            ("state_root", json!(hex(&[0; 32]))),
+        ] {
+            let mut changed = original.clone();
+            changed[key] = bad;
+            assert!(decode_reward_block_reply(
+                &serde_json::to_vec(&changed).unwrap(), &batch_id, 3, &receipts, &prior
+            ).is_err(), "bad reward field: {key}");
+        }
+        assert!(decode_reward_block_reply(
+            &bytes, &batch_id, 2, &receipts, &prior
+        ).is_err());
+        let mut replay = prior.clone();
+        replay.paid_receipts.insert(receipts[0]);
+        assert!(decode_reward_block_reply(
+            &bytes, &batch_id, 3, &receipts, &replay
+        ).is_err());
+        let mut minted = post.clone();
+        minted.accounts.get_mut(&[5; 32]).unwrap().balance += 1;
+        let mut response: Value = original;
+        response["state_hex"] = json!(hex(&encode_ledger_state(&minted).unwrap()));
+        response["state_root"] = json!(hex(&ledger_state_root_v1(&minted).unwrap()));
+        assert!(decode_reward_block_reply(
+            &serde_json::to_vec(&response).unwrap(), &batch_id, 3, &receipts, &prior
+        ).is_err());
+    }
+
+    #[test]
     fn accepts_valid_typed_batch_and_whitespace_reordered_json() {
         let (bytes, id, root) = fixture_batch();
         assert_eq!(
