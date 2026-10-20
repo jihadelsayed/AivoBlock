@@ -313,9 +313,7 @@ pub fn demo() -> Result<(), String> {
         }
         db.put(Column::Blocks, &block_id, &block)
             .map_err(|e| format!("Restore test block: {e}"))?;
-        if db.read_local_ledger_state().map_err(|e| e.to_string())?
-            != Some(computed.clone())
-        {
+        if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(computed.clone()) {
             return Err("Failed replay unexpectedly mutated the ledger".into());
         }
 
