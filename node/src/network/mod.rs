@@ -5,9 +5,8 @@
 //! encryption, and gossip implementation will be added separately.
 //! Networking must never decide whether a block or AI proof is valid.
 
+pub mod handshake;
 pub mod p2p;
-
-pub use p2p::{PeerId, PeerRegistry, PeerRegistryError};
 
 /// Identifies the wire protocol spoken by compatible nodes.
 /// Increment when making incompatible network-message changes.
