@@ -14,6 +14,8 @@ mod genesis_checkpoint;
 #[allow(dead_code)]
 // IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
+#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
+mod issuance;
 mod ledger_bridge;
 #[allow(dead_code)]
 mod mining;
@@ -22,6 +24,8 @@ mod network;
 mod proof_pipeline_v2;
 mod reward_block;
 mod reward_pipeline;
+#[allow(dead_code)] // Wired into the private-testnet runtime in a follow-up milestone.
+mod settlement_v3;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
 mod transaction_auth;
