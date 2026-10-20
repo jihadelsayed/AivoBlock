@@ -3,8 +3,11 @@
 //! Storage is owned by each node independently. Persistence must not
 //! substitute for cryptographic verification or consensus validation.
 
+pub mod ledger_state;
 pub mod rocksdb;
 
+#[allow(unused_imports)] // Public storage types are also used by future node callers.
+pub use ledger_state::{LedgerState, LocalAccount};
 pub use rocksdb::RocksDbStore;
 
 /// Namespaces prevent keys for different record types from colliding.
@@ -53,6 +56,9 @@ pub trait KeyValueStore {
     fn put(&self, column: Column, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
     fn delete(&self, column: Column, key: &[u8]) -> Result<(), Self::Error>;
 }
+
+#[cfg(test)]
+mod atomic_tests;
 
 #[cfg(test)]
 mod tests {

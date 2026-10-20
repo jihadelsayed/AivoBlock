@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use rocksdb::{Options, WriteBatch, WriteOptions, DB};
+use sha2::{Digest, Sha256};
 
+use super::ledger_state::{decode_ledger_state, encode_ledger_state, LedgerState};
 use super::{encode_key, Column, KeyValueStore};
 
 #[derive(Debug)]
@@ -25,6 +27,8 @@ pub enum StorageError {
     InvalidSettlementRecord,
     DuplicateRewardBatch,
     AlreadyPaidReceipt,
+    InvalidLedgerTransition,
+    IncompatibleStorageMode,
     Database(rocksdb::Error),
 }
 
@@ -40,6 +44,10 @@ impl fmt::Display for StorageError {
             Self::InvalidSettlementRecord => write!(f, "invalid receipt settlement record"),
             Self::DuplicateRewardBatch => write!(f, "reward batch already persisted"),
             Self::AlreadyPaidReceipt => write!(f, "reward receipt already persisted"),
+            Self::InvalidLedgerTransition => write!(f, "invalid local ledger state transition"),
+            Self::IncompatibleStorageMode => {
+                write!(f, "cannot mix legacy storage with atomic ledger blocks")
+            }
             Self::Database(err) => write!(f, "RocksDB error: {err}"),
         }
     }
@@ -57,7 +65,9 @@ impl Error for StorageError {
             | Self::CorruptChainState
             | Self::InvalidSettlementRecord
             | Self::DuplicateRewardBatch
-            | Self::AlreadyPaidReceipt => None,
+            | Self::AlreadyPaidReceipt
+            | Self::InvalidLedgerTransition
+            | Self::IncompatibleStorageMode => None,
         }
     }
 }
@@ -70,6 +80,34 @@ impl From<rocksdb::Error> for StorageError {
 
 fn storage_key(column: Column, key: &[u8]) -> Result<Vec<u8>, StorageError> {
     encode_key(column, key).map_err(|_| StorageError::EmptyKey)
+}
+
+/// Authenticated-by-caller settlement to be committed with a validated block.
+/// The storage engine checks identifiers and atomicity, NOT proof correctness.
+#[derive(Debug)]
+pub struct SettlementBatch<'a> {
+    pub batch_id: [u8; 32],
+    pub receipt_ids: &'a [[u8; 32]],
+    pub validated_response: &'a [u8],
+}
+
+const LOCAL_STATE_KEY: &[u8] = b"local-ledger-snapshot-v1";
+const LOCAL_DIGEST_KEY: &[u8] = b"local-ledger-digest-v1";
+const LEGACY_REPLAY_USED_KEY: &[u8] = b"legacy-replay-guard-used-v1";
+
+fn marker_key(prefix: &[u8], id: &[u8; 32]) -> Result<Vec<u8>, StorageError> {
+    let mut suffix = prefix.to_vec();
+    suffix.extend_from_slice(id);
+    storage_key(Column::Metadata, &suffix)
+}
+
+fn local_supply(state: &LedgerState) -> u128 {
+    state
+        .accounts
+        .values()
+        .map(|account| u128::from(account.balance))
+        .sum::<u128>()
+        + u128::from(state.fee_pool)
 }
 
 /// Persistent database owned by a single node instance.
@@ -108,6 +146,14 @@ impl RocksDbStore {
         if block_hash.len() != 32 {
             return Err(StorageError::InvalidBlockHash);
         }
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
         let block_key = storage_key(Column::Blocks, block_hash)?;
         let tip_key = storage_key(Column::ChainState, b"tip")?;
         let mut batch = WriteBatch::default();
@@ -139,6 +185,10 @@ impl RocksDbStore {
             .append_lock
             .lock()
             .map_err(|_| StorageError::CorruptChainState)?;
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
         let tip_key = storage_key(Column::ChainState, b"tip")?;
         let height_key = storage_key(Column::ChainState, b"height")?;
         let existing_tip = self.db.get(&tip_key)?;
@@ -204,6 +254,12 @@ impl RocksDbStore {
             .lock()
             .map_err(|_| StorageError::CorruptChainState)?;
 
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
+        let legacy_key = storage_key(Column::Metadata, LEGACY_REPLAY_USED_KEY)?;
+
         let mut batch_suffix = b"reward-batch-v1:".to_vec();
         batch_suffix.extend_from_slice(batch_id);
         let batch_key = storage_key(Column::Metadata, &batch_suffix)?;
@@ -221,6 +277,7 @@ impl RocksDbStore {
             receipt_keys.push(key);
         }
         let mut batch = WriteBatch::default();
+        batch.put(legacy_key, [1u8]);
         batch.put(batch_key, settlement_response);
         for key in receipt_keys {
             batch.put(key, [1u8]);
@@ -229,6 +286,203 @@ impl RocksDbStore {
         options.set_sync(true);
         self.db
             .write_opt(batch, &options)
+            .map_err(StorageError::from)
+    }
+
+    /// Read the latest local ledger snapshot only if both the saved digest
+    /// and the chain tip/height are present and internally consistent.
+    /// The checksum detects damage; it is NOT a consensus state root.
+    pub fn read_local_ledger_state(&self) -> Result<Option<LedgerState>, StorageError> {
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
+        let tip_key = storage_key(Column::ChainState, b"tip")?;
+        let height_key = storage_key(Column::ChainState, b"height")?;
+        let state_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        let digest_key = storage_key(Column::ChainState, LOCAL_DIGEST_KEY)?;
+        let tip = self.db.get(tip_key)?;
+        let height = self.db.get(height_key)?;
+        let state = self.db.get(state_key)?;
+        let digest = self.db.get(digest_key)?;
+        match (tip, height, state, digest) {
+            (None, None, None, None) => Ok(None),
+            (Some(tip), Some(height), Some(state), Some(digest))
+                if tip.len() == 32 && height.len() == 8 && digest.len() == 32 =>
+            {
+                let block_key = storage_key(Column::Blocks, tip.as_ref())?;
+                if self.db.get(block_key)?.is_none() {
+                    return Err(StorageError::CorruptChainState);
+                }
+                let expected: [u8; 32] = Sha256::digest(&state).into();
+                if digest.as_ref() != expected {
+                    return Err(StorageError::CorruptChainState);
+                }
+                let decoded =
+                    decode_ledger_state(&state).map_err(|_| StorageError::CorruptChainState)?;
+                Ok(Some(decoded))
+            }
+            _ => Err(StorageError::CorruptChainState),
+        }
+    }
+
+    /// Append an already-authorized block AND its full post-execution ledger
+    /// snapshot with optional reward settlement and replay markers.
+    ///
+    /// A single synced RocksDB WriteBatch commits block, tip, height, fee pool,
+    /// account balances/nonces, settled batch IDs and paid receipt IDs. A
+    /// failed precondition emits NO writes. After restart, the snapshot digest
+    /// is verified before a successor can be appended.
+    ///
+    /// Consensus validation, true Haskell state transition verification,
+    /// authenticated reward budget, header state-root binding and reorganizations
+    /// are external, NOT implemented by this local storage API.
+    pub fn append_atomic_ledger_block(
+        &self,
+        block_hash: &[u8; 32],
+        parent_hash: &[u8; 32],
+        height: u64,
+        block_bytes: &[u8],
+        post_state: &LedgerState,
+        settlement: Option<&SettlementBatch<'_>>,
+    ) -> Result<(), StorageError> {
+        if *block_hash == [0; 32] || block_bytes.is_empty() {
+            return Err(StorageError::InvalidBlockHash);
+        }
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
+        let tip_key = storage_key(Column::ChainState, b"tip")?;
+        let height_key = storage_key(Column::ChainState, b"height")?;
+        let state_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        let digest_key = storage_key(Column::ChainState, LOCAL_DIGEST_KEY)?;
+        let legacy_key = storage_key(Column::Metadata, LEGACY_REPLAY_USED_KEY)?;
+
+        let tip = self.db.get(&tip_key)?;
+        let existing_height = self.db.get(&height_key)?;
+        let prior_snapshot = self.db.get(&state_key)?;
+        let prior_digest = self.db.get(&digest_key)?;
+        let prior_state = match (tip, existing_height, prior_snapshot, prior_digest) {
+            (None, None, None, None) => {
+                if height != 0 {
+                    return Err(StorageError::WrongHeight);
+                }
+                if *parent_hash != [0; 32] {
+                    return Err(StorageError::WrongParent);
+                }
+                if self.db.get(legacy_key)?.is_some() {
+                    return Err(StorageError::IncompatibleStorageMode);
+                }
+                None
+            }
+            (Some(tip), Some(height_bytes), Some(snapshot), Some(digest))
+                if tip.len() == 32 && height_bytes.len() == 8 && digest.len() == 32 =>
+            {
+                if parent_hash.as_slice() != tip.as_slice() {
+                    return Err(StorageError::WrongParent);
+                }
+                let mut saved_height = [0; 8];
+                saved_height.copy_from_slice(&height_bytes);
+                if u64::from_be_bytes(saved_height).checked_add(1) != Some(height) {
+                    return Err(StorageError::WrongHeight);
+                }
+                let expected: [u8; 32] = Sha256::digest(&snapshot).into();
+                if digest.as_ref() != expected {
+                    return Err(StorageError::CorruptChainState);
+                }
+                let state =
+                    decode_ledger_state(&snapshot).map_err(|_| StorageError::CorruptChainState)?;
+                Some(state)
+            }
+            _ => return Err(StorageError::IncompatibleStorageMode),
+        };
+
+        let block_key = storage_key(Column::Blocks, block_hash)?;
+        if self.db.get(&block_key)?.is_some() {
+            return Err(StorageError::CorruptChainState);
+        }
+
+        // No settlement may silently drop a prior paid receipt or batch.
+        // Exactly the new markers are allowed on every transition.
+        let mut required_batches = prior_state
+            .as_ref()
+            .map(|state| state.settled_batches.clone())
+            .unwrap_or_default();
+        let mut required_receipts = prior_state
+            .as_ref()
+            .map(|state| state.paid_receipts.clone())
+            .unwrap_or_default();
+        let mut new_receipt_keys = Vec::new();
+        let mut new_batch_key = None;
+
+        if let Some(batch) = settlement {
+            if prior_state.is_none()
+                || batch.batch_id == [0; 32]
+                || batch.validated_response.is_empty()
+                || batch.receipt_ids.is_empty()
+                || batch.receipt_ids.contains(&[0; 32])
+            {
+                return Err(StorageError::InvalidSettlementRecord);
+            }
+            if !required_batches.insert(batch.batch_id) {
+                return Err(StorageError::DuplicateRewardBatch);
+            }
+            let key = marker_key(b"reward-batch-v1:", &batch.batch_id)?;
+            if self.db.get(&key)?.is_some() {
+                return Err(StorageError::DuplicateRewardBatch);
+            }
+            new_batch_key = Some(key);
+            for receipt in batch.receipt_ids {
+                if !required_receipts.insert(*receipt) {
+                    return Err(StorageError::AlreadyPaidReceipt);
+                }
+                let key = marker_key(b"paid-receipt-v1:", receipt)?;
+                if self.db.get(&key)?.is_some() {
+                    return Err(StorageError::AlreadyPaidReceipt);
+                }
+                new_receipt_keys.push(key);
+            }
+        }
+
+        if post_state.settled_batches != required_batches
+            || post_state.paid_receipts != required_receipts
+            || post_state.settled_batches.contains(&[0; 32])
+            || post_state.paid_receipts.contains(&[0; 32])
+        {
+            return Err(StorageError::InvalidLedgerTransition);
+        }
+        if let Some(previous) = &prior_state {
+            if local_supply(previous) != local_supply(post_state) {
+                return Err(StorageError::InvalidLedgerTransition);
+            }
+            for (address, account) in &previous.accounts {
+                match post_state.accounts.get(address) {
+                    Some(next) if next.nonce >= account.nonce => {}
+                    _ => return Err(StorageError::InvalidLedgerTransition),
+                }
+            }
+        }
+
+        let snapshot =
+            encode_ledger_state(post_state).map_err(|_| StorageError::InvalidLedgerTransition)?;
+        let digest: [u8; 32] = Sha256::digest(&snapshot).into();
+        let mut writes = WriteBatch::default();
+        writes.put(block_key, block_bytes);
+        writes.put(tip_key, block_hash);
+        writes.put(height_key, height.to_be_bytes());
+        writes.put(state_key, snapshot);
+        writes.put(digest_key, digest);
+        if let (Some(batch), Some(key)) = (settlement, new_batch_key) {
+            writes.put(key, batch.validated_response);
+            for key in new_receipt_keys {
+                writes.put(key, [1u8]);
+            }
+        }
+        let mut options = WriteOptions::default();
+        options.set_sync(true);
+        self.db
+            .write_opt(writes, &options)
             .map_err(StorageError::from)
     }
 
