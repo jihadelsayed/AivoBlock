@@ -10,7 +10,7 @@ import AivoBlock.Block (Hash256, hash256Bytes, mkHash256)
 import Crypto.Hash (Digest, SHA256, hash)
 import Data.ByteArray (convert)
 import qualified Data.ByteString as BS
-import Data.Bits (shiftR)
+import Data.Bits (Bits, shiftR)
 import Data.Word (Word8, Word32, Word64)
 
 -- | Canonical 151-byte preimage:
@@ -46,5 +46,5 @@ be32 n = BS.pack [byte n shift | shift <- [24, 16, 8, 0]]
 be64 :: Word64 -> BS.ByteString
 be64 n = BS.pack [byte n shift | shift <- [56, 48, 40, 32, 24, 16, 8, 0]]
 
-byte :: (Integral a, Data.Bits.Bits a) => a -> Int -> Word8
+byte :: (Integral a, Bits a) => a -> Int -> Word8
 byte n shift = fromIntegral (n `shiftR` shift)
