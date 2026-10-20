@@ -70,9 +70,13 @@ impl TrustedValidatorSetV1 {
             }
             VerifyingKey::from_bytes(&validator.public_key)
                 .map_err(|_| "Malformed validator Ed25519 key")?;
-            sum = sum.checked_add(validator.voting_power)
+            sum = sum
+                .checked_add(validator.voting_power)
                 .ok_or("Total validator power overflows u64")?;
-            if by_key.insert(validator.public_key, validator.voting_power).is_some() {
+            if by_key
+                .insert(validator.public_key, validator.voting_power)
+                .is_some()
+            {
                 return Err("Duplicate validator public key".into());
             }
         }
@@ -150,14 +154,18 @@ pub fn verify_quorum_certificate_v1(
             return Err("Duplicate, conflicting or unordered validator votes".into());
         }
         previous = Some(vote.public_key);
-        let power = *validators.members.get(&vote.public_key)
+        let power = *validators
+            .members
+            .get(&vote.public_key)
             .ok_or("Precommit from unknown validator")?;
         let pub_key = VerifyingKey::from_bytes(&vote.public_key)
             .map_err(|_| "Invalid validator signature key")?;
         let payload = precommit_signing_bytes_v1(certificate, &vote.public_key)?;
-        pub_key.verify_strict(&payload, &Signature::from_bytes(&vote.signature))
+        pub_key
+            .verify_strict(&payload, &Signature::from_bytes(&vote.signature))
             .map_err(|_| "Invalid Ed25519 precommit signature")?;
-        signed_power = signed_power.checked_add(power)
+        signed_power = signed_power
+            .checked_add(power)
             .ok_or("Precommit power overflow")?;
     }
     let required = validators.required_power();
@@ -189,17 +197,25 @@ pub fn verify_audited_tip_certificate_v1(
     if confirmed.block_id != report.tip_id {
         return Err("Certificate does not attest the independently replayed tip".into());
     }
-    let stored = db.get(Column::ChainState, b"tip").map_err(|e| e.to_string())?
+    let stored = db
+        .get(Column::ChainState, b"tip")
+        .map_err(|e| e.to_string())?
         .ok_or("Missing local tip metadata")?;
     if stored.as_slice() != confirmed.block_id.as_slice() {
         return Err("Local tip differs from audited certificate".into());
     }
-    let height = db.get(Column::ChainState, b"height").map_err(|e| e.to_string())?
+    let height = db
+        .get(Column::ChainState, b"height")
+        .map_err(|e| e.to_string())?
         .ok_or("Missing local height metadata")?;
     if height.as_slice() != confirmed.height.to_be_bytes().as_slice() {
         return Err("Certificate height differs from replayed chain height".into());
     }
-    if db.get(Column::Blocks, &confirmed.block_id).map_err(|e| e.to_string())?.is_none() {
+    if db
+        .get(Column::Blocks, &confirmed.block_id)
+        .map_err(|e| e.to_string())?
+        .is_none()
+    {
         return Err("Certified block is missing from local storage".into());
     }
     Ok(confirmed)
@@ -221,9 +237,18 @@ pub fn local_quorum_fixture_v1(
         SigningKey::from_bytes(&[23; 32]),
     ];
     let members = [
-        ValidatorMemberV1 { public_key: signers[0].verifying_key().to_bytes(), voting_power: 3 },
-        ValidatorMemberV1 { public_key: signers[1].verifying_key().to_bytes(), voting_power: 2 },
-        ValidatorMemberV1 { public_key: signers[2].verifying_key().to_bytes(), voting_power: 1 },
+        ValidatorMemberV1 {
+            public_key: signers[0].verifying_key().to_bytes(),
+            voting_power: 3,
+        },
+        ValidatorMemberV1 {
+            public_key: signers[1].verifying_key().to_bytes(),
+            voting_power: 2,
+        },
+        ValidatorMemberV1 {
+            public_key: signers[2].verifying_key().to_bytes(),
+            voting_power: 1,
+        },
     ];
     let validators = TrustedValidatorSetV1::new(&members)?;
     let mut certificate = QuorumCertificateV1 {
@@ -237,10 +262,13 @@ pub fn local_quorum_fixture_v1(
     // Membership weight 3+2 gives an exact strict >2/3 quorum of 5/6.
     for signer in signers.iter().take(2) {
         let public_key = signer.verifying_key().to_bytes();
-        let signature = signer.sign(
-            &precommit_signing_bytes_v1(&certificate, &public_key)?
-        ).to_bytes();
-        certificate.votes.push(SignedPrecommitV1 { public_key, signature });
+        let signature = signer
+            .sign(&precommit_signing_bytes_v1(&certificate, &public_key)?)
+            .to_bytes();
+        certificate.votes.push(SignedPrecommitV1 {
+            public_key,
+            signature,
+        });
     }
     certificate.votes.sort_by_key(|vote| vote.public_key);
     Ok((validators, certificate))
@@ -251,10 +279,13 @@ pub fn local_quorum_fixture_v1(
 pub fn demo() -> Result<(), String> {
     let (validators, certificate) = local_quorum_fixture_v1([7; 32], 1, 0)?;
     let checked = verify_quorum_certificate_v1(&validators, &certificate)?;
-    if checked.signed_power != 5 || checked.required_power != 5
-        || validators.total_power() != 6 || checked.block_id != [7; 32]
+    if checked.signed_power != 5
+        || checked.required_power != 5
+        || validators.total_power() != 6
+        || checked.block_id != [7; 32]
         || checked.validator_set_commitment != validators.commitment()
-        || checked.height != 1 || checked.round != 0
+        || checked.height != 1
+        || checked.round != 0
     {
         return Err("Authenticated weighted quorum did not match fixture".into());
     }
@@ -288,12 +319,14 @@ mod tests {
         let signers: Vec<SigningKey> = (1..=weights.len())
             .map(|i| SigningKey::from_bytes(&[i as u8; 32]))
             .collect();
-        let members: Vec<ValidatorMemberV1> = signers.iter().zip(weights).map(|(key,power)| {
-            ValidatorMemberV1 {
+        let members: Vec<ValidatorMemberV1> = signers
+            .iter()
+            .zip(weights)
+            .map(|(key, power)| ValidatorMemberV1 {
                 public_key: key.verifying_key().to_bytes(),
                 voting_power: *power,
-            }
-        }).collect();
+            })
+            .collect();
         (signers, TrustedValidatorSetV1::new(&members).unwrap())
     }
 
@@ -314,8 +347,13 @@ mod tests {
         };
         for signer in signers {
             let key = signer.verifying_key().to_bytes();
-            let signature = signer.sign(&precommit_signing_bytes_v1(&cert, &key).unwrap()).to_bytes();
-            cert.votes.push(SignedPrecommitV1 { public_key: key, signature });
+            let signature = signer
+                .sign(&precommit_signing_bytes_v1(&cert, &key).unwrap())
+                .to_bytes();
+            cert.votes.push(SignedPrecommitV1 {
+                public_key: key,
+                signature,
+            });
         }
         cert.votes.sort_by_key(|vote| vote.public_key);
         cert
@@ -324,8 +362,11 @@ mod tests {
     #[test]
     fn quorum_weight_matches_haskell_rule() {
         for powers in [
-            vec![1,1,1], vec![3,2,1], vec![2,3,3],
-            vec![u64::MAX], vec![u64::MAX - 1, 1]
+            vec![1, 1, 1],
+            vec![3, 2, 1],
+            vec![2, 3, 3],
+            vec![u64::MAX],
+            vec![u64::MAX - 1, 1],
         ] {
             let (_, set) = fixture(&powers);
             let expected = (u128::from(set.total_power()) * 2) / 3 + 1;
@@ -335,17 +376,31 @@ mod tests {
 
     #[test]
     fn signed_quorum_allows_only_authorized_distinct_voters() {
-        let (signers, set) = fixture(&[3,2,1]); // total 6, quorum 5
+        let (signers, set) = fixture(&[3, 2, 1]); // total 6, quorum 5
         let all = certificate(&signers, &set, 7, 2, [9; 32]);
-        assert_eq!(verify_quorum_certificate_v1(&set, &all).unwrap().signed_power, 6);
+        assert_eq!(
+            verify_quorum_certificate_v1(&set, &all)
+                .unwrap()
+                .signed_power,
+            6
+        );
         let mut weighted: QuorumCertificateV1 = all.clone();
         weighted.votes.retain(|v| {
-            set.members.get(&v.public_key).is_some_and(|power| *power >= 2)
+            set.members
+                .get(&v.public_key)
+                .is_some_and(|power| *power >= 2)
         });
-        assert_eq!(verify_quorum_certificate_v1(&set, &weighted).unwrap().signed_power, 5);
+        assert_eq!(
+            verify_quorum_certificate_v1(&set, &weighted)
+                .unwrap()
+                .signed_power,
+            5
+        );
         let mut minority = all.clone();
         minority.votes.retain(|v| {
-            set.members.get(&v.public_key).is_some_and(|power| *power != 2)
+            set.members
+                .get(&v.public_key)
+                .is_some_and(|power| *power != 2)
         });
         assert!(verify_quorum_certificate_v1(&set, &minority).is_err());
         let mut impostor = all.clone();
@@ -364,9 +419,14 @@ mod tests {
 
     #[test]
     fn signatures_are_bound_to_height_round_block_chain_and_set() {
-        let (keys, set) = fixture(&[1,1,1]);
+        let (keys, set) = fixture(&[1, 1, 1]);
         let cert = certificate(&keys, &set, 1, 0, [7; 32]);
-        assert_eq!(verify_quorum_certificate_v1(&set, &cert).unwrap().signed_power, 3);
+        assert_eq!(
+            verify_quorum_certificate_v1(&set, &cert)
+                .unwrap()
+                .signed_power,
+            3
+        );
         let mut changed = cert.clone();
         changed.block_id = [8; 32];
         assert!(verify_quorum_certificate_v1(&set, &changed).is_err());
@@ -382,7 +442,7 @@ mod tests {
         changed = cert.clone();
         changed.validator_set_commitment[0] ^= 1;
         assert!(verify_quorum_certificate_v1(&set, &changed).is_err());
-        let (_, different) = fixture(&[1,1,2]);
+        let (_, different) = fixture(&[1, 1, 2]);
         assert!(verify_quorum_certificate_v1(&different, &cert).is_err());
     }
 
@@ -392,18 +452,36 @@ mod tests {
         let another = SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes();
         assert!(TrustedValidatorSetV1::new(&[]).is_err());
         assert!(TrustedValidatorSetV1::new(&[ValidatorMemberV1 {
-            public_key: key, voting_power: 0
-        }]).is_err());
+            public_key: key,
+            voting_power: 0
+        }])
+        .is_err());
         assert!(TrustedValidatorSetV1::new(&[
-            ValidatorMemberV1 { public_key: key, voting_power: 1 },
-            ValidatorMemberV1 { public_key: key, voting_power: 1 },
-        ]).is_err());
+            ValidatorMemberV1 {
+                public_key: key,
+                voting_power: 1
+            },
+            ValidatorMemberV1 {
+                public_key: key,
+                voting_power: 1
+            },
+        ])
+        .is_err());
         assert!(TrustedValidatorSetV1::new(&[
-            ValidatorMemberV1 { public_key: key, voting_power: u64::MAX },
-            ValidatorMemberV1 { public_key: another, voting_power: 1 },
-        ]).is_err());
+            ValidatorMemberV1 {
+                public_key: key,
+                voting_power: u64::MAX
+            },
+            ValidatorMemberV1 {
+                public_key: another,
+                voting_power: 1
+            },
+        ])
+        .is_err());
         assert!(TrustedValidatorSetV1::new(&[ValidatorMemberV1 {
-            public_key: [0; 32], voting_power: 1,
-        }]).is_err());
+            public_key: [0; 32],
+            voting_power: 1,
+        }])
+        .is_err());
     }
 }
