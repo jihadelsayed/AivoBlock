@@ -34,9 +34,7 @@ pub enum TransferAuthError {
 /// 118 bytes: domain+NUL | version u32 | chain u32 | sender's public key
 /// | recipient[32] | amount u64 | fee u64 | nonce u64. Big endian integers.
 /// Omitted references and any non-V1 fields are forbidden for this codec.
-pub fn transfer_signing_bytes_v1(
-    tx: &SignedTransferV1,
-) -> Result<Vec<u8>, TransferAuthError> {
+pub fn transfer_signing_bytes_v1(tx: &SignedTransferV1) -> Result<Vec<u8>, TransferAuthError> {
     if tx.version != 1 {
         return Err(TransferAuthError::InvalidVersion);
     }
@@ -91,7 +89,9 @@ mod tests {
             nonce,
             signature: [0; 64],
         };
-        tx.signature = key.sign(&transfer_signing_bytes_v1(&tx).unwrap()).to_bytes();
+        tx.signature = key
+            .sign(&transfer_signing_bytes_v1(&tx).unwrap())
+            .to_bytes();
         tx
     }
 
@@ -117,7 +117,10 @@ mod tests {
             SignedTransferV1 { amount: 11, ..tx },
             SignedTransferV1 { fee: 3, ..tx },
             SignedTransferV1 { nonce: 1, ..tx },
-            SignedTransferV1 { recipient: [3; 32], ..tx },
+            SignedTransferV1 {
+                recipient: [3; 32],
+                ..tx
+            },
         ] {
             assert_eq!(
                 verify_signed_transfer_v1(&altered),
@@ -125,11 +128,17 @@ mod tests {
             );
         }
         assert_eq!(
-            verify_signed_transfer_v1(&SignedTransferV1 { sender: [4; 32], ..tx }),
+            verify_signed_transfer_v1(&SignedTransferV1 {
+                sender: [4; 32],
+                ..tx
+            }),
             Err(TransferAuthError::SenderKeyMismatch)
         );
         assert_eq!(
-            verify_signed_transfer_v1(&SignedTransferV1 { signature: [0; 64], ..tx }),
+            verify_signed_transfer_v1(&SignedTransferV1 {
+                signature: [0; 64],
+                ..tx
+            }),
             Err(TransferAuthError::InvalidSignature)
         );
         assert_eq!(
