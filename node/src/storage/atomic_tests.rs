@@ -100,3 +100,106 @@ fn rejected_parent_height_and_inflation_leave_block_and_tip_unchanged() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn rejects_batch_replay_paid_receipt_and_missing_replay_set_without_partial_writes() {
+    let dir = path("replay");
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = RocksDbStore::open(&dir).unwrap();
+        add_genesis(&db);
+        let ids = [[6; 32], [7; 32]];
+        let claim = SettlementBatch { batch_id: [9; 32], receipt_ids: &ids, validated_response: b"fixture" };
+        let mut missing = paid();
+        missing.paid_receipts.clear();
+        assert!(matches!(
+            db.append_atomic_ledger_block(&[2; 32], &[1; 32], 1, b"bad", &missing, Some(&claim)),
+            Err(StorageError::InvalidLedgerTransition)
+        ));
+        assert_eq!(db.get(Column::Blocks, &[2; 32]).unwrap(), None);
+        assert_eq!(db.read_local_ledger_state().unwrap(), Some(genesis()));
+        add_payment(&db);
+        let replay_batch = SettlementBatch {
+            batch_id: [9; 32], receipt_ids: &[[8; 32]], validated_response: b"replay",
+        };
+        assert!(matches!(
+            db.append_atomic_ledger_block(
+                &[3; 32], &[2; 32], 2, b"bad", &paid(), Some(&replay_batch)
+            ),
+            Err(StorageError::DuplicateRewardBatch)
+        ));
+        let replay_receipt = SettlementBatch {
+            batch_id: [10; 32], receipt_ids: &[[6; 32]], validated_response: b"replay",
+        };
+        assert!(matches!(
+            db.append_atomic_ledger_block(
+                &[3; 32], &[2; 32], 2, b"bad", &paid(), Some(&replay_receipt)
+            ),
+            Err(StorageError::AlreadyPaidReceipt)
+        ));
+        assert_eq!(db.read_local_ledger_state().unwrap(), Some(paid()));
+        assert_eq!(db.get(Column::Blocks, &[3; 32]).unwrap(), None);
+        assert_eq!(db.get(Column::ChainState, b"tip").unwrap(), Some(vec![2; 32]));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn corrupted_snapshot_blocks_recovery_and_next_append() {
+    let dir = path("corrupt");
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = RocksDbStore::open(&dir).unwrap();
+        add_genesis(&db);
+        db.put(Column::ChainState, b"local-ledger-snapshot-v1", b"tampered")
+            .unwrap();
+        assert!(matches!(
+            db.read_local_ledger_state(), Err(StorageError::CorruptChainState)
+        ));
+        assert!(matches!(
+            db.append_atomic_ledger_block(
+                &[2; 32], &[1; 32], 1, b"child", &genesis(), None
+            ),
+            Err(StorageError::CorruptChainState)
+        ));
+        assert_eq!(db.get(Column::Blocks, &[2; 32]).unwrap(), None);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn forbids_legacy_mutators_on_atomic_chain_and_legacy_seed_on_new_chain() {
+    let dir = path("legacy");
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = RocksDbStore::open(&dir).unwrap();
+        add_genesis(&db);
+        assert!(matches!(
+            db.append_checked_block(&[2; 32], &[1; 32], 1, b"legacy"),
+            Err(StorageError::IncompatibleStorageMode)
+        ));
+        assert!(matches!(
+            db.put_validated_block_and_tip(&[2; 32], b"legacy"),
+            Err(StorageError::IncompatibleStorageMode)
+        ));
+        assert!(matches!(
+            db.persist_settlement_replay_guard(&[9; 32], &[[6; 32]], b"legacy"),
+            Err(StorageError::IncompatibleStorageMode)
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let dir = path("legacy-seed");
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = RocksDbStore::open(&dir).unwrap();
+        db.persist_settlement_replay_guard(&[9; 32], &[[6; 32]], b"legacy")
+            .unwrap();
+        assert!(matches!(
+            db.append_atomic_ledger_block(
+                &[1; 32], &[0; 32], 0, b"genesis", &genesis(), None
+            ),
+            Err(StorageError::IncompatibleStorageMode)
+        ));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
