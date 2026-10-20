@@ -17,9 +17,9 @@ mod ipc;
 mod ledger_bridge;
 #[allow(dead_code)]
 mod mining;
+mod proof_pipeline_v2;
 mod reward_block;
 mod reward_pipeline;
-mod proof_pipeline_v2;
 #[allow(dead_code)] // Columns reserved for ledger features are intentionally unused in the CLI.
 mod storage;
 mod transaction_auth;
