@@ -8,8 +8,10 @@ use std::env;
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
+use ed25519_dalek::{Signer, SigningKey};
 
 use crate::ipc::python::PythonWorkerClient;
+use crate::mining::auth::{assignment_signing_bytes, AssignmentAuthorizer, SignedAssignment};
 use crate::mining::receipts::{ReceiptRegistry, VerifiedWorkReceipt};
 use crate::mining::{Assignment, MiningScheduler, PuzzleTask};
 
@@ -19,6 +21,10 @@ const ROWS_JSON: &str = "[[1,2],[3,4],[-2,5]]";
 const WEIGHTS_JSON: &str = "[2,3]";
 const VERIFIED_RESPONSE: &str = r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":true,"method":"full_recomputation"}"#;
 const REJECTED_RESPONSE: &str = r#"{"ok":true,"type":"verify_integer_inference","protocol_version":1,"verified":false,"method":"full_recomputation"}"#;
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 fn hex32(byte: u8) -> String {
     format!("{byte:02x}").repeat(32)
@@ -37,7 +43,7 @@ fn puzzle_json() -> String {
 fn execution_request(assignment: &Assignment) -> String {
     format!(
         r#"{{"protocol_version":1,"type":"execute_integer_inference","worker_id":"{}","puzzle":{},"start":{},"count":{},"rows":{ROWS_JSON},"weights":{WEIGHTS_JSON}}}"#,
-        hex32(assignment.worker_id[0]),
+        hex_bytes(&assignment.worker_id),
         puzzle_json(),
         assignment.range.start,
         assignment.range.count,
@@ -86,7 +92,7 @@ fn expected_outputs(assignment: &Assignment) -> Result<Vec<i64>, String> {
 fn proof_json(assignment: &Assignment, commitment: &str) -> String {
     format!(
         r#"{{"puzzle_id":"{}","worker_id":"{}","start_unit":{},"unit_count":{},"result_commitment":"{commitment}","witness_commitment":null}}"#,
-        hex32(assignment.puzzle_id[0]),
+        hex_bytes(&assignment.puzzle_id),
         hex32(assignment.worker_id[0]),
         assignment.range.start,
         assignment.range.count
@@ -119,14 +125,36 @@ pub fn demo() -> Result<(), String> {
         })
         .map_err(|error| format!("Puzzle scheduling: {error:?}"))?;
 
+    // The signing keys below are public, fixed TEST VECTORS for this local demo.
+    // Never reuse these keys for real workers or authority on a network.
+    let issuer_key = SigningKey::from_bytes(&[7; 32]);
+    let issuer_public_key = issuer_key.verifying_key().to_bytes();
+    let mut authorizer = AssignmentAuthorizer::new();
     let mut receipts = ReceiptRegistry::new();
-    for (index, worker_id) in [[5; 32], [6; 32]].into_iter().enumerate() {
+    for (index, worker_seed) in [[5; 32], [6; 32]].into_iter().enumerate() {
+        let worker_id = SigningKey::from_bytes(&worker_seed)
+            .verifying_key()
+            .to_bytes();
         let assignment = scheduler
             .assign(puzzle_id, worker_id, 2)
             .map_err(|error| format!("Work assignment: {error:?}"))?;
-        let outputs = expected_outputs(&assignment)?;
-        let commitment = commitment_hex(assignment.range.start, &outputs);
-        let proof = proof_json(&assignment, &commitment);
+        // Gate the execution request on the issuer signature and replay check.
+        let mut signed = SignedAssignment {
+            chain_id: 1,
+            assignment,
+            worker_public_key: worker_id,
+            issuer_public_key,
+            deadline_height: 100,
+            nonce: index as u64,
+            signature: [0; 64],
+        };
+        signed.signature = issuer_key.sign(&assignment_signing_bytes(&signed)).to_bytes();
+        let authenticated = authorizer
+            .verify_and_record(&signed, 1, issuer_public_key, 1)
+            .map_err(|error| format!("Assignment authorization: {error:?}"))?;
+        let outputs = expected_outputs(&authenticated)?;
+        let commitment = commitment_hex(authenticated.range.start, &outputs);
+        let proof = proof_json(&authenticated, &commitment);
         let outputs_json = format!(
             "[{}]",
             outputs
@@ -140,7 +168,7 @@ pub fn demo() -> Result<(), String> {
         );
 
         let execution = client
-            .exchange(execution_request(&assignment).as_bytes())
+            .exchange(execution_request(&authenticated).as_bytes())
             .map_err(|error| format!("Python execution IPC: {error:?}"))?;
         if execution.as_slice() != expected.as_bytes() {
             return Err(format!(
@@ -175,11 +203,11 @@ pub fn demo() -> Result<(), String> {
         }
         receipts
             .record_verified(
-                &assignment,
+                &authenticated,
                 VerifiedWorkReceipt {
-                    puzzle_id: assignment.puzzle_id,
-                    worker_id: assignment.worker_id,
-                    range: assignment.range,
+                    puzzle_id: authenticated.puzzle_id,
+                    worker_id: authenticated.worker_id,
+                    range: authenticated.range,
                     result_commitment,
                 },
             )
@@ -199,8 +227,8 @@ pub fn demo() -> Result<(), String> {
     if receipts.receipts_for(puzzle_id).len() != 2 {
         return Err("Expected two locally verified work receipts".to_owned());
     }
-    println!("AI partition IPC demo: PASS (3 units / 2 workers / 2 verified receipts)");
-    println!("Scope: local trusted fixture only; no P2P, signatures, consensus or rewards");
+    println!("AI partition IPC demo: PASS (3 units / 2 signed assignments / 2 verified receipts)");
+    println!("Scope: fixture-only issuer signatures; no P2P, consensus or rewards");
     Ok(())
 }
 
