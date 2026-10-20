@@ -12,6 +12,7 @@ use crate::batch_commitment::{
     commit_verified_batch_block, verify_stored_batch_block, MAX_SIGNED_BLOCK_TRANSFERS,
 };
 use crate::batch_replay::replay_stored_tip;
+use crate::chain_replay::replay_local_chain;
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state, LedgerState};
 use crate::storage::{Column, KeyValueStore, LocalAccount, RocksDbStore};
@@ -278,6 +279,8 @@ pub fn demo() -> Result<(), String> {
         block_id = commit_verified_batch_block(&db, &block_header, &batch, &prior, &computed)
             .map_err(|e| format!("Atomic batch commit: {e:?}"))?;
     }
+    let final_expected;
+    let final_id;
     {
         let db = RocksDbStore::open(&path).map_err(|e| e.to_string())?;
         if db.read_local_ledger_state().map_err(|e| e.to_string())? != Some(computed.clone()) {
@@ -324,6 +327,88 @@ pub fn demo() -> Result<(), String> {
         {
             return Err("Wrong reopened block tip".into());
         }
+
+        // A second *distinct* signed batch proves history replay uses the
+        // state calculated for each predecessor, not a supplied tip ledger.
+        let subsequent = [
+            signed(&signer, bob, 4, 1, 2),
+            signed(&signer, bob, 3, 1, 3),
+        ];
+        final_expected = execute_signed_batch_haskell(&core, &computed, &subsequent)?;
+        if final_expected.fee_pool != 5
+            || final_expected.accounts.get(&alice).map(|account| (account.balance, account.nonce))
+                != Some((73, 4))
+            || final_expected.accounts.get(&bob).map(|account| account.balance) != Some(22)
+        {
+            return Err("Second signed block Haskell balances mismatch".into());
+        }
+        let ids = subsequent.iter().map(signed_transaction_id_v1)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("{error:?}"))?;
+        let next_header = CommittedHeaderV1 {
+            version: 1,
+            chain_id: 1,
+            height: 2,
+            parent_hash: block_id,
+            transactions_root: transaction_root_v1(&ids)
+                .map_err(|error| format!("Followup transaction root: {error:?}"))?,
+            puzzle_proofs_root: [0; 32],
+            state_root: ledger_state_root_v1(&final_expected)
+                .map_err(|error| format!("Followup state root: {error:?}"))?,
+            timestamp_ms: 1002,
+        };
+        final_id = commit_verified_batch_block(
+            &db, &next_header, &subsequent, &computed, &final_expected
+        ).map_err(|error| format!("Second batch atomic commit: {error:?}"))?;
+
+        let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
+        if report.ledger != final_expected || report.signed_blocks != 2
+            || report.signed_transfers != 4 || report.tip_id != final_id
+        {
+            return Err("Full trusted-genesis replay produced wrong chain state".into());
+        }
+        if replay_local_chain(&db, &core, &[9; 32], &genesis).is_ok() {
+            return Err("Wrong trusted genesis ID was accepted".into());
+        }
+        let mut wrong_genesis = genesis.clone();
+        wrong_genesis.fee_pool = 1;
+        if replay_local_chain(&db, &core, &genesis_id, &wrong_genesis).is_ok() {
+            return Err("Wrong trusted genesis state was accepted".into());
+        }
+
+        // Alter a *non-tip* signed ancestor and verify full replay refuses
+        // to trust a valid-looking later tip whose history was corrupted.
+        let mut damaged = block.clone();
+        *damaged.last_mut().ok_or("Empty ancestor body")? ^= 1;
+        db.put(Column::Blocks, &block_id, &damaged)
+            .map_err(|error| format!("Corrupt ancestor fixture: {error}"))?;
+        if replay_local_chain(&db, &core, &genesis_id, &genesis).is_ok() {
+            return Err("Full replay accepted tampered historical block".into());
+        }
+        db.put(Column::Blocks, &block_id, &block)
+            .map_err(|error| format!("Restore ancestor fixture: {error}"))?;
+
+        db.put(Column::ChainState, b"height", &3u64.to_be_bytes())
+            .map_err(|error| format!("Tamper height fixture: {error}"))?;
+        if replay_local_chain(&db, &core, &genesis_id, &genesis).is_ok() {
+            return Err("Full replay accepted invalid tip height".into());
+        }
+        db.put(Column::ChainState, b"height", &2u64.to_be_bytes())
+            .map_err(|error| format!("Restore height fixture: {error}"))?;
+        if replay_local_chain(&db, &core, &genesis_id, &genesis)?.ledger != final_expected {
+            return Err("Restored full chain failed Haskell replay".into());
+        }
+    }
+    // Reopen once more and audit the whole chain using solely stored block
+    // contents, a trusted genesis checkpoint and independent Haskell rules.
+    {
+        let db = RocksDbStore::open(&path).map_err(|error| error.to_string())?;
+        let report = replay_local_chain(&db, &core, &genesis_id, &genesis)?;
+        if report.tip_id != final_id || report.ledger != final_expected
+            || report.signed_blocks != 2 || report.signed_transfers != 4
+        {
+            return Err("Full replay across database reopen failed".into());
+        }
     }
     std::fs::remove_dir_all(&path).map_err(|e| format!("Remove batch test DB: {e}"))?;
     println!("Two Haskell-verified transfers committed in ONE Rust block: PASS");
@@ -332,6 +417,8 @@ pub fn demo() -> Result<(), String> {
     println!("Atomic RocksDB reopen and signed block body verification: PASS");
     println!("Decode-on-disk + Haskell replay + predecessor check: PASS");
     println!("Tampered stored signature and wrong prior ledger: REJECTED");
+    println!("Full history: 2 signed blocks, 4 transfers replayed from trusted genesis: PASS");
+    println!("Tampered ancestor, wrong genesis and wrong height: REJECTED");
     println!("Scope: synthetic genesis; no validator consensus or real payments");
     Ok(())
 }
