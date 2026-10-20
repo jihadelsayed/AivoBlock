@@ -20,6 +20,7 @@ import AivoBlock.Settlement (RewardEntitlement(..), settleFundedRewards)
 import AivoBlock.Ledger (Ledger(..), Account(..), applyVerifiedTransfer)
 import AivoBlock.LocalLedgerSnapshot (decodeLedgerSnapshot, encodeLedgerSnapshot)
 import AivoBlock.TransferAuth (verifySignedTransferV1)
+import AivoBlock.TransactionCommitment (signedTransactionIdV1, transactionRootV1, ledgerStateRootV1)
 import AivoBlock.Transaction (Transaction(..), mkAddress, addressBytes, mkAmount)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -442,11 +443,18 @@ ledgerTransitionResponse value =
       let verdict = do
             previous <- decodeLedgerSnapshot priorBytes
             verifySignedTransferV1 tx
+            identifier <- signedTransactionIdV1 tx
+            transactionRoot <- transactionRootV1 [identifier]
             updated <- applyVerifiedTransfer tx previous
-            encodeLedgerSnapshot updated
+            stateRoot <- ledgerStateRootV1 updated
+            encoded <- encodeLedgerSnapshot updated
+            pure (encoded, identifier, transactionRoot, stateRoot)
       in case verdict of
         Left problem -> decision False problem Nothing
-        Right bytes -> decision True "none" (Just (hexBytes bytes))
+        Right (bytes, identifier, transactionRoot, stateRoot) ->
+          decision True "none" (Just
+            (hexBytes bytes, hexHash identifier, hexHash transactionRoot,
+             hexHash stateRoot))
   where
     parseTransferFixture = withObject "ledger transfer fixture" $ \o -> do
       version <- o .: "version" :: Parser Word64
@@ -488,15 +496,19 @@ ledgerTransitionResponse value =
         decodeHex (a:b:rest) =
           fromIntegral (16 * digitToInt a + digitToInt b) : decodeHex rest
         decodeHex _ = []
-    decision :: Bool -> String -> Maybe String -> BS.ByteString
-    decision accepted reason nextState = BL.toStrict (encode (object
+    decision :: Bool -> String -> Maybe (String, String, String, String)
+             -> BS.ByteString
+    decision accepted reason result = BL.toStrict (encode (object
       [ "ok" .= True
       , "type" .= ("ledger_signed_transfer_fixture" :: String)
       , "protocol_version" .= (1 :: Int)
       , "accepted" .= accepted
       , "reason" .= (reason :: String)
       , "scope" .= ("ed25519_verified_local_transfer_only" :: String)
-      , "state_hex" .= nextState
+      , "state_hex" .= fmap (\(a,_,_,_) -> a) result
+      , "transaction_id" .= fmap (\(_,b,_,_) -> b) result
+      , "transactions_root" .= fmap (\(_,_,c,_) -> c) result
+      , "state_root" .= fmap (\(_,_,_,d) -> d) result
       ]))
 
 ledgerTransitionRequest :: Value -> Maybe BS.ByteString
