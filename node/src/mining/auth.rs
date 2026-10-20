@@ -208,12 +208,8 @@ mod tests {
         signed.assignment.range.count = DEFAULT_MAX_BATCH_UNITS + 1;
         signed.signature = key.sign(&assignment_signing_bytes(&signed)).to_bytes();
         assert_eq!(
-            AssignmentAuthorizer::new().verify_and_record(
-                &signed,
-                1,
-                signed.issuer_public_key,
-                10,
-            ),
+            AssignmentAuthorizer::new()
+                .verify_and_record(&signed, 1, signed.issuer_public_key, 10,),
             Err(AssignmentAuthError::InvalidRange)
         );
     }
