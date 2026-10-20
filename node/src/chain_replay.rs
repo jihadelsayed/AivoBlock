@@ -134,11 +134,15 @@ pub fn replay_local_chain(
             return Err("Missing trusted genesis at height zero".into());
         }
         let decoded = if raw.starts_with(REWARD_BODY_DOMAIN) {
-            ReplayBlock::Reward(decode_reward_block_v1(&raw, &current)
-                .map_err(|error| format!("Invalid reward ancestor: {error}"))?)
+            ReplayBlock::Reward(
+                decode_reward_block_v1(&raw, &current)
+                    .map_err(|error| format!("Invalid reward ancestor: {error}"))?,
+            )
         } else {
-            ReplayBlock::Signed(decode_signed_batch_v1(&raw, &current)
-                .map_err(|error| format!("Invalid signed ancestor: {error:?}"))?)
+            ReplayBlock::Signed(
+                decode_signed_batch_v1(&raw, &current)
+                    .map_err(|error| format!("Invalid signed ancestor: {error:?}"))?,
+            )
         };
         if decoded.header().height != expected_height || decoded.header().parent_hash == [0; 32] {
             return Err("Invalid signed/reward ancestor height or parent".into());
@@ -166,8 +170,12 @@ pub fn replay_local_chain(
                 // AI computation. Haskell independently replays the fee-funded
                 // effect, canonical receipt identities and replay markers.
                 let (state, _) = execute_reward_haskell(
-                    core, &ledger, &reward.batch_id, reward.budget,
-                    &reward.works, reward.header.height,
+                    core,
+                    &ledger,
+                    &reward.batch_id,
+                    reward.budget,
+                    &reward.works,
+                    reward.header.height,
                 )?;
                 reward_blocks += 1;
                 settled_receipts += reward.works.len();
