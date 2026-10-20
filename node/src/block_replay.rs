@@ -80,7 +80,8 @@ pub fn decode_signed_batch_v1(
         return Err(CommitmentError::InvalidBlockBytes);
     }
     let raw_header = &stored[header_at..count_at];
-    if Sha256::digest(raw_header).as_slice() != block_id {
+    let computed_id: [u8; 32] = Sha256::digest(raw_header).into();
+    if &computed_id != block_id {
         return Err(CommitmentError::InvalidBlockBytes);
     }
     let header = decode_header_v1(raw_header)?;
