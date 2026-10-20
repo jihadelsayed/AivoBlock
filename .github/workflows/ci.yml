@@ -87,6 +87,7 @@ jobs:
           cargo run -- ai-demo
           cargo run -- ai-verify
           cargo run -- ai-partition-demo
+          cargo run -- validator-quorum-demo
       - name: Build and test
         run: cargo test --all-targets
       - name: Clippy
