@@ -32,10 +32,10 @@ fn hex32(byte: u8) -> String {
     format!("{byte:02x}").repeat(32)
 }
 
-fn puzzle_json() -> String {
+fn puzzle_json(puzzle_id: &[u8; 32]) -> String {
     format!(
         r#"{{"puzzle_id":"{}","version":1,"model_commitment":"{}","input_commitment":"{}","rules_commitment":"{}","units":3,"deadline_height":100}}"#,
-        hex32(1),
+        hex_bytes(puzzle_id),
         "841c1f0051800864f7189935a818c964893e1b96fe1c610136c23a1284a254bc",
         "548121e870e795733aaabbca753b290431797562a55a1301fcf6113f568c0e3d",
         "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902"
@@ -46,16 +46,16 @@ fn execution_request(assignment: &Assignment) -> String {
     format!(
         r#"{{"protocol_version":1,"type":"execute_integer_inference","worker_id":"{}","puzzle":{},"start":{},"count":{},"rows":{ROWS_JSON},"weights":{WEIGHTS_JSON}}}"#,
         hex_bytes(&assignment.worker_id),
-        puzzle_json(),
+        puzzle_json(&assignment.puzzle_id),
         assignment.range.start,
         assignment.range.count,
     )
 }
 
-fn verification_request(proof_json: &str) -> String {
+fn verification_request(puzzle_id: &[u8; 32], proof_json: &str) -> String {
     format!(
         r#"{{"protocol_version":1,"type":"verify_integer_inference","puzzle":{},"rows":{ROWS_JSON},"weights":{WEIGHTS_JSON},"proof":{proof_json}}}"#,
-        puzzle_json()
+        puzzle_json(puzzle_id)
     )
 }
 
@@ -104,6 +104,12 @@ fn proof_json(assignment: &Assignment, commitment: &str) -> String {
 /// Run exactly two local assignments, comparing the complete worker reply
 /// with a Rust-computed canonical commitment before asking Python to verify.
 pub fn verify_demo_partitions() -> Result<ReceiptRegistry, String> {
+    verify_demo_partitions_for([1; 32])
+}
+
+/// Run the same authenticated Python fixture using a separately committed
+/// puzzle ID, allowing V2 replay to cross-check actual worker outputs.
+pub fn verify_demo_partitions_for(puzzle_id: [u8; 32]) -> Result<ReceiptRegistry, String> {
     let executable = env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -118,7 +124,6 @@ pub fn verify_demo_partitions() -> Result<ReceiptRegistry, String> {
     let client = PythonWorkerClient::new(executable, script)
         .map_err(|error| format!("Worker configuration: {error:?}"))?;
 
-    let puzzle_id = [1; 32];
     let mut scheduler = MiningScheduler::new();
     scheduler
         .add_puzzle(PuzzleTask {
@@ -181,7 +186,7 @@ pub fn verify_demo_partitions() -> Result<ReceiptRegistry, String> {
         }
 
         let verification = client
-            .exchange(verification_request(&proof).as_bytes())
+            .exchange(verification_request(&puzzle_id, &proof).as_bytes())
             .map_err(|error| format!("Python verification IPC: {error:?}"))?;
         if verification.as_slice() != VERIFIED_RESPONSE.as_bytes() {
             return Err(format!("Worker {index} proof failed local recomputation"));
@@ -191,7 +196,7 @@ pub fn verify_demo_partitions() -> Result<ReceiptRegistry, String> {
             // A forged commitment must fail even with otherwise valid fields.
             let tampered = proof.replace(&commitment, &hex32(0));
             let rejected = client
-                .exchange(verification_request(&tampered).as_bytes())
+                .exchange(verification_request(&puzzle_id, &tampered).as_bytes())
                 .map_err(|error| format!("Tampered-proof IPC: {error:?}"))?;
             if rejected.as_slice() != REJECTED_RESPONSE.as_bytes() {
                 return Err("Tampered result commitment was not rejected".to_owned());

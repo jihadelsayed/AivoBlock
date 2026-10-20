@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use sha2::{Digest, Sha256};
 
+use crate::ai_proof_v2::{decode_proof_block_v2, DecodedProofBlockV2, BODY_DOMAIN_V2};
 use crate::batch_pipeline::execute_signed_batch_haskell;
 use crate::block_replay::{decode_header_v1, decode_signed_batch_v1, DecodedSignedBatch};
 use crate::ipc::haskell::HaskellValidatorClient;
@@ -32,14 +33,16 @@ pub struct ChainReplayReport {
 
 enum ReplayBlock {
     Signed(DecodedSignedBatch),
-    Reward(DecodedRewardBlock),
+    LegacyReward(DecodedRewardBlock),
+    VerifiedReward(Box<DecodedProofBlockV2>),
 }
 
 impl ReplayBlock {
     fn header(&self) -> &crate::transaction_commitment::CommittedHeaderV1 {
         match self {
             Self::Signed(block) => &block.header,
-            Self::Reward(block) => &block.header,
+            Self::LegacyReward(block) => &block.header,
+            Self::VerifiedReward(block) => &block.header,
         }
     }
 }
@@ -93,6 +96,63 @@ pub fn replay_local_chain(
     trusted_genesis_id: &[u8; 32],
     trusted_genesis_state: &LedgerState,
 ) -> Result<ChainReplayReport, String> {
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        None,
+        false,
+    )
+}
+
+/// This is the independently verifying local-chain audit. Its authority
+/// key comes from trusted operator configuration, never from a stored block.
+/// V1 caller-attested AI reward blocks are rejected by default.
+pub fn replay_local_chain_with_ai_authority(
+    db: &RocksDbStore,
+    core: &HaskellValidatorClient,
+    trusted_genesis_id: &[u8; 32],
+    trusted_genesis_state: &LedgerState,
+    trusted_task_authority: &[u8; 32],
+) -> Result<ChainReplayReport, String> {
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        Some(trusted_task_authority),
+        false,
+    )
+}
+
+/// Explicitly unsafe historical diagnostic; NEVER use for network block
+/// validation. Retains the #20 fixture without allowing its unverified
+/// receipts through the normal signed-genesis audit.
+pub fn replay_local_chain_legacy_v1(
+    db: &RocksDbStore,
+    core: &HaskellValidatorClient,
+    trusted_genesis_id: &[u8; 32],
+    trusted_genesis_state: &LedgerState,
+) -> Result<ChainReplayReport, String> {
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        None,
+        true,
+    )
+}
+
+fn replay_local_chain_policy(
+    db: &RocksDbStore,
+    core: &HaskellValidatorClient,
+    trusted_genesis_id: &[u8; 32],
+    trusted_genesis_state: &LedgerState,
+    trusted_task_authority: Option<&[u8; 32]>,
+    allow_legacy_v1: bool,
+) -> Result<ChainReplayReport, String> {
     let tip = db
         .get(Column::ChainState, b"tip")
         .map_err(|error| format!("Read chain tip: {error}"))?
@@ -133,10 +193,22 @@ pub fn replay_local_chain(
         if expected_height == 0 || reverse_children.len() >= MAX_AUDIT_BLOCKS {
             return Err("Missing trusted genesis at height zero".into());
         }
-        let decoded = if raw.starts_with(REWARD_BODY_DOMAIN) {
-            ReplayBlock::Reward(
+        let decoded = if raw.starts_with(BODY_DOMAIN_V2) {
+            let authority = trusted_task_authority
+                .ok_or("V2 AI proof requires an externally trusted task authority")?;
+            ReplayBlock::VerifiedReward(Box::new(
+                decode_proof_block_v2(&raw, &current, authority)
+                    .map_err(|error| format!("Invalid independently verified AI proof: {error}"))?,
+            ))
+        } else if raw.starts_with(REWARD_BODY_DOMAIN) {
+            if !allow_legacy_v1 {
+                return Err(
+                    "Legacy caller-attested V1 rewards are not independently verifiable".into(),
+                );
+            }
+            ReplayBlock::LegacyReward(
                 decode_reward_block_v1(&raw, &current)
-                    .map_err(|error| format!("Invalid reward ancestor: {error}"))?,
+                    .map_err(|error| format!("Invalid legacy reward ancestor: {error}"))?,
             )
         } else {
             ReplayBlock::Signed(
@@ -165,10 +237,10 @@ pub fn replay_local_chain(
                 signed_blocks += 1;
                 state
             }
-            ReplayBlock::Reward(reward) => {
-                // The stored caller-attested work is NOT independent proof of
-                // AI computation. Haskell independently replays the fee-funded
-                // effect, canonical receipt identities and replay markers.
+            ReplayBlock::LegacyReward(reward) => {
+                // Explicitly unsafe compatibility path, prohibited in strict
+                // replay above. The old receipts contain no independently
+                // reproducible model/input or worker signatures.
                 let (state, _) = execute_reward_haskell(
                     core,
                     &ledger,
@@ -179,6 +251,22 @@ pub fn replay_local_chain(
                 )?;
                 reward_blocks += 1;
                 settled_receipts += reward.works.len();
+                state
+            }
+            ReplayBlock::VerifiedReward(verified) => {
+                // decode_proof_block_v2 already authenticated the task signer,
+                // worker signatures, all task commitments and recomputed every
+                // claimed integer-inference result from stored bytes.
+                let (state, _) = execute_reward_haskell(
+                    core,
+                    &ledger,
+                    &verified.proof.batch_id,
+                    verified.proof.task.authorized_budget,
+                    &verified.works,
+                    verified.header.height,
+                )?;
+                reward_blocks += 1;
+                settled_receipts += verified.works.len();
                 state
             }
         };
