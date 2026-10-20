@@ -629,7 +629,8 @@ pub fn build_block_v3(
         claims: ordered,
     };
     let works = verify_block_work_v3(&block, rules)?;
-    let settled = engine.settle(rules.policy, parent.prior, &settlement_input(&block, &works))?;
+    let input = settlement_input(&block, &works);
+    let settled = engine.settle(rules.policy, parent.prior, &input)?;
     block.header.state_root = ledger_state_root_v1(&settled.post).map_err(|e| format!("{e:?}"))?;
     let (id, bytes) = encode_block_v3(&block)?;
     Ok(ExecutedBlockV3 {
@@ -680,7 +681,8 @@ pub fn execute_block_v3(
     if block.issuance != expected_issuance {
         return Err("Block issuance differs from the genesis-bound schedule".into());
     }
-    let settled = engine.settle(rules.policy, parent.prior, &settlement_input(&block, &works))?;
+    let input = settlement_input(&block, &works);
+    let settled = engine.settle(rules.policy, parent.prior, &input)?;
     if header.state_root != ledger_state_root_v1(&settled.post).map_err(|e| format!("{e:?}"))? {
         return Err("Block state root differs from independent settlement".into());
     }
@@ -917,9 +919,10 @@ pub mod tests {
             assert_eq!(executed, built);
             assert_eq!(built.block.issuance, 50);
             assert_eq!(built.settled.post.fee_pool, 570);
+            let accounts = &built.settled.post.accounts;
             let mut balances: Vec<u64> = worker_keys()
                 .iter()
-                .map(|key| built.settled.post.accounts[&key.verifying_key().to_bytes()].balance)
+                .map(|key| accounts[&key.verifying_key().to_bytes()].balance)
                 .collect();
             balances.sort();
             assert_eq!(balances, vec![26, 27, 27]);

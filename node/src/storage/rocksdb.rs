@@ -817,7 +817,10 @@ mod tests {
             })
         );
         store.put_metadata_synced(b"vote-lock", b"x").unwrap();
-        assert_eq!(store.get_metadata(b"vote-lock").unwrap(), Some(b"x".to_vec()));
+        assert_eq!(
+            store.get_metadata(b"vote-lock").unwrap(),
+            Some(b"x".to_vec())
+        );
         drop(store);
         let _ = std::fs::remove_dir_all(path);
     }
