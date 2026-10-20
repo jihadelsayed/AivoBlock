@@ -158,7 +158,14 @@ pub fn demo() -> Result<(), String> {
         }
         forged = proof.clone();
         forged.task.weights[0] += 1;
-        if commit_proof_block_v2(&db, &core, &trusted_key, block_input(&forged, &initial, &genesis_id)).is_ok() {
+        if commit_proof_block_v2(
+            &db,
+            &core,
+            &trusted_key,
+            block_input(&forged, &initial, &genesis_id),
+        )
+        .is_ok()
+        {
             return Err("Changed model weights passed proof verification".into());
         }
         if commit_proof_block_v2(
@@ -175,7 +182,12 @@ pub fn demo() -> Result<(), String> {
             return Err("Rejected AI proof mutated genesis balances".into());
         }
 
-        block_id = commit_proof_block_v2(&db, &core, &trusted_key, block_input(&proof, &initial, &genesis_id))?;
+        block_id = commit_proof_block_v2(
+            &db,
+            &core,
+            &trusted_key,
+            block_input(&proof, &initial, &genesis_id),
+        )?;
         expected = db
             .read_local_ledger_state()
             .map_err(|e| e.to_string())?
