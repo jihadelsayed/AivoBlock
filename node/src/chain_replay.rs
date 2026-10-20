@@ -34,7 +34,7 @@ pub struct ChainReplayReport {
 enum ReplayBlock {
     Signed(DecodedSignedBatch),
     LegacyReward(DecodedRewardBlock),
-    VerifiedReward(DecodedProofBlockV2),
+    VerifiedReward(Box<DecodedProofBlockV2>),
 }
 
 impl ReplayBlock {
@@ -196,10 +196,10 @@ fn replay_local_chain_policy(
         let decoded = if raw.starts_with(BODY_DOMAIN_V2) {
             let authority = trusted_task_authority
                 .ok_or("V2 AI proof requires an externally trusted task authority")?;
-            ReplayBlock::VerifiedReward(
+            ReplayBlock::VerifiedReward(Box::new(
                 decode_proof_block_v2(&raw, &current, authority)
                     .map_err(|error| format!("Invalid independently verified AI proof: {error}"))?,
-            )
+            ))
         } else if raw.starts_with(REWARD_BODY_DOMAIN) {
             if !allow_legacy_v1 {
                 return Err(
