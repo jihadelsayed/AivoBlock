@@ -191,18 +191,92 @@ pub fn verify_audited_tip_certificate_v1(
     }
     let stored = db.get(Column::ChainState, b"tip").map_err(|e| e.to_string())?
         .ok_or("Missing local tip metadata")?;
-    if stored.as_slice() != confirmed.block_id {
+    if stored.as_slice() != confirmed.block_id.as_slice() {
         return Err("Local tip differs from audited certificate".into());
     }
     let height = db.get(Column::ChainState, b"height").map_err(|e| e.to_string())?
         .ok_or("Missing local height metadata")?;
-    if height.as_slice() != confirmed.height.to_be_bytes() {
+    if height.as_slice() != confirmed.height.to_be_bytes().as_slice() {
         return Err("Certificate height differs from replayed chain height".into());
     }
     if db.get(Column::Blocks, &confirmed.block_id).map_err(|e| e.to_string())?.is_none() {
         return Err("Certified block is missing from local storage".into());
     }
     Ok(confirmed)
+}
+
+/// TEST-ONLY fixture using publicly known, deterministic signing seeds.
+/// DO NOT use any of these keys for a real validator or transferable asset.
+/// The fixed membership and exact vote messages are useful for integration
+/// testing the attestation after signed-genesis AI-proof history replay.
+pub fn local_quorum_fixture_v1(
+    block_id: [u8; 32],
+    height: u64,
+    round: u64,
+) -> Result<(TrustedValidatorSetV1, QuorumCertificateV1), String> {
+    use ed25519_dalek::{Signer, SigningKey};
+    let signers = [
+        SigningKey::from_bytes(&[21; 32]),
+        SigningKey::from_bytes(&[22; 32]),
+        SigningKey::from_bytes(&[23; 32]),
+    ];
+    let members = [
+        ValidatorMemberV1 { public_key: signers[0].verifying_key().to_bytes(), voting_power: 3 },
+        ValidatorMemberV1 { public_key: signers[1].verifying_key().to_bytes(), voting_power: 2 },
+        ValidatorMemberV1 { public_key: signers[2].verifying_key().to_bytes(), voting_power: 1 },
+    ];
+    let validators = TrustedValidatorSetV1::new(&members)?;
+    let mut certificate = QuorumCertificateV1 {
+        chain_id: 1,
+        height,
+        round,
+        block_id,
+        validator_set_commitment: validators.commitment(),
+        votes: Vec::new(),
+    };
+    // Membership weight 3+2 gives an exact strict >2/3 quorum of 5/6.
+    for signer in signers.iter().take(2) {
+        let public_key = signer.verifying_key().to_bytes();
+        let signature = signer.sign(
+            &precommit_signing_bytes_v1(&certificate, &public_key)?
+        ).to_bytes();
+        certificate.votes.push(SignedPrecommitV1 { public_key, signature });
+    }
+    certificate.votes.sort_by_key(|vote| vote.public_key);
+    Ok((validators, certificate))
+}
+
+/// Deterministic local certificate diagnostic; no network vote exchange
+/// or fork choice is performed and no assertion of consensus finality.
+pub fn demo() -> Result<(), String> {
+    let (validators, certificate) = local_quorum_fixture_v1([7; 32], 1, 0)?;
+    let checked = verify_quorum_certificate_v1(&validators, &certificate)?;
+    if checked.signed_power != 5 || checked.required_power != 5
+        || validators.total_power() != 6 || checked.block_id != [7; 32]
+        || checked.validator_set_commitment != validators.commitment()
+        || checked.height != 1 || checked.round != 0
+    {
+        return Err("Authenticated weighted quorum did not match fixture".into());
+    }
+    let mut bad = certificate.clone();
+    bad.height += 1;
+    if verify_quorum_certificate_v1(&validators, &bad).is_ok() {
+        return Err("Cross-height replay was accepted".into());
+    }
+    bad = certificate.clone();
+    bad.round += 1;
+    if verify_quorum_certificate_v1(&validators, &bad).is_ok() {
+        return Err("Cross-round replay was accepted".into());
+    }
+    bad = certificate.clone();
+    bad.votes[0].signature[0] ^= 1;
+    if verify_quorum_certificate_v1(&validators, &bad).is_ok() {
+        return Err("Forged validator signature was accepted".into());
+    }
+    println!("Authenticated validator certificate: PASS (5/6 voting power, threshold 5)");
+    println!("Wrong height, wrong round and forged signature: REJECTED");
+    println!("Scope: fixed trusted validator-set quorum primitive, not BFT finality");
+    Ok(())
 }
 
 #[cfg(test)]
