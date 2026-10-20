@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ipc::haskell::HaskellValidatorClient;
-use crate::storage::ledger_state::{decode_ledger_state, encode_ledger_state};
+use crate::storage::ledger_state::encode_ledger_state;
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
 use crate::transaction_auth::{
     transfer_signing_bytes_v1, verify_signed_transfer_v1, SignedTransferV1,
@@ -52,61 +52,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
-    if raw.len() % 2 != 0 || raw.len() > 2 * 1024 * 1024 {
-        return Err("Noncanonical or oversized Haskell snapshot hex".to_owned());
-    }
-    raw.as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let a = (pair[0] as char)
-                .to_digit(16)
-                .ok_or("Invalid snapshot hex")?;
-            let b = (pair[1] as char)
-                .to_digit(16)
-                .ok_or("Invalid snapshot hex")?;
-            Ok(((a << 4) | b) as u8)
-        })
-        .collect::<Result<Vec<_>, &str>>()
-        .map_err(str::to_owned)
-}
-
-/// The response must be from a **trusted local executable**, not network
-/// input. This small prototype adapter recognizes one unescaped hex string,
-/// validates the response envelope, then strictly decodes typed binary state.
-/// Replace with a versioned JSON/Protobuf decoder for untrusted deployments.
-fn decode_transition_response(response: &[u8]) -> Result<LedgerState, String> {
-    let text = std::str::from_utf8(response).map_err(|_| "Non-UTF8 Haskell ledger response")?;
-    if !text.contains(r#""type":"ledger_signed_transfer_fixture""#)
-        || !text.contains(r#""scope":"ed25519_verified_local_transfer_only""#)
-        || !text.contains(r#""protocol_version":1"#)
-        || !text.contains(r#""ok":true"#)
-        || !text.contains(r#""accepted":true"#)
-    {
-        return Err(format!("Haskell rejected ledger transition: {text}"));
-    }
-    let field = r#""state_hex":""#;
-    if text.matches(field).count() != 1 {
-        return Err("Missing or ambiguous Haskell ledger state".to_owned());
-    }
-    let suffix = text
-        .split_once(field)
-        .ok_or("Missing Haskell state field")?
-        .1;
-    let hex_value = suffix
-        .split_once('"')
-        .ok_or("Unterminated Haskell state hex")?
-        .0;
-    if !hex_value
-        .bytes()
-        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
-        return Err("Noncanonical Haskell hex encoding".to_owned());
-    }
-    let bytes = decode_hex(hex_value)?;
-    decode_ledger_state(&bytes).map_err(|error| format!("Malformed Haskell ledger: {error:?}"))
-}
-
 /// Authenticate the canonical Ed25519 transfer locally, then invoke Haskell
 /// to independently authenticate it and compute the ledger transition.
 /// The caller must load prior state from trusted RocksDB; this function does
@@ -134,28 +79,14 @@ pub fn compute_transfer_via_haskell(
         hex(&transfer.public_key),
         hex(&transfer.signature)
     );
-    let response = core
-        .exchange(request.as_bytes())
-        .map_err(|error| format!("Haskell ledger IPC failure: {error:?}"))?;
-    let next = decode_transition_response(&response)?;
     let identifier = signed_transaction_id_v1(&transfer)
         .map_err(|error| format!("Rust transaction ID: {error:?}"))?;
     let root = transaction_root_v1(&[identifier])
         .map_err(|error| format!("Rust transaction Merkle root: {error:?}"))?;
-    let state_root = ledger_state_root_v1(&next)
-        .map_err(|error| format!("Rust ledger state root: {error:?}"))?;
-    let text = std::str::from_utf8(&response).map_err(|_| "Non-UTF8 commitment response")?;
-    for (field, expected) in [
-        ("transaction_id", hex(&identifier)),
-        ("transactions_root", hex(&root)),
-        ("state_root", hex(&state_root)),
-    ] {
-        let literal = format!(r#""{field}":"{expected}""#);
-        if text.matches(&literal).count() != 1 {
-            return Err(format!("Haskell commitment mismatch for {field}"));
-        }
-    }
-    Ok(next)
+    let response = core
+        .exchange(request.as_bytes())
+        .map_err(|error| format!("Haskell ledger IPC failure: {error:?}"))?;
+    crate::ipc::ledger_responses::decode_signed_transfer_reply(&response, &identifier, &root)
 }
 
 fn signed_block_header(
@@ -369,7 +300,6 @@ pub fn demo() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn rejects_malformed_and_forged_ipc_response_envelopes() {
         for response in [
@@ -377,7 +307,9 @@ mod tests {
             br#"{"ok":true,"type":"ledger_signed_transfer_fixture","protocol_version":1,"scope":"ed25519_verified_local_transfer_only","accepted":false,"state_hex":"00"}"#,
             br#"{"ok":true,"type":"ledger_signed_transfer_fixture","protocol_version":1,"scope":"ed25519_verified_local_transfer_only","accepted":true,"state_hex":"zz"}"#,
         ] {
-            assert!(decode_transition_response(response).is_err());
+            assert!(crate::ipc::ledger_responses::decode_signed_transfer_reply(
+                response, &[1;32], &[2;32]
+            ).is_err());
         }
     }
 }

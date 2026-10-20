@@ -7,6 +7,7 @@
 //! blockchain serialization.
 
 pub mod haskell;
+pub mod ledger_responses;
 pub mod python;
 
 /// Maximum permitted payload size for one local IPC message (4 MiB).
