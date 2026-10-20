@@ -796,8 +796,14 @@ mod tests {
                 .append_atomic_ledger_block(&[6; 32], &[0; 32], 0, b"genesis", &genesis, None)
                 .unwrap();
         }
-        assert!(matches!(write(5, b"qc"), Err(StorageError::InvalidLedgerTransition)));
-        assert!(matches!(write(7, b"qc"), Err(StorageError::InvalidLedgerTransition)));
+        assert!(matches!(
+            write(5, b"qc"),
+            Err(StorageError::InvalidLedgerTransition)
+        ));
+        assert!(matches!(
+            write(7, b"qc"),
+            Err(StorageError::InvalidLedgerTransition)
+        ));
         assert!(write(6, b"").is_err());
         {
             let store = RocksDbStore::open(&path).unwrap();

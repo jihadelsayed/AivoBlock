@@ -238,8 +238,8 @@ pub fn verify_precommit_v1(
         validator_set_commitment: validators.commitment,
         votes: Vec::new(),
     };
-    let verifier =
-        VerifyingKey::from_bytes(&vote.public_key).map_err(|_| "Invalid validator signature key")?;
+    let verifier = VerifyingKey::from_bytes(&vote.public_key)
+        .map_err(|_| "Invalid validator signature key")?;
     verifier
         .verify_strict(
             &precommit_signing_bytes_v1(&target, &vote.public_key)?,

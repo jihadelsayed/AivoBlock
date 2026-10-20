@@ -607,7 +607,10 @@ pub fn build_block_v3(
     task: &AiTaskV3,
     claims: &[WorkClaimV3],
 ) -> Result<ExecutedBlockV3, String> {
-    let height = parent.parent_height.checked_add(1).ok_or("Height overflow")?;
+    let height = parent
+        .parent_height
+        .checked_add(1)
+        .ok_or("Height overflow")?;
     let mut ordered = claims.to_vec();
     ordered.sort_by_key(|claim| claim.partition);
     let issuance = rules
