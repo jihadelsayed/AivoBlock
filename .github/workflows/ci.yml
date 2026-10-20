@@ -57,12 +57,6 @@ jobs:
           components: rustfmt, clippy
       - name: Install RocksDB build prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Build and test
-        run: cargo test --all-targets
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -74,6 +68,12 @@ jobs:
           cargo run -- ai-demo
           cargo run -- ai-verify
           cargo run -- ai-partition-demo
+      - name: Build and test
+        run: cargo test --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
   cross_language:
     name: Rust ↔ Haskell IPC integration
