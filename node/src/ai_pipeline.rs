@@ -258,14 +258,16 @@ pub fn demo() -> Result<(), String> {
         let response = core
             .exchange(request.as_bytes())
             .map_err(|error| format!("Haskell reward eligibility IPC: {error:?}"))?;
-        let response = std::str::from_utf8(&response)
-            .map_err(|_| "Haskell returned non-UTF8 response")?;
+        let response =
+            std::str::from_utf8(&response).map_err(|_| "Haskell returned non-UTF8 response")?;
         if !response.contains(r#""eligible":true"#)
             || !response.contains(r#""scope":"caller_attested_verification_only""#)
             || !response.contains(r#""units":2"#)
             || !response.contains(r#""units":1"#)
         {
-            return Err(format!("Haskell rejected validated fixture receipts: {response}"));
+            return Err(format!(
+                "Haskell rejected validated fixture receipts: {response}"
+            ));
         }
         println!("Haskell reward eligibility IPC: PASS (2 caller-attested receipts)");
     }
