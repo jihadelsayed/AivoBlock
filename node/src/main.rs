@@ -4,6 +4,8 @@
 //! integration. No blockchain network is started by these commands.
 
 mod ai_pipeline;
+mod batch_commitment;
+mod batch_pipeline;
 #[allow(dead_code)]
 // IPC error variants and frame helpers are part of the unfinished node protocol.
 mod ipc;
@@ -606,6 +608,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command] if command == "ai-verify" => ai_verify(),
         [command] if command == "ai-partition-demo" => ai_pipeline::demo(),
         [command] if command == "ledger-transition-demo" => ledger_bridge::demo(),
+        [command] if command == "multi-transfer-demo" => batch_pipeline::demo(),
         [command] if command == "storage-demo" => storage_demo(),
         [command] if command == "validated-storage-demo" => validated_storage_demo(),
         [command] if command == "header-hash" => header_hash_demo(),
