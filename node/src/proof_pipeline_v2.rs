@@ -24,12 +24,10 @@ use crate::ipc::haskell::HaskellValidatorClient;
 use crate::mining::receipts::VerifiedWorkReceipt;
 use crate::mining::scheduler::WorkRange;
 use crate::storage::{Column, KeyValueStore, LedgerState, LocalAccount, RocksDbStore};
-use crate::validator_certificate::{
-    local_quorum_fixture_v1, verify_audited_tip_certificate_v1,
-};
 use crate::transaction_commitment::{
     canonical_header_v1, ledger_state_root_v1, transaction_root_v1, CommittedHeaderV1,
 };
+use crate::validator_certificate::{local_quorum_fixture_v1, verify_audited_tip_certificate_v1};
 
 fn fixture_proof(authority: &SigningKey) -> Result<RewardProofV2, String> {
     let weights = vec![2, 3];
@@ -248,22 +246,16 @@ pub fn demo() -> Result<(), String> {
         // authenticate a separate, fixed-set weighted precommit certificate
         // for the actual audited tip; this is NOT a BFT finality claim.
         let (validators, certificate) = local_quorum_fixture_v1(block_id, 1, 0)?;
-        let quorum = verify_audited_tip_certificate_v1(
-            &db, &audited, &validators, &certificate,
-        )?;
+        let quorum = verify_audited_tip_certificate_v1(&db, &audited, &validators, &certificate)?;
         if quorum.signed_power != 5 || quorum.required_power != 5 {
             return Err("Weighted validator certificate has the wrong quorum".into());
         }
         let (_, wrong_tip) = local_quorum_fixture_v1([8; 32], 1, 0)?;
-        if verify_audited_tip_certificate_v1(
-            &db, &audited, &validators, &wrong_tip,
-        ).is_ok() {
+        if verify_audited_tip_certificate_v1(&db, &audited, &validators, &wrong_tip).is_ok() {
             return Err("Attestation of a different block passed local tip audit".into());
         }
         let (_, wrong_height) = local_quorum_fixture_v1(block_id, 2, 0)?;
-        if verify_audited_tip_certificate_v1(
-            &db, &audited, &validators, &wrong_height,
-        ).is_ok() {
+        if verify_audited_tip_certificate_v1(&db, &audited, &validators, &wrong_height).is_ok() {
             return Err("Certificate for a different height passed chain-tip audit".into());
         }
         let raw = db
