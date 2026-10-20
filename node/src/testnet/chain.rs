@@ -51,6 +51,9 @@ pub struct StartupReport {
     pub replay_ms: u64,
 }
 
+/// A validator's durable precommit lock for one height: block ID and bytes.
+pub type VoteLock = ([u8; 32], Vec<u8>);
+
 pub struct Chain {
     db: RocksDbStore,
     pub height: u64,
@@ -265,7 +268,7 @@ impl Chain {
 
     /// Durable per-height vote lock: a validator never precommits two
     /// different blocks at one height, even across crashes and restarts.
-    pub fn load_vote_lock(&self, height: u64) -> Result<Option<([u8; 32], Vec<u8>)>, String> {
+    pub fn load_vote_lock(&self, height: u64) -> Result<Option<VoteLock>, String> {
         let raw = self
             .db
             .get_metadata(&lock_key(height))

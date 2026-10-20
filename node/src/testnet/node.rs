@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::chain::{rules, Chain, StartupReport};
+use super::chain::{rules, Chain, StartupReport, VoteLock};
 use super::config::{NetworkConfig, NodeKeys, CHAIN_ID};
 use super::control::{spawn_control_server, ControlRequest};
 use super::peer::{spawn_dialer, spawn_listener, PeerLink, Transport};
@@ -297,7 +297,7 @@ struct Node {
     round_started: Option<Instant>,
     proposed_round: Option<u64>,
     voted_rounds: BTreeSet<u64>,
-    lock: Option<([u8; 32], Vec<u8>)>,
+    lock: Option<VoteLock>,
     candidates: BTreeMap<[u8; 32], ExecutedBlockV3>,
     votes: BTreeMap<(u64, [u8; 32]), BTreeMap<[u8; 32], SignedPrecommitV1>>,
     future_commits: BTreeMap<u64, (Vec<u8>, QuorumCertificateV1)>,
