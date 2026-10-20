@@ -103,7 +103,7 @@ fn proof_json(assignment: &Assignment, commitment: &str) -> String {
 
 /// Run exactly two local assignments, comparing the complete worker reply
 /// with a Rust-computed canonical commitment before asking Python to verify.
-pub fn verify_demo_partitions() -> Result<Vec<VerifiedWorkReceipt>, String> {
+pub fn verify_demo_partitions() -> Result<ReceiptRegistry, String> {
     let executable = env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -232,13 +232,13 @@ pub fn verify_demo_partitions() -> Result<Vec<VerifiedWorkReceipt>, String> {
     if verified_receipts.len() != 2 {
         return Err("Expected two locally verified work receipts".to_owned());
     }
-    Ok(verified_receipts)
+    Ok(receipts)
 }
 
 /// Keep the original local partition demo and its synthetic compatibility
 /// diagnostics; a block-settlement demo reuses ONLY these admitted results.
 pub fn demo() -> Result<(), String> {
-    let verified_receipts = verify_demo_partitions()?;
+    let verified_receipts = verify_demo_partitions()?.receipts_for([1; 32]);
     // Optional local cross-language diagnostic. Only Rust-recomputed receipts
     // are serialized. Haskell still relies on Rust's verification assertion.
     if let Some(core_path) =
