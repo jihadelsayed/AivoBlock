@@ -6,10 +6,10 @@ use std::collections::HashSet;
 
 use sha2::{Digest, Sha256};
 
+use crate::ai_proof_v2::{decode_proof_block_v2, DecodedProofBlockV2, BODY_DOMAIN_V2};
 use crate::batch_pipeline::execute_signed_batch_haskell;
 use crate::block_replay::{decode_header_v1, decode_signed_batch_v1, DecodedSignedBatch};
 use crate::ipc::haskell::HaskellValidatorClient;
-use crate::ai_proof_v2::{decode_proof_block_v2, DecodedProofBlockV2, BODY_DOMAIN_V2};
 use crate::reward_block::{
     decode_reward_block_v1, execute_reward_haskell, DecodedRewardBlock, REWARD_BODY_DOMAIN,
 };
@@ -96,7 +96,14 @@ pub fn replay_local_chain(
     trusted_genesis_id: &[u8; 32],
     trusted_genesis_state: &LedgerState,
 ) -> Result<ChainReplayReport, String> {
-    replay_local_chain_policy(db, core, trusted_genesis_id, trusted_genesis_state, None, false)
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        None,
+        false,
+    )
 }
 
 /// This is the independently verifying local-chain audit. Its authority
@@ -109,8 +116,14 @@ pub fn replay_local_chain_with_ai_authority(
     trusted_genesis_state: &LedgerState,
     trusted_task_authority: &[u8; 32],
 ) -> Result<ChainReplayReport, String> {
-    replay_local_chain_policy(db, core, trusted_genesis_id, trusted_genesis_state,
-        Some(trusted_task_authority), false)
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        Some(trusted_task_authority),
+        false,
+    )
 }
 
 /// Explicitly unsafe historical diagnostic; NEVER use for network block
@@ -122,7 +135,14 @@ pub fn replay_local_chain_legacy_v1(
     trusted_genesis_id: &[u8; 32],
     trusted_genesis_state: &LedgerState,
 ) -> Result<ChainReplayReport, String> {
-    replay_local_chain_policy(db, core, trusted_genesis_id, trusted_genesis_state, None, true)
+    replay_local_chain_policy(
+        db,
+        core,
+        trusted_genesis_id,
+        trusted_genesis_state,
+        None,
+        true,
+    )
 }
 
 fn replay_local_chain_policy(
@@ -176,11 +196,15 @@ fn replay_local_chain_policy(
         let decoded = if raw.starts_with(BODY_DOMAIN_V2) {
             let authority = trusted_task_authority
                 .ok_or("V2 AI proof requires an externally trusted task authority")?;
-            ReplayBlock::VerifiedReward(decode_proof_block_v2(&raw, &current, authority)
-                .map_err(|error| format!("Invalid independently verified AI proof: {error}"))?)
+            ReplayBlock::VerifiedReward(
+                decode_proof_block_v2(&raw, &current, authority)
+                    .map_err(|error| format!("Invalid independently verified AI proof: {error}"))?,
+            )
         } else if raw.starts_with(REWARD_BODY_DOMAIN) {
             if !allow_legacy_v1 {
-                return Err("Legacy caller-attested V1 rewards are not independently verifiable".into());
+                return Err(
+                    "Legacy caller-attested V1 rewards are not independently verifiable".into(),
+                );
             }
             ReplayBlock::LegacyReward(
                 decode_reward_block_v1(&raw, &current)
@@ -218,8 +242,12 @@ fn replay_local_chain_policy(
                 // replay above. The old receipts contain no independently
                 // reproducible model/input or worker signatures.
                 let (state, _) = execute_reward_haskell(
-                    core, &ledger, &reward.batch_id, reward.budget,
-                    &reward.works, reward.header.height,
+                    core,
+                    &ledger,
+                    &reward.batch_id,
+                    reward.budget,
+                    &reward.works,
+                    reward.header.height,
                 )?;
                 reward_blocks += 1;
                 settled_receipts += reward.works.len();
@@ -230,9 +258,12 @@ fn replay_local_chain_policy(
                 // worker signatures, all task commitments and recomputed every
                 // claimed integer-inference result from stored bytes.
                 let (state, _) = execute_reward_haskell(
-                    core, &ledger, &verified.proof.batch_id,
+                    core,
+                    &ledger,
+                    &verified.proof.batch_id,
                     verified.proof.task.authorized_budget,
-                    &verified.works, verified.header.height,
+                    &verified.works,
+                    verified.header.height,
                 )?;
                 reward_blocks += 1;
                 settled_receipts += verified.works.len();
