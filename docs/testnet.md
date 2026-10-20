@@ -169,6 +169,50 @@ values, gapped partitions, replay of a settled task at the next height,
 malformed and oversized IPC replies, duplicated JSON keys, cross-height /
 cross-round / cross-set vote replay, and supply-violating storage writes.
 
+## Verified results
+
+First full run in GitHub Actions (`ubuntu-24.04`, job *Docker private
+testnet*, [run 39512658389](https://github.com/jihadelsayed/AivoBlock/actions/runs/39512658389),
+commit `ec96aef`); every line below was asserted by the harness on every node.
+
+**Three-node demo** (quorum 3/3, all checks passed in 15 s):
+
+| Step | Observed |
+| --- | --- |
+| Mutual authentication | 3 nodes, each with 2 authenticated peers, after 1.5 s; unregistered key refused and counted |
+| Engines | every node: Haskell settlement cross-checked by the Rust mirror; Python worker |
+| Height 1 | original fixture workload, 3 worker partitions, 3/3 precommits, finalized 1.5 s after submission |
+| Height 2 | seeded 24×8 workload, 3 partitions, finalized in 1.5 s |
+| Adversarial suite | all 19 cases behaved as expected (see table below): every forged, expired, overlapping, manipulated, tampered or replayed input refused with the exact reason, e.g. `Claimed AI result differs from independent recomputation`, `Block does not extend the finalized parent`, `task expired: deadline 2 is below next height 3` |
+| Heights 3–4 | the pending legitimate adversarial-suite task plus a new one; both finalized |
+| Restart of node-3 | replayed 4 finalized blocks from RocksDB, reused its chain, rejoined; height 5 finalized by all three |
+| Economics | supply 101 000 → 101 250 (5 × 50 issued); fee pool 1 000 → 858 (budgets 30+40+12+30+30); workers paid 132 + 132 + 128 = 392 = 142 fees + 250 issuance — identical on all nodes and equal to the independent Python prediction |
+
+**Four-validator fault scenario** (quorum 3/4, all checks passed in 19 s):
+
+| Step | Observed |
+| --- | --- |
+| Height 1 | 4 worker partitions, finalized with ≥ 3/4 precommits |
+| node-4 stopped | heights 2 and 3 finalized by the remaining 3 validators (3/4 power) |
+| node-4 restarted | replayed its 1 persisted block, synced 2 certified blocks, identical state |
+| Leader crash | node-3, round-0 leader of height 4, killed; height 4 finalized in **round 1** by the next leader; node-3 then recovered |
+| Economics | supply 101 200 (4 × 50); fee pool 880; workers 74 + 47 + 101 + 98 = 320 = 120 fees + 200 issuance on all nodes |
+
+**Benchmarks** (`bench --iterations 20`, release build in the CI container,
+largest accepted task: 256 rows × 32 features, 64 partitions, 75 KB block):
+
+| Operation | Time |
+| --- | --- |
+| Worker: compute + sign one 4-row partition (Rust reference) | 21 µs |
+| Verify one claim (signature + recomputation) | 54 µs |
+| Full block verification, Rust mirror settlement | 3.7 ms (≈ 68 000 rows/s) |
+| Full block verification, Haskell settlement + mirror cross-check | 20.8 ms (dominated by spawning the Haskell process) |
+| Quorum certificate verification, 4 / 64 validators | 0.20 ms / 3.0 ms |
+
+These are wall-clock numbers on a shared CI runner, not a performance claim.
+End-to-end finality in the demo is ~1.5 s per block, dominated by the
+Python worker process start-up and the harness's 1 s polling interval.
+
 ## Tests
 
 | Layer | Command | Covers |
