@@ -480,6 +480,7 @@ ledgerRewardBlockResponse value =
       address <- mkAddress (hash256Bytes (proofWorkerId proof))
       pure (RewardEntitlement receiptId (proofWorkerId proof)
             address (proofUnitCount proof))
+    reply :: Bool -> String -> Maybe (String, String, [String]) -> BS.ByteString
     reply accepted reason result = BL.toStrict (encode (object
       [ "ok" .= True
       , "type" .= ("ledger_reward_block_fixture" :: String)
