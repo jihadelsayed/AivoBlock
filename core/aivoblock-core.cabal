@@ -44,7 +44,8 @@ executable aivoblock-core
   build-depends:
       aivoblock-core,
       aeson >=2.1 && <2.3,
-      bytestring >=0.11 && <0.13
+      bytestring >=0.11 && <0.13,
+      containers >=0.6 && <0.9
 
 test-suite block-spec
   import:           shared-settings
