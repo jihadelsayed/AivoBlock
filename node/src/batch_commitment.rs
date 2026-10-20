@@ -8,8 +8,8 @@ use crate::storage::ledger_state::LedgerState;
 use crate::storage::{Column, KeyValueStore, RocksDbStore};
 use crate::transaction_auth::{transfer_signing_bytes_v1, SignedTransferV1};
 use crate::transaction_commitment::{
-    canonical_header_v1, ledger_state_root_v1, signed_transaction_id_v1,
-    transaction_root_v1, CommitmentError, CommittedHeaderV1,
+    canonical_header_v1, ledger_state_root_v1, signed_transaction_id_v1, transaction_root_v1,
+    CommitmentError, CommittedHeaderV1,
 };
 
 const BODY_DOMAIN: &[u8] = b"AIVOBLOCK-TX-BATCH-BODY-V1\0";
@@ -43,17 +43,15 @@ pub fn encode_verified_batch_block(
     let header_bytes = canonical_header_v1(header)?;
     let block_id: [u8; 32] = Sha256::digest(header_bytes).into();
 
-    let mut encoded = Vec::with_capacity(
-        BODY_DOMAIN.len() + 178 + 4 + transfers.len() * SIGNED_RECORD_SIZE,
-    );
+    let mut encoded =
+        Vec::with_capacity(BODY_DOMAIN.len() + 178 + 4 + transfers.len() * SIGNED_RECORD_SIZE);
     encoded.extend_from_slice(BODY_DOMAIN);
     encoded.extend_from_slice(&header_bytes);
     encoded.extend_from_slice(&(transfers.len() as u32).to_be_bytes());
     for (tx, id) in transfers.iter().zip(&identifiers) {
         encoded.extend_from_slice(id);
         encoded.extend_from_slice(
-            &transfer_signing_bytes_v1(tx)
-                .map_err(|_| CommitmentError::InvalidTransaction)?,
+            &transfer_signing_bytes_v1(tx).map_err(|_| CommitmentError::InvalidTransaction)?,
         );
         encoded.extend_from_slice(&tx.signature);
     }
@@ -93,19 +91,21 @@ pub fn commit_verified_batch_block(
     if on_disk.as_ref() != Some(expected_previous) {
         return Err(CommitmentError::WrongPriorState);
     }
-    let (block_id, body) =
-        encode_verified_batch_block(header, transfers, haskell_post_state)?;
+    let (block_id, body) = encode_verified_batch_block(header, transfers, haskell_post_state)?;
     db.append_atomic_ledger_block(
-        &block_id, &header.parent_hash, header.height, &body,
-        haskell_post_state, None,
+        &block_id,
+        &header.parent_hash,
+        header.height,
+        &body,
+        haskell_post_state,
+        None,
     )
     .map_err(|_| CommitmentError::StorageFailure)?;
-    let stored = db.get(Column::Blocks, &block_id)
+    let stored = db
+        .get(Column::Blocks, &block_id)
         .map_err(|_| CommitmentError::StorageFailure)?
         .ok_or(CommitmentError::StorageFailure)?;
-    verify_stored_batch_block(
-        &stored, &block_id, header, transfers, haskell_post_state
-    )?;
+    verify_stored_batch_block(&stored, &block_id, header, transfers, haskell_post_state)?;
     Ok(block_id)
 }
 
@@ -120,30 +120,53 @@ mod tests {
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         let sender = signer.verifying_key().to_bytes();
         let mut tx = SignedTransferV1 {
-            chain_id: 1, version: 1, sender, public_key: sender,
-            recipient: [2; 32], amount, fee, nonce, signature: [0; 64],
+            chain_id: 1,
+            version: 1,
+            sender,
+            public_key: sender,
+            recipient: [2; 32],
+            amount,
+            fee,
+            nonce,
+            signature: [0; 64],
         };
-        tx.signature = signer.sign(&transfer_signing_bytes_v1(&tx).unwrap()).to_bytes();
+        tx.signature = signer
+            .sign(&transfer_signing_bytes_v1(&tx).unwrap())
+            .to_bytes();
         tx
     }
 
     fn post() -> LedgerState {
         let mut state = LedgerState::default();
         state.fee_pool = 3;
-        state.accounts.insert(signed(10, 2, 0).sender, LocalAccount {
-            balance: 82, nonce: 2,
-        });
-        state.accounts.insert([2; 32], LocalAccount {
-            balance: 15, nonce: 0,
-        });
+        state.accounts.insert(
+            signed(10, 2, 0).sender,
+            LocalAccount {
+                balance: 82,
+                nonce: 2,
+            },
+        );
+        state.accounts.insert(
+            [2; 32],
+            LocalAccount {
+                balance: 15,
+                nonce: 0,
+            },
+        );
         state
     }
 
     fn header(transfers: &[SignedTransferV1], state: &LedgerState) -> CommittedHeaderV1 {
-        let ids = transfers.iter()
-            .map(signed_transaction_id_v1).collect::<Result<Vec<_>, _>>().unwrap();
+        let ids = transfers
+            .iter()
+            .map(signed_transaction_id_v1)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         CommittedHeaderV1 {
-            version: 1, chain_id: 1, height: 1, parent_hash: [8; 32],
+            version: 1,
+            chain_id: 1,
+            height: 1,
+            parent_hash: [8; 32],
             transactions_root: transaction_root_v1(&ids).unwrap(),
             puzzle_proofs_root: [0; 32],
             state_root: ledger_state_root_v1(state).unwrap(),
@@ -185,8 +208,7 @@ mod tests {
         let transfers = [signed(10, 2, 0), signed(5, 1, 1)];
         let ledger = post();
         let header = header(&transfers, &ledger);
-        let (block_id, body) =
-            encode_verified_batch_block(&header, &transfers, &ledger).unwrap();
+        let (block_id, body) = encode_verified_batch_block(&header, &transfers, &ledger).unwrap();
         verify_stored_batch_block(&body, &block_id, &header, &transfers, &ledger).unwrap();
         let mut broken = body.clone();
         *broken.last_mut().unwrap() ^= 1;
