@@ -31,6 +31,7 @@ library
       AivoBlock.ReceiptId
       AivoBlock.LocalLedgerSnapshot
       AivoBlock.TransferAuth
+      AivoBlock.TransactionCommitment
       AivoBlock.Validation
   build-depends:
       bytestring >=0.11 && <0.13,
@@ -134,4 +135,15 @@ test-suite transfer-auth-spec
   build-depends:
       aivoblock-core,
       bytestring >=0.11 && <0.13,
+      hspec >=2.10 && <3
+
+test-suite transaction-commitment-spec
+  import:           shared-settings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          TransactionCommitmentSpec.hs
+  build-depends:
+      aivoblock-core,
+      bytestring >=0.11 && <0.13,
+      containers >=0.6 && <0.9,
       hspec >=2.10 && <3
