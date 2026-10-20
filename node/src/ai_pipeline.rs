@@ -323,9 +323,7 @@ pub fn demo() -> Result<(), String> {
             .map_err(|error| format!("Unfunded settlement IPC: {error:?}"))?;
         let response = std::str::from_utf8(&response)
             .map_err(|_| "Unfunded settlement response is not UTF-8")?;
-        if !response.contains(r#""settled":false"#)
-            || !response.contains("Insufficient fee pool")
-        {
+        if !response.contains(r#""settled":false"#) || !response.contains("Insufficient fee pool") {
             return Err("Unfunded synthetic settlement unexpectedly accepted".to_owned());
         }
 
