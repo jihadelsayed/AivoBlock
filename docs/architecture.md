@@ -76,3 +76,7 @@ Every independently operated full node maintains its own ledger and data directo
 7. Adversarially test invalid proofs, forks, restarts and disconnected peers.
 
 See [consensus](../protocol/spec/consensus.md), [puzzle rules](../protocol/spec/puzzle-rules.md) and [canonical encoding](../protocol/spec/canonical-encoding.md) for protocol details.
+
+## Private testnet runtime
+
+The running network (Rust `node/src/testnet`) composes these components: mutually authenticated TCP between configured validators, authority-signed V3 AI tasks with explicit worker assignments, Python execution of each partition, independent Rust recomputation by every validator, Haskell settlement cross-checked by a Rust mirror, durable-lock precommit voting with quorum certificates, and atomic RocksDB finalization with full replay on restart. Diagrams, commands and limitations: [testnet guide](testnet.md); protocol details: [testnet consensus](../protocol/spec/testnet-consensus-v1.md).

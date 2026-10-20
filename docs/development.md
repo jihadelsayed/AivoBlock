@@ -146,3 +146,13 @@ IPC framing is not blockchain canonical encoding.
 6. Demonstrate three nodes accepting the same verified AI puzzle block.
 
 See [architecture](architecture.md), [mining](mining.md), and the [consensus draft](../protocol/spec/consensus.md).
+
+## Private testnet
+
+With Docker (Compose v2) and Python 3.11+ only:
+
+```bash
+python3 scripts/testnet.py all
+```
+
+Native iteration without Docker: `cargo test testnet::` runs the in-process four-validator crash/restart and three-node adversarial tests with the Rust settlement mirror; export `AIVOBLOCK_HASKELL_EXECUTABLE=$(cd core && cabal list-bin exe:aivoblock-core)` to use the Haskell core. `cargo run -- testnet-init --out DIR` generates keys and a signed `network.json`; `cargo run -- run` starts a node from `AIVOBLOCK_*` variables (see `docker/Dockerfile.node` for defaults). See [testnet guide](testnet.md).

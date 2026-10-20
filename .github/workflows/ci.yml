@@ -96,7 +96,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   cross_language:
-    name: Rust ? Haskell IPC integration
+    name: Rust ↔ Haskell IPC integration
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +122,7 @@ jobs:
           done
           cabal build exe:aivoblock-core
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
-      - name: Run Rust ? Haskell health, JSON and malformed-frame tests
+      - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
         working-directory: node
         run: |
           cargo test haskell_json_ipc_validation_cases -- --nocapture
@@ -137,6 +137,41 @@ jobs:
           cargo run -- multi-transfer-demo
           cargo run -- ai-reward-block-demo
           cargo run -- ai-proof-v2-demo
+
+  testnet_e2e:
+    name: Docker private testnet (3 nodes + 4 validators)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build node image (Haskell core, Rust node, Python worker)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.node
+          tags: aivoblock-node:testnet
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verifier and settlement benchmarks (release build)
+        run: docker run --rm aivoblock-node:testnet bench --iterations 20
+      - name: Three-node end-to-end demonstration
+        run: python3 scripts/testnet.py demo --skip-build
+      - name: Four-validator fault-tolerance scenario
+        run: python3 scripts/testnet.py fault --skip-build
+      - name: Upload testnet reports and node logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-reports
+          path: |
+            testnet/generated/*/report.json
+            testnet/generated/*/compose.log
+          if-no-files-found: warn
 
   protobuf:
     name: Protocol schemas
