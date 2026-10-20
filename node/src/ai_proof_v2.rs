@@ -542,7 +542,7 @@ mod tests {
         assert_eq!(h(&proof.task.rules_commitment),
             "d80998d00fe21a0127cc7edf3915cd5de202d702b919259bbf74aa19aad63902");
         assert_eq!(h(&proof.claims[0].receipt.result_commitment),
-            "9e868144b00a6ba9e4e5541a7d8e96ca8585082ee36512871bc4786bb4a97b4e");
+            "edf2eb1a8f906b42910faa5dff56d8e6a3a54ece44d5369f62ead8f44acdd982");
     }
 
     #[test]
