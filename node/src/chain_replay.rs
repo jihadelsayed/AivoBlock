@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 use crate::batch_pipeline::execute_signed_batch_haskell;
 use crate::block_replay::{decode_header_v1, decode_signed_batch_v1, DecodedSignedBatch};
 use crate::ipc::haskell::HaskellValidatorClient;
+use crate::reward_block::{
+    decode_reward_block_v1, execute_reward_haskell, DecodedRewardBlock, REWARD_BODY_DOMAIN,
+};
 use crate::storage::ledger_state::LedgerState;
 use crate::storage::{Column, KeyValueStore, RocksDbStore};
 use crate::transaction_commitment::{ledger_state_root_v1, transaction_root_v1};
@@ -22,7 +25,23 @@ pub struct ChainReplayReport {
     pub ledger: LedgerState,
     pub signed_blocks: usize,
     pub signed_transfers: usize,
+    pub reward_blocks: usize,
+    pub settled_receipts: usize,
     pub tip_id: [u8; 32],
+}
+
+enum ReplayBlock {
+    Signed(DecodedSignedBatch),
+    Reward(DecodedRewardBlock),
+}
+
+impl ReplayBlock {
+    fn header(&self) -> &crate::transaction_commitment::CommittedHeaderV1 {
+        match self {
+            Self::Signed(block) => &block.header,
+            Self::Reward(block) => &block.header,
+        }
+    }
 }
 
 fn id32(source: &[u8]) -> Result<[u8; 32], String> {
@@ -95,7 +114,7 @@ pub fn replay_local_chain(
     let mut current = tip_id;
     let mut expected_height = height;
     let mut seen = HashSet::new();
-    let mut reverse_children: Vec<DecodedSignedBatch> = Vec::new();
+    let mut reverse_children: Vec<ReplayBlock> = Vec::new();
     loop {
         if !seen.insert(current) {
             return Err("Cycle in stored chain ancestry".into());
@@ -114,26 +133,52 @@ pub fn replay_local_chain(
         if expected_height == 0 || reverse_children.len() >= MAX_AUDIT_BLOCKS {
             return Err("Missing trusted genesis at height zero".into());
         }
-        let decoded = decode_signed_batch_v1(&raw, &current)
-            .map_err(|error| format!("Invalid signed ancestor: {error:?}"))?;
-        if decoded.header.height != expected_height || decoded.header.parent_hash == [0; 32] {
-            return Err("Invalid signed ancestor height or parent".into());
+        let decoded = if raw.starts_with(REWARD_BODY_DOMAIN) {
+            ReplayBlock::Reward(decode_reward_block_v1(&raw, &current)
+                .map_err(|error| format!("Invalid reward ancestor: {error}"))?)
+        } else {
+            ReplayBlock::Signed(decode_signed_batch_v1(&raw, &current)
+                .map_err(|error| format!("Invalid signed ancestor: {error:?}"))?)
+        };
+        if decoded.header().height != expected_height || decoded.header().parent_hash == [0; 32] {
+            return Err("Invalid signed/reward ancestor height or parent".into());
         }
-        current = decoded.header.parent_hash;
+        current = decoded.header().parent_hash;
         reverse_children.push(decoded);
         expected_height -= 1;
     }
 
     let mut ledger = trusted_genesis_state.clone();
     let mut total_transfers = 0usize;
-    for signed_block in reverse_children.iter().rev() {
-        let next = execute_signed_batch_haskell(core, &ledger, &signed_block.transactions)?;
+    let mut signed_blocks = 0usize;
+    let mut reward_blocks = 0usize;
+    let mut settled_receipts = 0usize;
+    for block in reverse_children.iter().rev() {
+        let next = match block {
+            ReplayBlock::Signed(signed) => {
+                let state = execute_signed_batch_haskell(core, &ledger, &signed.transactions)?;
+                total_transfers += signed.transactions.len();
+                signed_blocks += 1;
+                state
+            }
+            ReplayBlock::Reward(reward) => {
+                // The stored caller-attested work is NOT independent proof of
+                // AI computation. Haskell independently replays the fee-funded
+                // effect, canonical receipt identities and replay markers.
+                let (state, _) = execute_reward_haskell(
+                    core, &ledger, &reward.batch_id, reward.budget,
+                    &reward.works, reward.header.height,
+                )?;
+                reward_blocks += 1;
+                settled_receipts += reward.works.len();
+                state
+            }
+        };
         let computed_root = ledger_state_root_v1(&next)
             .map_err(|error| format!("Invalid replay ledger: {error:?}"))?;
-        if computed_root != signed_block.header.state_root {
+        if computed_root != block.header().state_root {
             return Err("Ancestor state commitment differs from Haskell execution".into());
         }
-        total_transfers += signed_block.transactions.len();
         ledger = next;
     }
 
@@ -146,8 +191,10 @@ pub fn replay_local_chain(
     }
     Ok(ChainReplayReport {
         ledger,
-        signed_blocks: reverse_children.len(),
+        signed_blocks,
         signed_transfers: total_transfers,
+        reward_blocks,
+        settled_receipts,
         tip_id,
     })
 }
