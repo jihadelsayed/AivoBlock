@@ -8,7 +8,9 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 use crate::block_replay::decode_header_v1;
-use crate::chain_replay::{replay_local_chain, ChainReplayReport};
+use crate::chain_replay::{
+    replay_local_chain_legacy_v1, replay_local_chain_with_ai_authority, ChainReplayReport,
+};
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::storage::ledger_state::{encode_ledger_state, LedgerState};
 use crate::storage::RocksDbStore;
@@ -127,7 +129,23 @@ pub fn replay_chain_from_signed_checkpoint(
 ) -> Result<ChainReplayReport, String> {
     let id = verify_signed_genesis_checkpoint(checkpoint, trusted_authority_public_key)
         .map_err(|e| format!("Unauthenticated genesis checkpoint: {e:?}"))?;
-    replay_local_chain(db, core, &id, &checkpoint.initial_ledger)
+    replay_local_chain_with_ai_authority(
+        db, core, &id, &checkpoint.initial_ledger, trusted_authority_public_key
+    )
+}
+
+/// Historical V1 reward diagnostic only. V1 caller-attested AI receipts
+/// have no independent model/input witness and MUST NOT validate network
+/// claims. Production-facing callers use replay_chain_from_signed_checkpoint.
+pub fn replay_chain_from_signed_checkpoint_legacy_v1(
+    db: &RocksDbStore,
+    core: &HaskellValidatorClient,
+    checkpoint: &SignedGenesisCheckpointV1,
+    trusted_authority_public_key: &[u8; 32],
+) -> Result<ChainReplayReport, String> {
+    let id = verify_signed_genesis_checkpoint(checkpoint, trusted_authority_public_key)
+        .map_err(|e| format!("Unauthenticated genesis checkpoint: {e:?}"))?;
+    replay_local_chain_legacy_v1(db, core, &id, &checkpoint.initial_ledger)
 }
 
 #[cfg(test)]
