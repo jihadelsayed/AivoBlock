@@ -114,8 +114,8 @@ pub fn generate(
         timestamp_ms: now_ms(),
     };
     let header_bytes = canonical_header_v1(&header).map_err(|e| format!("{e:?}"))?;
-    let signable =
-        genesis_checkpoint_signing_bytes_v1(&header_bytes, &ledger).map_err(|e| format!("{e:?}"))?;
+    let signable = genesis_checkpoint_signing_bytes_v1(&header_bytes, &ledger)
+        .map_err(|e| format!("{e:?}"))?;
     let checkpoint = SignedGenesisCheckpointV1 {
         genesis_header: header_bytes,
         initial_ledger: ledger,

@@ -119,10 +119,7 @@ pub fn init_command(args: &[String]) -> Result<(), String> {
     let defaults = InitOptions::default();
     let options = InitOptions {
         validators: number(&flags, "validators", defaults.validators)?,
-        network_name: flags
-            .get("name")
-            .cloned()
-            .unwrap_or(defaults.network_name),
+        network_name: flags.get("name").cloned().unwrap_or(defaults.network_name),
         host_pattern: flags
             .get("host-pattern")
             .cloned()

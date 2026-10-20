@@ -62,14 +62,23 @@ const LOG_LINES: usize = 200;
 
 pub enum Event {
     PeerUp(PeerLink),
-    PeerDown { peer: [u8; 32], link_id: u64 },
+    PeerDown {
+        peer: [u8; 32],
+        link_id: u64,
+    },
     Inbound {
         peer: [u8; 32],
         link_id: u64,
         message: WireMessage,
     },
-    HandshakeRejected { remote: String, reason: String },
-    MalformedMessage { peer: [u8; 32], reason: String },
+    HandshakeRejected {
+        remote: String,
+        reason: String,
+    },
+    MalformedMessage {
+        peer: [u8; 32],
+        reason: String,
+    },
     Control {
         request: ControlRequest,
         reply: Sender<Value>,
@@ -387,7 +396,11 @@ impl Node {
                 self.note(format!(
                     "authenticated peer {name} ({}) via {} {}",
                     short(&link.key),
-                    if link.outbound { "dial to" } else { "accept from" },
+                    if link.outbound {
+                        "dial to"
+                    } else {
+                        "accept from"
+                    },
                     link.remote
                 ));
             }
@@ -690,7 +703,10 @@ impl Node {
             }
             Err(error) => {
                 self.counters.worker_failures += 1;
-                self.note(format!("worker failed on task {}: {error}", short(&task_id)));
+                self.note(format!(
+                    "worker failed on task {}: {error}",
+                    short(&task_id)
+                ));
             }
         }
     }
@@ -893,7 +909,10 @@ impl Node {
             .entry((round, id))
             .or_default()
             .insert(vote.public_key, vote);
-        self.note(format!("precommitted block {} in round {round}", short(&id)));
+        self.note(format!(
+            "precommitted block {} in round {round}",
+            short(&id)
+        ));
     }
 
     fn on_vote(
@@ -988,7 +1007,8 @@ impl Node {
 
     fn on_commit(&mut self, source: Option<[u8; 32]>, block: &str, certificate: &str) -> Verdict {
         let parsed = decode_block_hex(block).and_then(|raw| {
-            let qc = unhex(certificate, 64 * 1024).and_then(|c| decode_quorum_certificate_v1(&c))?;
+            let qc =
+                unhex(certificate, 64 * 1024).and_then(|c| decode_quorum_certificate_v1(&c))?;
             Ok((raw, qc))
         });
         let (raw, certificate) = match parsed {
@@ -1034,10 +1054,10 @@ impl Node {
         raw: Vec<u8>,
         certificate: QuorumCertificateV1,
     ) -> Verdict {
-        let executed = match self
+        let verified = self
             .chain
-            .verify_commit(&self.config, &self.engine, &raw, &certificate)
-        {
+            .verify_commit(&self.config, &self.engine, &raw, &certificate);
+        let executed = match verified {
             Ok(executed) => executed,
             Err(error) => {
                 self.counters.rejected_commits += 1;

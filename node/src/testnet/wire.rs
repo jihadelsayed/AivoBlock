@@ -16,8 +16,13 @@ use crate::validator_certificate::SignedPrecommitV1;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WireMessage {
-    Status { height: u64, tip: String },
-    Task { task: String },
+    Status {
+        height: u64,
+        tip: String,
+    },
+    Task {
+        task: String,
+    },
     Claim {
         task_id: String,
         partition: u32,
@@ -37,8 +42,13 @@ pub enum WireMessage {
         validator: String,
         signature: String,
     },
-    Commit { block: String, certificate: String },
-    GetBlocks { from_height: u64 },
+    Commit {
+        block: String,
+        certificate: String,
+    },
+    GetBlocks {
+        from_height: u64,
+    },
 }
 
 impl WireMessage {
