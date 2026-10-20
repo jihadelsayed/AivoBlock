@@ -180,7 +180,8 @@ pub fn demo() -> Result<(), String> {
         if replay_chain_from_signed_checkpoint(&db, &core, &checkpoint, &trusted_key).is_ok() {
             return Err("Strict auditor accepted legacy caller-attested V1 AI payouts".into());
         }
-        let report = replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?;
+        let report =
+            replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?;
         if report.ledger != expected
             || report.tip_id != reward_id
             || report.reward_blocks != 1
@@ -207,12 +208,15 @@ pub fn demo() -> Result<(), String> {
         *corrupt.last_mut().ok_or("Empty reward block")? ^= 1;
         db.put(Column::Blocks, &reward_id, &corrupt)
             .map_err(|e| e.to_string())?;
-        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key).is_ok() {
+        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)
+            .is_ok()
+        {
             return Err("Corrupted persisted reward receipt passed history audit".into());
         }
         db.put(Column::Blocks, &reward_id, &raw)
             .map_err(|e| e.to_string())?;
-        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?.ledger
+        if replay_chain_from_signed_checkpoint_legacy_v1(&db, &core, &checkpoint, &trusted_key)?
+            .ledger
             != expected
         {
             return Err("Restored reward history did not replay".into());
