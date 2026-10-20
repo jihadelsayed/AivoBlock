@@ -144,6 +144,14 @@ impl RocksDbStore {
         if block_hash.len() != 32 {
             return Err(StorageError::InvalidBlockHash);
         }
+        let _guard = self
+            .append_lock
+            .lock()
+            .map_err(|_| StorageError::CorruptChainState)?;
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
         let block_key = storage_key(Column::Blocks, block_hash)?;
         let tip_key = storage_key(Column::ChainState, b"tip")?;
         let mut batch = WriteBatch::default();
@@ -175,6 +183,10 @@ impl RocksDbStore {
             .append_lock
             .lock()
             .map_err(|_| StorageError::CorruptChainState)?;
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
         let tip_key = storage_key(Column::ChainState, b"tip")?;
         let height_key = storage_key(Column::ChainState, b"height")?;
         let existing_tip = self.db.get(&tip_key)?;
@@ -240,6 +252,12 @@ impl RocksDbStore {
             .lock()
             .map_err(|_| StorageError::CorruptChainState)?;
 
+        let snapshot_key = storage_key(Column::ChainState, LOCAL_STATE_KEY)?;
+        if self.db.get(snapshot_key)?.is_some() {
+            return Err(StorageError::IncompatibleStorageMode);
+        }
+        let legacy_key = storage_key(Column::Metadata, LEGACY_REPLAY_USED_KEY)?;
+
         let mut batch_suffix = b"reward-batch-v1:".to_vec();
         batch_suffix.extend_from_slice(batch_id);
         let batch_key = storage_key(Column::Metadata, &batch_suffix)?;
@@ -257,6 +275,7 @@ impl RocksDbStore {
             receipt_keys.push(key);
         }
         let mut batch = WriteBatch::default();
+        batch.put(legacy_key, [1u8]);
         batch.put(batch_key, settlement_response);
         for key in receipt_keys {
             batch.put(key, [1u8]);
