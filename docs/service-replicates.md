@@ -26,9 +26,9 @@ outputs, and model commitments must match across modes and launches.
 
 **Important limits:** This is **in-process service-core timing**, not
 request/response IPC/HTTP timing; separate process startup is excluded from
-measured requests. Each launch has only one untimed warmup, whereas the
-preregistered target protocol asks for five. Until that is implemented,
-do not mark the full experiment protocol satisfied. Samples are sequential,
+measured requests. Each launch performs five untimed warmup requests and 30 measured requests.
+The full end-to-end comparison protocol remains incomplete until network
+request boundaries and matched blockchain trials are implemented. Samples are sequential,
 not a throughput or energy measurement. Independent verification, consensus,
 network transport and blockchain finality are not measured here. The
 same-implementation recomputation mode is not independent verification.
