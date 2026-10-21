@@ -202,31 +202,33 @@ impl SourceRateLimiter {
     }
 }
 
-/// A lightweight per-connection meter for successfully authenticated peer
-/// frames. The first frame in a new window is always counted, and excess
-/// frames cause the connection to close instead of overwhelming consensus.
-struct AuthenticatedFrameLimiter {
+/// The frame budget belongs to a validator identity, not a TCP connection.
+/// Multiple simultaneous links or rapid reconnects share the same clock
+/// window. Only validated, configured identities enter this bounded map.
+struct AuthenticatedFrameWindow {
     started: Instant,
     accepted: usize,
 }
 
+#[derive(Default)]
+pub struct AuthenticatedFrameLimiter {
+    windows: BTreeMap<[u8; 32], AuthenticatedFrameWindow>,
+}
+
 impl AuthenticatedFrameLimiter {
-    fn new(now: Instant) -> Self {
-        Self {
+    fn allow(&mut self, peer: [u8; 32], now: Instant) -> bool {
+        let window = self.windows.entry(peer).or_insert(AuthenticatedFrameWindow {
             started: now,
             accepted: 0,
+        });
+        if now.duration_since(window.started) >= AUTHENTICATED_FRAME_WINDOW {
+            window.started = now;
+            window.accepted = 0;
         }
-    }
-
-    fn allow(&mut self, now: Instant) -> bool {
-        if now.duration_since(self.started) >= AUTHENTICATED_FRAME_WINDOW {
-            self.started = now;
-            self.accepted = 0;
-        }
-        if self.accepted >= MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
+        if window.accepted >= MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
             return false;
         }
-        self.accepted += 1;
+        window.accepted += 1;
         true
     }
 }
@@ -470,6 +472,8 @@ pub struct Transport {
     pub events: SyncSender<Event>,
     pub shutdown: Arc<AtomicBool>,
     pub connected: Arc<Mutex<BTreeSet<[u8; 32]>>>,
+    /// Shared by all peer workers, including connections from the same validator.
+    pub frame_limiter: Arc<Mutex<AuthenticatedFrameLimiter>>,
 }
 
 fn run_connection(
@@ -551,7 +555,6 @@ fn run_connection(
         return;
     }
     let mut last_sequence = 0;
-    let mut frame_limiter = AuthenticatedFrameLimiter::new(Instant::now());
     while !transport.shutdown.load(Ordering::Relaxed) {
         // A partially received encrypted frame cannot keep this worker alive
         // indefinitely: the header and payload share one fixed time budget.
@@ -562,10 +565,14 @@ fn run_connection(
         );
         match incoming {
             Ok(message) => {
-                // Reject an authenticated flood before placing more work into
-                // the bounded shared node queue. This meter is per live link,
-                // and starts over only when its clock window expires.
-                if !frame_limiter.allow(Instant::now()) {
+                // Enforce one budget per verified validator, across all live
+                // connections and reconnects. Reject before event admission.
+                let allowed = transport
+                    .frame_limiter
+                    .lock()
+                    .map(|mut limiter| limiter.allow(peer, Instant::now()))
+                    .unwrap_or(false);
+                if !allowed {
                     break;
                 }
                 let inbound = Event::Inbound {
@@ -907,30 +914,68 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_peer_frame_flood_is_rejected_and_window_recovers() {
+    fn authenticated_validator_frame_flood_is_rejected_and_window_recovers() {
         let now = Instant::now();
-        let mut limiter = AuthenticatedFrameLimiter::new(now);
+        let peer = [1u8; 32];
+        let mut limiter = AuthenticatedFrameLimiter::default();
         for _ in 0..MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
-            assert!(limiter.allow(now));
+            assert!(limiter.allow(peer, now));
         }
-        assert_eq!(limiter.accepted, MAX_AUTHENTICATED_FRAMES_PER_WINDOW);
-        assert!(!limiter.allow(now));
-        assert!(!limiter.allow(now + AUTHENTICATED_FRAME_WINDOW - Duration::from_nanos(1)));
-        assert!(limiter.allow(now + AUTHENTICATED_FRAME_WINDOW));
-        assert_eq!(limiter.accepted, 1);
+        assert_eq!(
+            limiter.windows.get(&peer).unwrap().accepted,
+            MAX_AUTHENTICATED_FRAMES_PER_WINDOW
+        );
+        assert!(!limiter.allow(peer, now));
+        assert!(!limiter.allow(
+            peer,
+            now + AUTHENTICATED_FRAME_WINDOW - Duration::from_nanos(1)
+        ));
+        assert!(limiter.allow(peer, now + AUTHENTICATED_FRAME_WINDOW));
+        assert_eq!(limiter.windows.get(&peer).unwrap().accepted, 1);
     }
 
     #[test]
-    fn separate_authenticated_connections_have_independent_frame_budgets() {
+    fn reconnects_share_validator_budget_but_other_validators_are_independent() {
         let now = Instant::now();
-        let mut first = AuthenticatedFrameLimiter::new(now);
-        let mut second = AuthenticatedFrameLimiter::new(now);
+        let mut shared = AuthenticatedFrameLimiter::default();
+        let validator = [7u8; 32];
+        let another = [8u8; 32];
         for _ in 0..MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
-            assert!(first.allow(now));
+            assert!(shared.allow(validator, now));
         }
-        assert!(!first.allow(now));
-        assert!(second.allow(now));
-        assert_eq!(second.accepted, 1);
+        // Reconnecting does not reset the per-validator budget.
+        assert!(!shared.allow(validator, now));
+        assert!(shared.allow(another, now));
+        assert_eq!(shared.windows.len(), 2);
+        assert_eq!(shared.windows.get(&another).unwrap().accepted, 1);
+    }
+
+    #[test]
+    fn concurrent_links_share_one_authenticated_validator_frame_budget() {
+        use std::sync::Barrier;
+
+        let shared = Arc::new(Mutex::new(AuthenticatedFrameLimiter::default()));
+        let threads = 8;
+        let barrier = Arc::new(Barrier::new(threads));
+        let now = Instant::now();
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                let shared = Arc::clone(&shared);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    (0..MAX_AUTHENTICATED_FRAMES_PER_WINDOW)
+                        .filter(|_| shared.lock().unwrap().allow([9u8; 32], now))
+                        .count()
+                })
+            })
+            .collect();
+        let accepted: usize = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .sum();
+        assert_eq!(accepted, MAX_AUTHENTICATED_FRAMES_PER_WINDOW);
+        assert_eq!(shared.lock().unwrap().windows.len(), 1);
     }
 
     #[test]
