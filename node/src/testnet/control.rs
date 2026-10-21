@@ -141,12 +141,19 @@ fn serve_one(mut stream: TcpStream, events: &SyncSender<Event>) -> io::Result<()
         Err(error) => json!({ "error": format!("invalid control request: {error}") }),
         Ok(request) => {
             let (reply, receive) = mpsc::channel();
-            if events.send(Event::Control { request, reply }).is_err() {
-                json!({ "error": "node is shutting down" })
-            } else {
-                receive
+            // The node event channel is bounded. Blocking on send() here can
+            // strand all 16 operator handler slots indefinitely when the node
+            // is overloaded, bypassing the per-frame and reply deadlines.
+            match events.try_send(Event::Control { request, reply }) {
+                Ok(()) => receive
                     .recv_timeout(REPLY_TIMEOUT)
-                    .unwrap_or_else(|_| json!({ "error": "node did not answer" }))
+                    .unwrap_or_else(|_| json!({ "error": "node did not answer" })),
+                Err(mpsc::TrySendError::Full(_)) => {
+                    json!({ "error": "node control event queue is full" })
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    json!({ "error": "node is shutting down" })
+                }
             }
         }
     };
@@ -288,6 +295,75 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<Value>(&response).unwrap(),
             json!({"status": "ok"})
+        );
+        handler.join().unwrap();
+    }
+
+    #[test]
+    fn full_node_event_queue_returns_error_without_blocking_control_handler() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        configure_stream(&client).unwrap();
+
+        // Occupy the entire bounded queue without starting the node loop.
+        // The second request must return an error instead of blocking send().
+        let (events, receiver) = mpsc::sync_channel(1);
+        let (first_reply, _) = mpsc::channel();
+        assert!(events
+            .try_send(Event::Control {
+                request: ControlRequest::Status,
+                reply: first_reply,
+            })
+            .is_ok());
+        let handler = thread::spawn(move || serve_one(server, &events).unwrap());
+
+        send_frame(
+            &mut client,
+            &serde_json::to_vec(&ControlRequest::Status).unwrap(),
+        )
+        .unwrap();
+        let response = recv_frame(&mut client).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response).unwrap(),
+            json!({"error": "node control event queue is full"})
+        );
+        handler.join().unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Event::Control {
+                request: ControlRequest::Status,
+                ..
+            })
+        ));
+        // The only sender moved into the handler thread was dropped on join.
+        // Draining the original event must therefore leave a disconnected,
+        // empty queue, not necessarily TryRecvError::Empty.
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn disconnected_node_event_queue_returns_shutdown_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        configure_stream(&client).unwrap();
+
+        let (events, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        let handler = thread::spawn(move || serve_one(server, &events).unwrap());
+        send_frame(
+            &mut client,
+            &serde_json::to_vec(&ControlRequest::Status).unwrap(),
+        )
+        .unwrap();
+        let reply = recv_frame(&mut client).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&reply).unwrap(),
+            json!({"error": "node is shutting down"})
         );
         handler.join().unwrap();
     }
