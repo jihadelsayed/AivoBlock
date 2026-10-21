@@ -70,7 +70,9 @@ impl Session {
         let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(HaskellIpcError::Io(std::io::Error::other("missing child pipes")));
+            return Err(HaskellIpcError::Io(std::io::Error::other(
+                "missing child pipes",
+            )));
         };
         let (requests, pending) = mpsc::sync_channel::<Vec<u8>>(1);
         let (answers, responses) = mpsc::channel();
