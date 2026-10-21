@@ -37,3 +37,22 @@ The `three-node/report.json` field `finality_summary_ms` summarizes **11 mixed t
 - Publish request-boundary differences next to every result chart; do not label the difference “consensus overhead” or claim a general speedup.
 
 No numerical ratio between the standalone service timing and the blockchain timing is reported because the workload identity and measurement-boundary requirements have not been satisfied.
+
+## Machine-checked comparison gate
+
+Run `python3 -m unittest discover -s scripts -p 'test_validate_service_chain.py' -v`
+and `python3 scripts/validate_service_chain.py measured-bundle.json --out audit.json`.
+The JSON bundle must have `scenarios` keys `service_direct`,
+`service_recomputed`, and `chain_observed_finality`. Each scenario has
+`model_commitment`, `input_commitment`, `result_commitment` (64 lowercase
+hex digits) and `samples`: an array of objects containing `launch_id`,
+`request_id`, `elapsed_ms`, `status: "success"`; chain samples also
+require a unique positive `finalized_height`. Identity must match across
+scenarios, with at least three launches and 30 positive finite measured
+samples per launch. Duplicated request IDs, missing heights, failures and
+commitment disagreement reject the entire comparison.
+
+This normalized schema does not assert that separately acquired PR #71/#72
+artifacts are comparable, nor does it verify the source artifacts' signature
+or per-request cryptographic proof. A producer linking actual measured data
+to these exact commitments is still required.
