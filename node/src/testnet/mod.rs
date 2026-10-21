@@ -66,6 +66,13 @@ pub fn random_bytes32() -> [u8; 32] {
     bytes
 }
 
+pub fn env_or(name: &str, default: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_owned())
+}
+
 #[cfg(test)]
 mod rng_tests {
     use super::random_bytes32;
@@ -77,11 +84,4 @@ mod rng_tests {
         assert_ne!(first, [0; 32]);
         assert_ne!(first, second);
     }
-}
-
-pub fn env_or(name: &str, default: &str) -> String {
-    std::env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.to_owned())
 }
