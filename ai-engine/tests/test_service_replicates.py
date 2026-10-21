@@ -54,7 +54,7 @@ def test_reject_too_few_runs():
 def test_reject_too_few_observations():
     with pytest.raises(ValueError, match="iterations"):
         run(None, iterations=29)
-\n
+
 
 def test_subprocess_replicates_end_to_end(tmp_path):
     """Exercise actual separate processes, not only synthetic summaries."""
