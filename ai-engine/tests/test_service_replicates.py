@@ -8,7 +8,7 @@ def report(mode, values):
     return {
         "mode": mode, "model_commitment": "aa", "input_commitment": "bb",
         "result_commitment": "cc", "rows": 4, "iterations": len(values),
-        "warmups": 5,
+        "warmups": 5, "batch_size": 4,
         "latency_ms": {"observations": values},
     }
 
@@ -84,3 +84,10 @@ def test_subprocess_replicates_end_to_end(tmp_path):
         assert mode["count"] == 90
         assert len(mode["per_launch_medians_ms"]) == 3
         assert mode["min_ms"] > 0
+
+
+def test_reject_mismatched_batches():
+    reports = suite()
+    reports[0]["batch_size"] = 8
+    with pytest.raises(ValueError, match="batch sizes"):
+        aggregate(reports, launches=3, iterations=30)
