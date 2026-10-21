@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
@@ -36,6 +36,11 @@ const DIAL_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PENDING_INBOUND_HANDSHAKES: usize = 32;
 /// Reserve capacity for other origins even if a single address stalls handshakes.
 const MAX_PENDING_HANDSHAKES_PER_IP: usize = 8;
+/// Limit short-lived connection churn even when every handshake fails quickly.
+const MAX_INBOUND_ATTEMPTS_PER_IP_PER_WINDOW: usize = 16;
+const INBOUND_ATTEMPT_WINDOW: Duration = Duration::from_secs(1);
+/// Bound source-tracking memory under connection floods from many IPs.
+const MAX_TRACKED_INBOUND_SOURCES: usize = 256;
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -136,6 +141,57 @@ impl InboundAdmission {
             _global: global,
             _source: source,
         })
+    }
+}
+
+/// Single-threaded listener admission meter. Count even failed/rejected
+/// attempts so rapid reconnect churn cannot repeatedly start handshake work.
+#[derive(Clone, Copy)]
+struct SourceAttemptWindow {
+    started: Instant,
+    attempts: usize,
+}
+
+#[derive(Default)]
+struct SourceRateLimiter {
+    sources: BTreeMap<IpAddr, SourceAttemptWindow>,
+}
+
+impl SourceRateLimiter {
+    fn allow(&mut self, source: IpAddr, now: Instant) -> bool {
+        let source = canonical_source_ip(source);
+        if let Some(window) = self.sources.get_mut(&source) {
+            if now.duration_since(window.started) >= INBOUND_ATTEMPT_WINDOW {
+                *window = SourceAttemptWindow {
+                    started: now,
+                    attempts: 1,
+                };
+                return true;
+            }
+            if window.attempts >= MAX_INBOUND_ATTEMPTS_PER_IP_PER_WINDOW {
+                return false;
+            }
+            window.attempts += 1;
+            return true;
+        }
+
+        // Retire expired windows when full, but never grow the map past its
+        // fixed bound. Unknown sources are rejected while every slot is fresh.
+        if self.sources.len() >= MAX_TRACKED_INBOUND_SOURCES {
+            self.sources
+                .retain(|_, window| now.duration_since(window.started) < INBOUND_ATTEMPT_WINDOW);
+            if self.sources.len() >= MAX_TRACKED_INBOUND_SOURCES {
+                return false;
+            }
+        }
+        self.sources.insert(
+            source,
+            SourceAttemptWindow {
+                started: now,
+                attempts: 1,
+            },
+        );
+        true
     }
 }
 
@@ -379,12 +435,18 @@ pub fn spawn_listener(listener: TcpListener, transport: Arc<Transport>) -> JoinH
     thread::spawn(move || {
         let pending = Arc::new(AtomicUsize::new(0));
         let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
+        let mut rate_limiter = SourceRateLimiter::default();
         if listener.set_nonblocking(true).is_err() {
             return;
         }
         while !transport.shutdown.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((stream, address)) => {
+                    if !rate_limiter.allow(address.ip(), Instant::now()) {
+                        // Reject rate-limited sockets before creating a worker.
+                        let _ = stream.shutdown(Shutdown::Both);
+                        continue;
+                    }
                     if stream.set_nonblocking(false).is_ok() {
                         let Some(permit) =
                             InboundAdmission::acquire(&pending, &per_ip, address.ip())
@@ -618,6 +680,58 @@ mod tests {
         );
         assert_eq!(pending.load(Ordering::Acquire), 0);
         assert!(per_ip.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn per_ip_rate_limit_rejects_rapid_churn_and_recovers_after_window() {
+        let mut limiter = SourceRateLimiter::default();
+        let source: IpAddr = "192.0.2.25".parse().unwrap();
+        let now = Instant::now();
+        for _ in 0..MAX_INBOUND_ATTEMPTS_PER_IP_PER_WINDOW {
+            assert!(limiter.allow(source, now));
+        }
+        assert!(!limiter.allow(source, now));
+        assert!(!limiter.allow(
+            source,
+            now + INBOUND_ATTEMPT_WINDOW - Duration::from_nanos(1)
+        ));
+        let next = now + INBOUND_ATTEMPT_WINDOW;
+        assert!(limiter.allow(source, next));
+        assert_eq!(limiter.sources.get(&source).unwrap().attempts, 1);
+    }
+
+    #[test]
+    fn per_ip_rate_limit_isolated_and_ipv4_mapped_addresses_share_counter() {
+        let mut limiter = SourceRateLimiter::default();
+        let first: IpAddr = "192.0.2.26".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.0.2.26".parse().unwrap();
+        let second: IpAddr = "192.0.2.27".parse().unwrap();
+        let now = Instant::now();
+        for _ in 0..MAX_INBOUND_ATTEMPTS_PER_IP_PER_WINDOW {
+            assert!(limiter.allow(first, now));
+        }
+        assert!(!limiter.allow(mapped, now));
+        assert!(limiter.allow(second, now));
+        assert_eq!(limiter.sources.len(), 2);
+    }
+
+    #[test]
+    fn rate_limit_source_tracking_is_bounded_and_reclaims_expired_entries() {
+        use std::net::Ipv4Addr;
+
+        let mut limiter = SourceRateLimiter::default();
+        let now = Instant::now();
+        for n in 0..MAX_TRACKED_INBOUND_SOURCES {
+            let source = IpAddr::V4(Ipv4Addr::new(192, 0, (n / 256) as u8, (n % 256) as u8));
+            assert!(limiter.allow(source, now));
+        }
+        let new_source: IpAddr = "203.0.113.30".parse().unwrap();
+        assert_eq!(limiter.sources.len(), MAX_TRACKED_INBOUND_SOURCES);
+        assert!(!limiter.allow(new_source, now));
+        assert_eq!(limiter.sources.len(), MAX_TRACKED_INBOUND_SOURCES);
+        let later = now + INBOUND_ATTEMPT_WINDOW;
+        assert!(limiter.allow(new_source, later));
+        assert_eq!(limiter.sources.len(), 1);
     }
 
     #[test]

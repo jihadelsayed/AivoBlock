@@ -40,8 +40,16 @@ equal the key in the file. Names are cosmetic and unsigned.
   exchange completes. IPv4-mapped IPv6 sources share the IPv4 address's limit;
   unused IP entries are removed. Outbound dialing and established encrypted
   validator links are not counted. This protects capacity for other sources
-  but is **not a connection-rate limiter or a full DDoS defense**. Validators
+  but is **not a full DDoS defense**. Validators
   sharing one NAT/public IP share the same eight pending slots.
+- To reduce short-lived handshake churn, the listener permits at most **16
+  inbound TCP connection attempts per source IP per one-second fixed window**,
+  checked before a worker is spawned. IPv4-mapped IPv6 addresses share their
+  IPv4 counter. A bounded map tracks at most **256 source IPs**; expired
+  one-second entries are reclaimed when the map is full, and new sources are
+  rejected while all tracked entries are fresh. This is a best-effort source
+  rate limiter, **not** a network-wide flood defense; validators behind one NAT
+  share a rate budget, and many-source floods can still deny service.
 - Messages are JSON envelopes (`status`, `task`, `claim`, `proposal`, `vote`,
   `commit`, `get_blocks`) carrying hex of canonical binary encodings.
 - For each handshake, both nodes compute a shared SHA-256 session ID over a
