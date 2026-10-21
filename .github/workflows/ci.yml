@@ -159,8 +159,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verifier and settlement benchmarks (release build)
-        run: docker run --rm aivoblock-node:testnet bench --iterations 20
+      - name: Verifier, settlement and scaling benchmarks (release build)
+        run: |
+          mkdir -p testnet/generated
+          docker run --rm aivoblock-node:testnet bench --iterations 20 --sweep | tee testnet/generated/bench.json
       - name: Three-node end-to-end demonstration
         run: python3 scripts/testnet.py demo --skip-build
       - name: Four-validator fault-tolerance scenario
@@ -171,6 +173,7 @@ jobs:
         with:
           name: testnet-reports
           path: |
+            testnet/generated/bench.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
           if-no-files-found: warn

@@ -69,6 +69,19 @@ def last_json(text: str) -> dict:
     raise Failure(f"no JSON in output: {text[-2000:]}")
 
 
+def summarize(samples: list[int]) -> dict:
+    """Order statistics of measured samples (nearest-rank percentiles)."""
+    if not samples:
+        return {"count": 0}
+    ordered = sorted(samples)
+
+    def rank(q: float) -> int:
+        return ordered[min(len(ordered) - 1, max(0, round(q * len(ordered)) - 1))]
+
+    return {"count": len(ordered), "min": ordered[0], "median": rank(0.5), "p95": rank(0.95),
+            "max": ordered[-1], "mean": sum(ordered) / len(ordered)}
+
+
 def decode_ledger(raw: bytes) -> dict:
     """Independent decoder for the canonical genesis ledger snapshot."""
     if not raw.startswith(LEDGER_MAGIC):
@@ -147,6 +160,27 @@ class Testnet:
 
     def client(self, node: str, *args: str) -> dict:
         return last_json(self.compose("exec", "-T", node, "aivoblock-node", "client", *args))
+
+    def resources(self, label: str) -> dict:
+        """One ``docker stats`` snapshot per running container: CPU, memory,
+        cumulative network and block I/O since the container started."""
+        ids = self.compose("ps", "-q", check_rc=False).split()
+        if not ids:
+            return {}
+        raw = run(["docker", "stats", "--no-stream", "--format", "{{json .}}", *ids], check_rc=False)
+        stats = {}
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            entry = json.loads(line)
+            stats[entry.get("Name", "?")] = {
+                key: entry.get(key) for key in ("CPUPerc", "MemUsage", "MemPerc", "NetIO", "BlockIO", "PIDs")
+            }
+        self.report.setdefault("resources", []).append({"label": label, "time": time.time(), "containers": stats})
+        log(f"resources [{label}]: " + "; ".join(
+            f"{name} cpu {s['CPUPerc']} mem {s['MemUsage']} net {s['NetIO']}" for name, s in sorted(stats.items())))
+        return stats
 
     def status(self, node: str) -> dict:
         return self.client(node, "status")
@@ -270,6 +304,7 @@ class Testnet:
 def demo(net: Testnet) -> None:
     nodes = net.nodes()
     net.up()
+    net.resources("idle after authentication")
     net.probe_unauthorized()
     # 1. The repository's original deterministic workload, one row per worker.
     net.submit("--workload", "fixture", "--fee-budget", "30")
@@ -286,6 +321,7 @@ def demo(net: Testnet) -> None:
         check(case["pass"], f"adversarial {case['case']}: {case['verdict']} ({case['reason']})")
     check(suite["height_unchanged"], "adversarial inputs did not change finalized state")
     net.step("adversarial", suite=suite)
+    net.resources("after adversarial suite")
     net.submit("--workload", "synthetic", "--rows", "9", "--features", "4",
                "--sequence", str(suite["next_free_sequence"]))
     net.wait_height(4, nodes)
@@ -303,8 +339,11 @@ def demo(net: Testnet) -> None:
     net.wait_height(5, nodes)
     final = net.verify(nodes)
     check(final["blocks"][4]["workload"] == "qmlp-v1", "height 5 settled QMLP-V1 inference work")
+    net.resources("end of demo")
     net.report["final"] = {k: final[k] for k in ("height", "tip", "state_root", "supply", "fee_pool")}
     net.report["finality_ms"] = net.finality(nodes)
+    net.report["finality_summary_ms"] = summarize(net.report["finality_ms"])
+    net.report["counters"] = {n: net.status(n)["counters"] for n in nodes}
     net.report["issued"] = net.model.issued
     net.report["paid"] = net.model.paid
 
@@ -332,6 +371,7 @@ def fault(net: Testnet) -> None:
     check(recovered["startup"]["replayed_blocks"] == 1, "node-4 replayed its 1 persisted block")
     check(recovered["counters"]["synced_blocks"] >= 2, "node-4 synced 2 certified blocks from peers")
     check(recovered["blocks"][1]["workload"] == "qmlp-v1", "node-4 re-verified the synced QMLP-V1 block")
+    net.resources("after node-4 crash recovery")
     net.wait_connected(nodes)
     net.verify(nodes)
     # Crash the round-0 leader of the next height: a round change must occur.
@@ -356,8 +396,11 @@ def fault(net: Testnet) -> None:
     net.wait_height(height, nodes)
     net.wait_connected(nodes)
     final = net.verify(nodes)
+    net.resources("end of fault scenario")
     net.report["final"] = {k: final[k] for k in ("height", "tip", "state_root", "supply", "fee_pool")}
     net.report["finality_ms"] = net.finality(nodes)
+    net.report["finality_summary_ms"] = summarize(net.report["finality_ms"])
+    net.report["counters"] = {n: net.status(n)["counters"] for n in nodes}
     net.report["issued"] = net.model.issued
     net.report["paid"] = net.model.paid
 
