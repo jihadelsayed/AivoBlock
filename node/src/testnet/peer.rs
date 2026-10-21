@@ -944,7 +944,10 @@ mod tests {
             // A successful frame should be able to reset the deadline without
             // carrying forward its previous read budget.
             first.deadline = Instant::now() - Duration::from_millis(1);
-            assert_eq!(first.remaining().unwrap_err().kind(), io::ErrorKind::TimedOut);
+            assert_eq!(
+                first.remaining().unwrap_err().kind(),
+                io::ErrorKind::TimedOut
+            );
         }
         let mut next = DeadlineStream::live_frame(&mut client);
         assert_eq!(recv_frame_bounded(&mut next, 32).unwrap(), b"second");
