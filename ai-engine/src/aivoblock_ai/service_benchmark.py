@@ -15,11 +15,13 @@ from .service_baseline import QmlpService
 
 
 def measure(payload: dict, *, iterations: int = 20, batch: int = 64,
-            verify: bool = False) -> dict:
+            verify: bool = False, warmups: int = 1) -> dict:
     if type(iterations) is not int or iterations < 3:
         raise ValueError("iterations must be at least three")
     if type(verify) is not bool:
         raise ValueError("verify must be boolean")
+    if type(warmups) is not int or warmups < 1:
+        raise ValueError("warmups must be positive")
     model = QuantizedMLP.from_json(payload["model"])
     rows = payload["rows"]
     service = QmlpService(model, max_batch=batch)
@@ -31,6 +33,10 @@ def measure(payload: dict, *, iterations: int = 20, batch: int = 64,
             raise ValueError(f"Fixture {key} does not match computed commitment")
     if payload.get("result_commitment") != warm.result_commitment:
         raise ValueError("Fixture result_commitment does not match computed commitment")
+    for _ in range(warmups - 1):
+        preflight = service.execute(rows, verify_independently=verify)
+        if preflight.result_commitment != warm.result_commitment:
+            raise ValueError("Nondeterministic warmup result")
     observations = []
     for _ in range(iterations):
         started = time.perf_counter_ns()
@@ -45,6 +51,7 @@ def measure(payload: dict, *, iterations: int = 20, batch: int = 64,
         "rows": len(rows),
         "batch_size": batch,
         "iterations": iterations,
+        "warmups": warmups,
         "model_commitment": warm.model_commitment,
         "input_commitment": warm.input_commitment,
         "result_commitment": warm.result_commitment,
@@ -65,9 +72,11 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--batch", type=int, default=64)
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--warmups", type=int, default=1)
     args = parser.parse_args()
     report = measure(json.loads(args.fixture.read_text()),
-                     iterations=args.iterations, batch=args.batch, verify=args.verify)
+                     iterations=args.iterations, batch=args.batch, verify=args.verify,
+                     warmups=args.warmups)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
     print(json.dumps(report, sort_keys=True))
