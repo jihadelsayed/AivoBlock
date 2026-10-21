@@ -63,9 +63,10 @@ def test_mutated_measured_artifact_is_detected_by_digest_reconciliation(tmp_path
     path = Path(report["artifact_paths"]["result_path"])
     expected_digest = report["artifact_sha256"]["artifact_result_sha256"]
     path.write_bytes(path.read_bytes() + b"\n")
-    recorded = record(report["request_observations"], "service_direct")
-    assert recorded["result_commitment"] != expected_digest
-    # SHA-256 is computed from present file bytes; no on-chain attestation claimed.
+    with pytest.raises(ValueError, match="artifact result digest mismatch"):
+        record(report["request_observations"], "service_direct")
+    assert hashlib.sha256(path.read_bytes()).hexdigest() != expected_digest
+    # Producer-declared hashes detect tampering, but are not on-chain attestation.
 
 
 def test_service_observations_cannot_be_misrepresented_as_finality(tmp_path):
