@@ -3,26 +3,78 @@
 //! feeds a message through exactly the same validation as an untrusted
 //! peer message and reports the verdict, for adversarial testing.
 
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::node::Event;
 use super::wire::WireMessage;
-use crate::network::tcp::{configure_stream, recv_frame, send_frame};
+use crate::network::tcp::{configure_stream, recv_frame, send_frame, IO_TIMEOUT};
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bound each complete request and response frame, not just each socket read
+/// or write. Slow peers otherwise keep a connection slot by trickling bytes.
+const CONTROL_FRAME_DEADLINE: Duration = Duration::from_secs(10);
 /// A local control port can still be reached by compromised same-host
 /// processes or an accidentally exposed container port. Bound the number of
 /// detached threads waiting on clients or a busy node event queue.
 const MAX_CONCURRENT_CONTROL_CONNECTIONS: usize = 16;
+
+/// TCP stream adapter enforcing one absolute deadline per control frame.
+/// TCP read/write timeouts apply to individual syscalls and do not stop
+/// trickle traffic unless the remaining end-to-end time is checked each time.
+struct ControlDeadlineStream<'a> {
+    inner: &'a mut TcpStream,
+    deadline: Instant,
+}
+
+impl<'a> ControlDeadlineStream<'a> {
+    fn new(inner: &'a mut TcpStream, duration: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + duration,
+        }
+    }
+
+    fn remaining(&self) -> io::Result<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Control frame deadline exceeded",
+            ));
+        }
+        Ok(remaining.min(IO_TIMEOUT))
+    }
+}
+
+impl Read for ControlDeadlineStream<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let timeout = self.remaining()?;
+        self.inner.set_read_timeout(Some(timeout))?;
+        self.inner.read(buf)
+    }
+}
+
+impl Write for ControlDeadlineStream<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let timeout = self.remaining()?;
+        self.inner.set_write_timeout(Some(timeout))?;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.remaining()?;
+        self.inner.flush()
+    }
+}
 
 /// A reservation is held until the control handler exits, including all
 /// timeout and parsing-error paths.
@@ -65,9 +117,11 @@ pub enum ControlRequest {
 
 fn serve_one(mut stream: TcpStream, events: &SyncSender<Event>) -> io::Result<()> {
     configure_stream(&stream)?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-    let raw = recv_frame(&mut stream)?;
+    // A partial header or payload cannot repeatedly renew the read timeout.
+    let raw = {
+        let mut request = ControlDeadlineStream::new(&mut stream, CONTROL_FRAME_DEADLINE);
+        recv_frame(&mut request)?
+    };
     let answer = match serde_json::from_slice::<ControlRequest>(&raw) {
         Err(error) => json!({ "error": format!("invalid control request: {error}") }),
         Ok(request) => {
@@ -82,7 +136,9 @@ fn serve_one(mut stream: TcpStream, events: &SyncSender<Event>) -> io::Result<()
         }
     };
     let bytes = serde_json::to_vec(&answer).map_err(io::Error::other)?;
-    send_frame(&mut stream, &bytes)
+    // Replies use their own deadline, after the node has produced its answer.
+    let mut response = ControlDeadlineStream::new(&mut stream, CONTROL_FRAME_DEADLINE);
+    send_frame(&mut response, &bytes)
 }
 
 pub fn spawn_control_server(
@@ -144,6 +200,61 @@ pub fn control_call(address: &str, request: &ControlRequest) -> Result<Value, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_frame_deadline_survives_partial_reads_and_limits_writes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let mut limited = ControlDeadlineStream::new(&mut server, Duration::from_secs(3));
+        client.write_all(b"ab").unwrap();
+        let mut byte = [0u8; 1];
+        assert_eq!(limited.read(&mut byte).unwrap(), 1);
+        assert_eq!(byte, [b'a']);
+
+        // Reading a byte cannot restart the absolute timer.
+        limited.deadline = Instant::now() - Duration::from_millis(1);
+        assert_eq!(
+            limited.read(&mut byte).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(
+            limited.write(b"x").unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(limited.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn complete_control_status_request_and_reply_use_deadline_stream() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        configure_stream(&client).unwrap();
+        let (events, received) = mpsc::sync_channel(1);
+        let handler = thread::spawn(move || serve_one(server, &events).unwrap());
+
+        send_frame(
+            &mut client,
+            &serde_json::to_vec(&ControlRequest::Status).unwrap(),
+        )
+        .unwrap();
+        match received.recv_timeout(Duration::from_secs(3)).unwrap() {
+            Event::Control {
+                request: ControlRequest::Status,
+                reply,
+            } => {
+                reply.send(json!({"status": "ok"})).unwrap();
+            }
+            _ => panic!("Expected status control request"),
+        }
+        let response = recv_frame(&mut client).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response).unwrap(),
+            json!({"status": "ok"})
+        );
+        handler.join().unwrap();
+    }
 
     #[test]
     fn control_connection_capacity_is_bounded_and_released() {
