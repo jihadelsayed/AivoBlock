@@ -55,6 +55,8 @@ use crate::validator_certificate::{
 /// grow indefinitely when event producers outrun consensus processing.
 const MAX_PENDING_NODE_EVENTS: usize = 128;
 const MAX_PENDING_TASKS: usize = 256;
+/// Avoid launching one expensive AI worker thread for every pending task.
+const MAX_CONCURRENT_WORKER_EXECUTIONS: usize = 8;
 const MAX_ORPHAN_CLAIMS: usize = 256;
 const MAX_FUTURE_COMMITS: usize = 128;
 const MAX_EARLY_MESSAGES: usize = 512;
@@ -138,6 +140,27 @@ pub struct Counters {
     pub rounds_advanced: u64,
     pub worker_executions: u64,
     pub worker_failures: u64,
+}
+
+/// Track only workers that are actually executing or whose completion event
+/// has not yet been handled. Failed tasks remain in `computing` to avoid
+/// retries, but must still release a concurrency slot.
+#[derive(Default)]
+struct WorkerExecutionSlots {
+    active: BTreeSet<([u8; 32], u32)>,
+}
+
+impl WorkerExecutionSlots {
+    fn reserve(&mut self, task_id: [u8; 32], partition: u32) -> bool {
+        if self.active.len() >= MAX_CONCURRENT_WORKER_EXECUTIONS {
+            return false;
+        }
+        self.active.insert((task_id, partition))
+    }
+
+    fn release(&mut self, task_id: [u8; 32], partition: u32) {
+        self.active.remove(&(task_id, partition));
+    }
 }
 
 /// All peer, control, and worker threads share this bounded queue. A full
@@ -248,6 +271,7 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
         claims: BTreeMap::new(),
         orphan_claims: VecDeque::new(),
         computing: BTreeSet::new(),
+        worker_slots: WorkerExecutionSlots::default(),
         round: 0,
         round_started: None,
         proposed_round: None,
@@ -302,6 +326,7 @@ struct Node {
     claims: BTreeMap<[u8; 32], BTreeMap<u32, WorkClaimV3>>,
     orphan_claims: VecDeque<WorkClaimV3>,
     computing: BTreeSet<([u8; 32], u32)>,
+    worker_slots: WorkerExecutionSlots,
     round: u64,
     round_started: Option<Instant>,
     proposed_round: Option<u64>,
@@ -675,9 +700,15 @@ impl Node {
                 .claims
                 .get(task_id)
                 .is_some_and(|claims| claims.contains_key(&partition));
-            if done || !self.computing.insert((*task_id, partition)) {
+            if done || self.computing.contains(&(*task_id, partition)) {
                 continue;
             }
+            // Reserve before launching a thread; anything beyond the cap
+            // stays queued in `tasks` for the next scheduler tick.
+            if !self.worker_slots.reserve(*task_id, partition) {
+                break;
+            }
+            self.computing.insert((*task_id, partition));
             let backend = self.worker.clone();
             let task = task.clone();
             let worker = self.own_worker;
@@ -702,6 +733,9 @@ impl Node {
         result: Result<[u8; 32], String>,
         elapsed_ms: u64,
     ) {
+        // Release the execution slot on success, failure, or a stale result
+        // whose task was finalized/removed while the worker was running.
+        self.worker_slots.release(task_id, partition);
         let Some(task) = self.tasks.get(&task_id) else {
             self.computing.remove(&(task_id, partition));
             return;
@@ -1282,6 +1316,27 @@ impl Node {
 #[cfg(test)]
 mod event_queue_tests {
     use super::*;
+
+    #[test]
+    fn worker_slots_enforce_concurrency_cap_and_release_capacity() {
+        let mut slots = WorkerExecutionSlots::default();
+        for id in 0..MAX_CONCURRENT_WORKER_EXECUTIONS {
+            assert!(slots.reserve([id as u8; 32], 0));
+        }
+        assert_eq!(slots.active.len(), MAX_CONCURRENT_WORKER_EXECUTIONS);
+        // A different task cannot launch more threads while the pool is full.
+        assert!(!slots.reserve([100; 32], 0));
+        // A task that finishes, fails, or becomes stale always frees its slot.
+        slots.release([0; 32], 0);
+        assert!(slots.reserve([100; 32], 0));
+        assert!(!slots.reserve([100; 32], 0));
+        slots.release([100; 32], 0);
+        for id in 1..MAX_CONCURRENT_WORKER_EXECUTIONS {
+            slots.release([id as u8; 32], 0);
+        }
+        assert!(slots.active.is_empty());
+        assert!(slots.reserve([101; 32], 0));
+    }
 
     #[test]
     fn shared_node_event_queue_rejects_overflow_and_reclaims_capacity() {
