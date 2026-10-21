@@ -34,7 +34,7 @@ use serde_json::{json, Value};
 
 use super::chain::{rules, Chain, StartupReport, VoteLock};
 use super::config::{NetworkConfig, NodeKeys, CHAIN_ID};
-use super::control::{spawn_control_server, ControlRequest};
+use super::control::{require_local_control_listener, spawn_control_server, ControlRequest};
 use super::peer::{spawn_dialer, spawn_listener, AuthenticatedFrameLimiter, PeerLink, Transport};
 use super::wire::{decode_block_hex, decode_claim, WireMessage};
 use super::worker::WorkerBackend;
@@ -219,6 +219,9 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
         engine,
         worker,
     } = options;
+    // Reject an accidentally public operator API before opening chain storage
+    // or starting network, worker and control threads.
+    require_local_control_listener(&control_listener)?;
     let own_validator = keys.validator.verifying_key().to_bytes();
     if config.validator(&own_validator).is_none() {
         return Err("This node's validator key is not in the network configuration".into());

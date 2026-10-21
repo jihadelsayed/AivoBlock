@@ -27,6 +27,21 @@ const CONTROL_FRAME_DEADLINE: Duration = Duration::from_secs(10);
 /// detached threads waiting on clients or a busy node event queue.
 const MAX_CONCURRENT_CONTROL_CONNECTIONS: usize = 16;
 
+/// Operator control commands are intentionally unauthenticated and may inject
+/// synthetic consensus messages. Refuse wildcard/public binds rather than
+/// accidentally exposing these privileged operations beyond the local host.
+pub(super) fn require_local_control_listener(listener: &TcpListener) -> Result<(), String> {
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("inspect operator control listener: {error}"))?;
+    if !address.ip().is_loopback() {
+        return Err(format!(
+            "Operator control listener must bind a loopback address, not {address}"
+        ));
+    }
+    Ok(())
+}
+
 /// TCP stream adapter enforcing one absolute deadline per control frame.
 /// TCP read/write timeouts apply to individual syscalls and do not stop
 /// trickle traffic unless the remaining end-to-end time is checked each time.
@@ -200,6 +215,27 @@ pub fn control_call(address: &str, request: &ControlRequest) -> Result<Value, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operator_control_rejects_wildcard_binds_and_accepts_loopback() {
+        let local = TcpListener::bind("127.0.0.1:0").unwrap();
+        require_local_control_listener(&local).unwrap();
+
+        // A wildcard listener is reachable from non-loopback interfaces,
+        // even if clients usually connect over 127.0.0.1.
+        let exposed = TcpListener::bind("0.0.0.0:0").unwrap();
+        let failure = require_local_control_listener(&exposed).unwrap_err();
+        assert!(failure.contains("must bind a loopback address"));
+        assert!(failure.contains("0.0.0.0:"));
+
+        // IPv6 wildcard binds must be rejected as well where IPv6 works.
+        if let Ok(exposed_v6) = TcpListener::bind("[::]:0") {
+            assert!(require_local_control_listener(&exposed_v6).is_err());
+        }
+        if let Ok(local_v6) = TcpListener::bind("[::1]:0") {
+            require_local_control_listener(&local_v6).unwrap();
+        }
+    }
 
     #[test]
     fn control_frame_deadline_survives_partial_reads_and_limits_writes() {
