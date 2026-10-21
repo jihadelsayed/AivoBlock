@@ -62,6 +62,12 @@ equal the key in the file. Names are cosmetic and unsigned.
   rejected while all tracked entries are fresh. This is a best-effort source
   rate limiter, **not** a network-wide flood defense; validators behind one NAT
   share a rate budget, and many-source floods can still deny service.
+- The local operator control API is **unauthenticated** and can inject
+  synthetic consensus messages for testing. Node startup therefore rejects
+  any operator control listener bound to a non-loopback or wildcard address
+  (including `0.0.0.0` and `::`). `127.0.0.1` and `::1` are allowed. This
+  prevents accidental public exposure through the listener address; it is not
+  a substitute for same-host process isolation or operator authentication.
 - The local operator control listener admits at most **16 concurrent TCP
   client handlers**. Each accepted client holds an atomic reservation until
   its one-request handler exits; excess sockets are closed without launching
