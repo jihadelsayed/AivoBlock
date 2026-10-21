@@ -22,6 +22,9 @@ def aggregate(reports: list[dict], *, launches: int, iterations: int) -> dict:
                    r.get("result_commitment"), r.get("rows")) for r in reports}
     if len(identities) != 1 or any(not all(identity[:3]) for identity in identities):
         raise ValueError("mismatched committed workloads")
+    batches = {r.get("batch_size") for r in reports}
+    if len(batches) != 1 or any(type(b) is not int or b < 1 for b in batches):
+        raise ValueError("mismatched benchmark batch sizes")
     output = {}
     for mode in ("trusted_result", "same_implementation_recomputation"):
         subset = [r for r in reports if r.get("mode") == mode]
@@ -57,6 +60,7 @@ def aggregate(reports: list[dict], *, launches: int, iterations: int) -> dict:
         "scope": "local synchronous in-process QMLP service-core latency only",
         "separate_process_launches": launches,
         "iterations_per_launch": iterations,
+        "batch_size": next(iter(batches)),
         "warmups_per_launch": 5,
         "workload": dict(zip(("model_commitment", "input_commitment",
                              "result_commitment", "rows"), next(iter(identities)))),
