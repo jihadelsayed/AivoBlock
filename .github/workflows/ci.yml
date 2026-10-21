@@ -184,3 +184,20 @@ jobs:
         run: |
           mkdir -p /tmp/aivoblock-proto
           protoc --proto_path=protocol/proto --descriptor_set_out=/tmp/aivoblock-proto/schema.pb --include_imports protocol/proto/*.proto
+
+
+  lockfile_snapshot:
+    name: Temporary Rust lockfile snapshot
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/pin-rust-dependencies-ci'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate the complete Cargo dependency lockfile
+        working-directory: node
+        run: |
+          cargo generate-lockfile
+          echo "AIVOBLOCK_LOCKFILE_BEGIN"
+          base64 -w0 Cargo.lock
+          echo
+          echo "AIVOBLOCK_LOCKFILE_END"
