@@ -207,7 +207,7 @@ jobs:
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
       - name: Run Rust ↔ Haskell IPC tests with per-command diagnostics
         working-directory: node
-        timeout-minutes: 35
+        timeout-minutes: 60
         run: |
           set -euo pipefail
           run_checked() {
@@ -219,6 +219,10 @@ jobs:
             echo "::endgroup::"
             return "$rc"
           }
+          # Cold RocksDB compilation can exceed five minutes; compile once outside per-test timeouts.
+          echo "::group::Compile Rust test binaries (cold build)"
+          cargo test --locked --no-run
+          echo "::endgroup::"
           run_checked cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
           run_checked cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
           run_checked cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
