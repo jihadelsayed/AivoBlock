@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 FIELDS = ("model_commitment", "input_commitment", "result_commitment")
+CANONICAL_FIELDS = tuple("canonical_" + field for field in FIELDS)
 SCENARIOS = ("service_direct", "service_recomputed", "chain_observed_finality")
 
 
@@ -18,6 +19,7 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
     if not isinstance(bundle, dict) or not isinstance(bundle.get("scenarios"), dict):
         raise ValueError("Missing scenarios object")
     ref = None
+    canonical_ref = None
     result = {}
     for mode in SCENARIOS:
         scenario = bundle["scenarios"].get(mode)
@@ -27,6 +29,14 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
         if any(not isinstance(x, str) or len(x) != 64 or
                any(c not in "0123456789abcdef" for c in x) for x in identity):
             raise ValueError(f"{mode}: missing or invalid SHA-256 commitments")
+        canonical = tuple(scenario.get(field) for field in CANONICAL_FIELDS)
+        if any(not isinstance(x, str) or len(x) != 64 or
+               any(c not in "0123456789abcdef" for c in x) for x in canonical):
+            raise ValueError(f"{mode}: missing or invalid canonical QMLP commitments")
+        if canonical_ref is None:
+            canonical_ref = canonical
+        elif canonical != canonical_ref:
+            raise ValueError(f"{mode}: canonical model/input/result commitments differ")
         if ref is None:
             ref = identity
         elif identity != ref:
@@ -49,6 +59,9 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
                 supplied = s.get(field)
                 if supplied != expected:
                     raise ValueError(f"{mode}: request {rid} missing or mismatched {field}")
+            for field, expected in zip(CANONICAL_FIELDS, canonical_ref):
+                if s.get(field) != expected:
+                    raise ValueError(f"{mode}: request {rid} missing or mismatched {field}")
             if rid in request_ids:
                 raise ValueError(f"{mode}: duplicate request ID: {rid}")
             request_ids.add(rid)
@@ -65,7 +78,9 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
         if len(counts) < minimum_launches or any(n < minimum_per_launch for n in counts.values()):
             raise ValueError(f"{mode}: need >= {minimum_launches} launches with >= {minimum_per_launch} measured samples each")
         result[mode] = {"launches": len(counts), "samples": len(samples)}
-    return {"status": "PASS", "commitments": dict(zip(FIELDS, ref)), "scenarios": result}
+    return {"status": "PASS", "commitments": dict(zip(FIELDS, ref)),
+            "canonical_commitments": dict(zip(CANONICAL_FIELDS, canonical_ref)),
+            "scenarios": result}
 
 
 def main():

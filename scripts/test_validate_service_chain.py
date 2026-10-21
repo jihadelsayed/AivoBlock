@@ -14,18 +14,53 @@ def fixture():
                 row = {"launch_id": f"launch-{launch}", "request_id": f"{mode}-{launch}-{i}",
                        "elapsed_ms": 1.5, "status": "success",
                        "model_commitment": digest, "input_commitment": "b" * 64,
-                       "result_commitment": "c" * 64}
+                       "result_commitment": "c" * 64,
+                       "canonical_model_commitment": "d" * 64,
+                       "canonical_input_commitment": "e" * 64,
+                       "canonical_result_commitment": "f" * 64}
                 if mode == "chain_observed_finality":
                     row["finalized_height"] = 1 + launch * 30 + i
                 rows.append(row)
         scenarios[mode] = {"model_commitment": digest, "input_commitment": "b" * 64,
-                           "result_commitment": "c" * 64, "samples": rows}
+                           "result_commitment": "c" * 64,
+                           "canonical_model_commitment": "d" * 64,
+                           "canonical_input_commitment": "e" * 64,
+                           "canonical_result_commitment": "f" * 64, "samples": rows}
     return {"scenarios": scenarios}
 
 
 class ValidateServiceChainTests(unittest.TestCase):
     def test_accepts_three_by_thirty(self):
         self.assertEqual(validate(fixture())["status"], "PASS")
+
+    def test_rejects_missing_canonical_chain_identity(self):
+        b = fixture()
+        del b["scenarios"]["chain_observed_finality"]["canonical_model_commitment"]
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            validate(b)
+
+    def test_rejects_cross_scenario_canonical_mismatch(self):
+        b = fixture()
+        b["scenarios"]["chain_observed_finality"]["canonical_result_commitment"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            validate(b)
+
+    def test_rejects_missing_request_canonical_identity(self):
+        b = fixture()
+        del b["scenarios"]["service_direct"]["samples"][2]["canonical_input_commitment"]
+        with self.assertRaisesRegex(ValueError, "canonical_input_commitment"):
+            validate(b)
+
+    def test_rejects_request_canonical_mismatch(self):
+        b = fixture()
+        b["scenarios"]["service_recomputed"]["samples"][10]["canonical_result_commitment"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "canonical_result_commitment"):
+            validate(b)
+
+    def test_returns_both_distinct_namespaces(self):
+        result = validate(fixture())
+        self.assertEqual(result["commitments"]["model_commitment"], "a" * 64)
+        self.assertEqual(result["canonical_commitments"]["canonical_model_commitment"], "d" * 64)
 
     def test_rejects_missing_commitment(self):
         b = fixture()
