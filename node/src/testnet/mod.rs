@@ -3,8 +3,9 @@
 //! certificates, block sync, restart recovery and a local control API.
 //!
 //! Scope and limits: a fixed, permissioned validator set from a signed
-//! network configuration; signed peer frames but no transport encryption; no stake, slashing or
-//! validator rotation; full recomputation of a tiny integer workload. Never
+//! network configuration; authenticated encrypted validator P2P links;
+//! no stake, slashing or validator rotation; full recomputation of a tiny
+//! integer workload. Never
 //! use this to protect real funds or to run a public network.
 
 pub mod bench;
@@ -15,6 +16,7 @@ pub mod control;
 pub mod init;
 pub mod node;
 pub mod peer;
+pub mod secure;
 pub mod wire;
 pub mod worker;
 
