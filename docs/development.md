@@ -127,7 +127,13 @@ uint32_be(payload_length) || payload
   (Haskell core 10 s, Python worker 30 s). A child that does not answer in
   time is killed and the request fails with `TimedOut`; a hung executable
   cannot block the consensus loop or hold a worker slot forever.
-- Typed request/response schemas and persistent process supervision remain future work.
+- The Haskell core also offers `aivoblock-core ipc-serve`, which answers
+  framed requests until stdin closes. The testnet runtime uses it through
+  `HaskellValidatorClient::persistent()`: requests are serialized, each has
+  the same 10 s deadline, and any error, timeout or malformed reply kills the
+  process so the next request starts a fresh one. Diagnostics keep one
+  process per request.
+- Typed request/response schemas remain future work.
 
 IPC framing is not blockchain canonical encoding.
 

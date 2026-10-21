@@ -130,6 +130,7 @@ jobs:
           cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
           cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
           cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
+          cargo test --locked persistent_core_answers_repeatedly -- --nocapture
           cargo test --locked testnet:: -- --nocapture --test-threads=1
           cargo run --locked -- core-health
           cargo run --locked -- core-validate

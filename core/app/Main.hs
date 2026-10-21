@@ -36,7 +36,7 @@ import Data.Word (Word32, Word64)
 
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.IO (hPutStrLn, hSetBinaryMode, stderr, stdin, stdout)
+import System.IO (BufferMode (..), hFlush, hPutStrLn, hSetBinaryMode, hSetBuffering, stderr, stdin, stdout)
 
 version :: String
 version = "0.1.0.0"
@@ -48,12 +48,13 @@ healthResponse :: String
 healthResponse =
   "{\"ok\":true,\"type\":\"health\",\"protocol_version\":1,\"core\":\"aivoblock-core\",\"status\":\"ready_for_protocol_development\"}"
 
-data Command = Help | Version | Status | IpcHealth
+data Command = Help | Version | Status | IpcHealth | IpcServe
 
 parseCommand :: [String] -> Either String Command
 parseCommand []             = Right Status
 parseCommand ["status"]     = Right Status
 parseCommand ["ipc-health"] = Right IpcHealth
+parseCommand ["ipc-serve"]  = Right IpcServe
 parseCommand ["--help"]     = Right Help
 parseCommand ["-h"]         = Right Help
 parseCommand ["--version"]  = Right Version
@@ -69,6 +70,7 @@ printHelp = mapM_ putStrLn
   , "Commands:"
   , "  status       Show the current implementation status (default)"
   , "  ipc-health   Exchange one length-prefixed health or block-shape request"
+  , "  ipc-serve    Answer length-prefixed requests until stdin closes"
   , "  --version    Print the core version"
   , "  --help       Show this help message"
   ]
@@ -83,26 +85,34 @@ printStatus = mapM_ putStrLn
   , "No blockchain node is started by this command."
   ]
 
--- | Read one bounded binary frame with the shared Rust framing contract.
--- Short reads, zero length, oversized frames and trailing bytes are rejected.
-readFrame :: IO (Either String String)
-readFrame = do
-  header <- readExactly 4
-  if BS.length header /= 4
-    then pure (Left "Incomplete IPC header")
-    else do
+-- | Validate a 4-byte length header and read exactly that many payload bytes.
+-- Short reads, zero length and oversized frames are rejected.
+readPayload :: BS.ByteString -> IO (Either String String)
+readPayload header
+  | BS.length header /= 4 = pure (Left "Incomplete IPC header")
+  | otherwise = do
       let count = BS.foldl' (\n byte -> (n `shiftL` 8) + toInteger byte) 0 header
       if count <= 0 || count > maxIpcBytes
         then pure (Left "Invalid IPC payload length")
         else do
           payload <- readExactly (fromInteger count)
-          if toInteger (BS.length payload) /= count
-            then pure (Left "Incomplete IPC payload")
-            else do
-              extra <- BS.hGet stdin 1
-              pure $ if BS.null extra
-                then Right (map (chr . fromIntegral) (BS.unpack payload))
-                else Left "Unexpected trailing IPC bytes"
+          pure $ if toInteger (BS.length payload) /= count
+            then Left "Incomplete IPC payload"
+            else Right (map (chr . fromIntegral) (BS.unpack payload))
+
+-- | Read one bounded binary frame with the shared Rust framing contract,
+-- then require end of input (no trailing bytes).
+readFrame :: IO (Either String String)
+readFrame = do
+  header <- readExactly 4
+  framed <- readPayload header
+  case framed of
+    Left problem -> pure (Left problem)
+    Right request -> do
+      extra <- BS.hGet stdin 1
+      pure $ if BS.null extra
+        then Right request
+        else Left "Unexpected trailing IPC bytes"
 
 readExactly :: Int -> IO BS.ByteString
 readExactly amount = go amount []
@@ -844,6 +854,36 @@ ipcHealth = do
         Just response -> writeFrame response
         Nothing -> failIpc "Unsupported IPC request"
 
+-- | Persistent mode: answer length-prefixed requests, one response frame
+-- each, until stdin closes between frames. Every request is handled exactly
+-- like @ipc-health@; a malformed frame or unsupported request ends the
+-- process, so the Rust client never reuses a session after an error.
+ipcServe :: IO ()
+ipcServe = do
+  hSetBinaryMode stdin True
+  hSetBinaryMode stdout True
+  hSetBuffering stdout (BlockBuffering Nothing)
+  outcome <- try serveLoop :: IO (Either IOException ())
+  case outcome of
+    Left _ -> failIpc "Incomplete IPC frame"
+    Right () -> pure ()
+  where
+    serveLoop = do
+      header <- readExactly 4
+      if BS.null header
+        then pure ()
+        else do
+          framed <- readPayload header
+          case framed of
+            Left problem -> failIpc problem
+            Right request ->
+              case handleIpcRequest request of
+                Just response -> do
+                  writeFrame response
+                  hFlush stdout
+                  serveLoop
+                Nothing -> failIpc "Unsupported IPC request"
+
 failIpc :: String -> IO ()
 failIpc message = do
   hPutStrLn stderr ("AivoBlock core IPC error: " ++ message)
@@ -857,6 +897,7 @@ main = do
     Right Version   -> putStrLn version
     Right Status    -> printStatus
     Right IpcHealth -> ipcHealth
+    Right IpcServe  -> ipcServe
     Left err        -> do
       hPutStrLn stderr err
       exitFailure
