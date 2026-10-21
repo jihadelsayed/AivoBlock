@@ -21,11 +21,8 @@ pub mod worker;
 #[cfg(test)]
 mod tests;
 
-use std::io::Read;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sha2::{Digest, Sha256};
 
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -59,28 +56,28 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 32 bytes from the OS (`/dev/urandom`). The fallback hashes time, process
-/// and a counter: it is unique but NOT cryptographically unpredictable and
-/// exists only so Windows unit tests can run; containers use the OS source.
+/// Return 32 bytes of OS-provided cryptographically secure randomness.
+///
+/// This function is used for private validator/worker/authority keys and
+/// handshake challenges. It must fail closed if the OS CSPRNG is unavailable:
+/// a timestamp or process ID is never an acceptable cryptographic fallback.
 pub fn random_bytes32() -> [u8; 32] {
     let mut bytes = [0u8; 32];
-    if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
-        if file.read_exact(&mut bytes).is_ok() && bytes != [0; 32] {
-            return bytes;
-        }
+    getrandom::getrandom(&mut bytes).expect("AivoBlock requires a working OS CSPRNG");
+    bytes
+}
+
+#[cfg(test)]
+mod rng_tests {
+    use super::random_bytes32;
+
+    #[test]
+    fn random_key_material_is_nonzero_and_unique_across_calls() {
+        let first = random_bytes32();
+        let second = random_bytes32();
+        assert_ne!(first, [0; 32]);
+        assert_ne!(first, second);
     }
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let mut digest = Sha256::new();
-    digest.update(b"AIVOBLOCK-FALLBACK-RANDOM-V1\0");
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    digest.update(nanos.to_be_bytes());
-    digest.update(std::process::id().to_be_bytes());
-    digest.update(COUNTER.fetch_add(1, Ordering::Relaxed).to_be_bytes());
-    digest.update(format!("{:?}", std::thread::current().id()).as_bytes());
-    digest.finalize().into()
 }
 
 pub fn env_or(name: &str, default: &str) -> String {
