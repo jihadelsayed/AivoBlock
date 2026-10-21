@@ -66,9 +66,14 @@ equal the key in the file. Names are cosmetic and unsigned.
   client handlers**. Each accepted client holds an atomic reservation until
   its one-request handler exits; excess sockets are closed without launching
   threads. Admission recovers after disconnects, timeouts and malformed
-  requests. This caps local control-handler threads but does not authenticate
-  callers or eliminate a slow-client denial of service if the listener is
-  exposed beyond trusted loopback access.
+  requests. Every complete inbound request frame and outbound response frame
+  now has its **own 10-second absolute deadline**, including headers and
+  payloads. Each read/write uses at most the remaining budget (and the
+  three-second per-operation I/O timeout), so drip-fed bytes cannot hold a
+  control handler indefinitely. The node may still spend up to 30 seconds
+  waiting for the corresponding control event reply. This bounds local
+  control-handler lifetime but does not authenticate callers or replace
+  trusted loopback-only exposure.
 - The node dispatches peer, operator-control and AI-worker events through a
   shared **128-event bounded channel** rather than an unbounded queue. When the
   consumer falls behind, producers must wait for queue capacity, which applies
