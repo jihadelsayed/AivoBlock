@@ -19,7 +19,7 @@ use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 
 use super::random_bytes32;
 use super::wire::{recv_authenticated_message, send_authenticated_message, WireMessage};
-use crate::network::tcp::{recv_frame_bounded, send_frame};
+use crate::network::tcp::{recv_frame, recv_frame_bounded, send_frame};
 use crate::network::MAX_MESSAGE_BYTES;
 
 const EXCHANGE_DOMAIN: &[u8] = b"AIVOBLOCK-ENCRYPTED-HANDSHAKE-V1\0";
