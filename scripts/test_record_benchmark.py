@@ -27,6 +27,43 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(result["samples"][0]["elapsed_ms"], 1.0)
         self.assertEqual(result["samples"][0]["result_commitment"], hashlib.sha256(b"result bytes").hexdigest())
 
+    def test_keeps_canonical_commitments_distinct_from_artifact_digests(self):
+        values = {f"{name}_commitment": (("a" if name == "model" else
+                                            "b" if name == "input" else "c") * 64)
+                  for name in ("model", "input", "result")}
+        result = record([self.sample(**values)], "service_direct")
+        for name in ("model", "input", "result"):
+            self.assertEqual(result[f"canonical_{name}_commitment"],
+                             values[f"{name}_commitment"])
+            self.assertEqual(result["samples"][0][f"canonical_{name}_commitment"],
+                             values[f"{name}_commitment"])
+            self.assertNotEqual(result[f"{name}_commitment"], values[f"{name}_commitment"])
+
+    def test_rejects_partial_canonical_identity(self):
+        with self.assertRaisesRegex(ValueError, "partial canonical"):
+            record([self.sample(model_commitment="a" * 64)], "service_direct")
+
+    def test_rejects_inconsistent_canonical_identity_across_requests(self):
+        values = {f"{name}_commitment": "a" * 64
+                  for name in ("model", "input", "result")}
+        with self.assertRaisesRegex(ValueError, "inconsistent canonical"):
+            record([self.sample(**values),
+                    self.sample("r2", **{**values, "result_commitment": "b" * 64})],
+                   "service_direct")
+
+    def test_rejects_mixed_presence_of_canonical_identity(self):
+        values = {f"{name}_commitment": "a" * 64
+                  for name in ("model", "input", "result")}
+        with self.assertRaisesRegex(ValueError, "inconsistent canonical"):
+            record([self.sample(**values), self.sample("r2")], "service_direct")
+
+    def test_rejects_non_hex_canonical_commitment(self):
+        values = {f"{name}_commitment": "a" * 64
+                  for name in ("model", "input", "result")}
+        with self.assertRaisesRegex(ValueError, "invalid canonical"):
+            record([self.sample(**{**values, "model_commitment": "z" * 64})],
+                   "service_direct")
+
     def test_rejects_changed_input(self):
         other = self.root / "other_input"
         other.write_bytes(b"different")
