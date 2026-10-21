@@ -1,8 +1,11 @@
 """Tests for the non-blockchain service microbenchmark."""
+import hashlib
+import json
 import pytest
 
 from aivoblock_ai.qmlp import FIXTURE_ROWS, fixture_model, qmlp_input_commitment, execute_partition
 from aivoblock_ai.service_benchmark import measure
+from aivoblock_ai.service_baseline import QmlpService
 
 
 def fixture():
@@ -71,3 +74,28 @@ def test_instrumentation_remains_opt_in():
 def test_invalid_launch_id_rejected():
     with pytest.raises(ValueError, match="launch_id"):
         measure(fixture(), iterations=3, launch_id=" ")
+
+def test_measured_artifacts_are_hashed_and_attached_outside_timing(tmp_path):
+    data = fixture()
+    report = measure(data, iterations=3, launch_id="run-a",
+                     artifacts_dir=tmp_path / "artifacts")
+    paths = report["artifact_paths"]
+    for name in ("model", "input", "result"):
+        from pathlib import Path
+        content = Path(paths[f"{name}_path"]).read_bytes()
+        assert hashlib.sha256(content).hexdigest() == report["artifact_sha256"][f"artifact_{name}_sha256"]
+        assert all(row[f"{name}_path"] == paths[f"{name}_path"]
+                   for row in report["request_observations"])
+    assert json.loads((tmp_path / "artifacts" / "model.json").read_text()) == data["model"]
+    assert json.loads((tmp_path / "artifacts" / "input.json").read_text()) == data["rows"]
+    assert json.loads((tmp_path / "artifacts" / "result.json").read_text()) == [
+        list(data_row) for data_row in
+        QmlpService(
+            fixture_model()).execute(data["rows"]).logits
+    ]
+    assert report["request_observations"][0]["boundary"] == "synchronous_in_process_service_execute"
+
+
+def test_artifacts_require_launch_id(tmp_path):
+    with pytest.raises(ValueError, match="requires launch_id"):
+        measure(fixture(), iterations=3, artifacts_dir=tmp_path)
