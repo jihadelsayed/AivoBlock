@@ -43,12 +43,21 @@ struct HandshakePermit(Arc<AtomicUsize>);
 
 impl HandshakePermit {
     fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
-        active
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < MAX_PENDING_INBOUND_HANDSHAKES).then_some(count + 1)
-            })
-            .ok()?;
-        Some(Self(Arc::clone(active)))
+        let mut count = active.load(Ordering::Acquire);
+        loop {
+            if count >= MAX_PENDING_INBOUND_HANDSHAKES {
+                return None;
+            }
+            match active.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self(Arc::clone(active))),
+                Err(observed) => count = observed,
+            }
+        }
     }
 }
 
