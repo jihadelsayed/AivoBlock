@@ -94,6 +94,7 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 ## Design documents
 
 - [Private testnet](docs/testnet.md) — architecture diagrams, commands, verified behavior, limitations.
+- [Measured research results (21 Oct 2026)](docs/research-results-2026-10-21.md) — benchmark evidence, quantized-model accuracy, Haskell IPC overhead, scaling limitations and reproduction commands.
 - [AI workloads](docs/ai-workloads.md) — which AI computations are consensus-verifiable (integer linear, QMLP-V1) and the off-chain PyTorch → QMLP-V1 → ONNX path.
 - [Architecture](docs/architecture.md) — components, node responsibilities, and trust boundaries.
 - [Mining](docs/mining.md) — intended collaborative AI work lifecycle.
