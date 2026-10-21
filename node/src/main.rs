@@ -24,6 +24,7 @@ mod mining;
 #[allow(dead_code)]
 mod network;
 mod proof_pipeline_v2;
+mod qmlp;
 mod reward_block;
 mod reward_pipeline;
 mod settlement_v3;

@@ -15,7 +15,7 @@ native Sayed Token rewards and recover their finalized history after restart.
 | --- | --- |
 | Worker results equal the committed model applied to the committed input | **Yes**, by full independent recomputation in Rust on every validator |
 | Results come from the assigned, registered worker | **Yes**, authority-signed assignment + Ed25519 worker signature |
-| Arbitrary or large-model AI computation is efficiently or cryptographically proven | **No.** The workload is a small integer linear model (≤ 256 rows × 32 features) and verification costs as much as computing it. There are no succinct, zero-knowledge or optimistic proofs. |
+| Arbitrary or large-model AI computation is efficiently or cryptographically proven | **No.** The consensus workloads are a small integer linear model and QMLP-V1, an integer-only quantized two-layer MLP (≤ 256 rows, 32 → 64 → 16), and verification costs as much as computing them. There are no succinct, zero-knowledge or optimistic proofs. Floating-point PyTorch/ONNX execution is never accepted into blocks. |
 | BFT safety with ≤ 1/3 faulty voting power | Yes for the implemented fixed-set protocol (durable one-block-per-height locks + > 2/3 quorum certificates) |
 | Liveness under Byzantine leaders | Partial: crash faults and leader crashes are handled by round changes; equivocating leaders can stall a height |
 | Sybil resistance, stake, slashing, validator rotation | Not implemented (permissioned set) |
@@ -31,7 +31,7 @@ flowchart LR
         P["Python worker<br/>aivoblock_ai/worker.py"]
         DB[("RocksDB<br/>finalized chain")]
         N -- "framed JSON IPC:<br/>ledger_ai_work_block_v3" --> H
-        N -- "framed JSON IPC:<br/>execute_integer_inference" --> P
+        N -- "framed JSON IPC:<br/>execute_integer_inference ·<br/>execute_qmlp_inference" --> P
         N --> DB
     end
     C["Operator CLI<br/>aivoblock-node client"] -- "control API<br/>127.0.0.1:30334" --> N

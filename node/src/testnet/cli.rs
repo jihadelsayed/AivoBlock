@@ -25,6 +25,7 @@ use crate::ipc::haskell::HaskellValidatorClient;
 use crate::ipc::python::PythonWorkerClient;
 use crate::network::handshake::sign_hello;
 use crate::network::tcp::{configure_stream, recv_frame, send_frame};
+use crate::qmlp::{qmlp_rules_commitment_v1, QmlpModelV1};
 use crate::settlement_v3::SettlementEngine;
 use crate::validator_certificate::sign_precommit_v1;
 
@@ -202,26 +203,93 @@ pub fn partition_rows(rows: usize, workers: &[[u8; 32]]) -> Vec<PartitionV3> {
         .collect()
 }
 
+/// A seeded synthetic QMLP-V1 model and int8 input rows (16 inputs, 32
+/// hidden units, 10 outputs), for multi-node tests and demonstrations.
+pub fn qmlp_workload(rows: usize, seed: u64) -> (QmlpModelV1, Vec<Vec<i64>>) {
+    qmlp_workload_with(rows, (16, 32, 10), seed)
+}
+
+/// Seeded QMLP-V1 model with `(d_in, d_hidden, d_out)` and int8 input rows.
+pub fn qmlp_workload_with(
+    rows: usize,
+    (d_in, d_hidden, d_out): (usize, usize, usize),
+    seed: u64,
+) -> (QmlpModelV1, Vec<Vec<i64>>) {
+    let mut state = seed.wrapping_mul(2_862_933_555_777_941_757).wrapping_add(3);
+    let mut next = |span: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 33) % (2 * span + 1)) as i64 - span as i64
+    };
+    let mut int8 = |count: usize| (0..count).map(|_| next(127) as i8).collect::<Vec<i8>>();
+    let w1 = int8(d_hidden * d_in);
+    let w2 = int8(d_out * d_hidden);
+    let b1 = (0..d_hidden).map(|_| next(4_000) as i32).collect();
+    let b2 = (0..d_out).map(|_| next(4_000) as i32).collect();
+    let matrix = (0..rows)
+        .map(|_| (0..d_in).map(|_| next(127)).collect())
+        .collect();
+    let model = QmlpModelV1 {
+        d_in: d_in as u32,
+        d_hidden: d_hidden as u32,
+        d_out: d_out as u32,
+        multiplier: 1,
+        shift: 10,
+        w1,
+        b1,
+        w2,
+        b2,
+    };
+    (model, matrix)
+}
+
+/// Load `{"model": {...QMLP-V1...}, "rows": [[int8...]...]}`, the format the
+/// off-chain PyTorch quantization pipeline exports.
+pub fn load_qmlp_file(path: &str) -> Result<(QmlpModelV1, Vec<Vec<i64>>), String> {
+    let raw = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let value: Value = serde_json::from_slice(&raw).map_err(|e| format!("{path}: {e}"))?;
+    let model = QmlpModelV1::from_json(&value["model"])?;
+    let rows: Vec<Vec<i64>> = serde_json::from_value(value["rows"].clone())
+        .map_err(|e| format!("{path}: rows must be integer arrays: {e}"))?;
+    Ok((model, rows))
+}
+
 pub struct TaskSpec<'a> {
     pub sequence: u64,
     pub deadline_height: u64,
     pub fee_budget: u64,
+    /// Integer linear weights; ignored (must be empty) when `qmlp` is set.
     pub weights: &'a [i64],
     pub rows: &'a [Vec<i64>],
+    pub qmlp: Option<QmlpModelV1>,
     pub partitions: Vec<PartitionV3>,
 }
 
 pub fn build_task(spec: TaskSpec<'_>, authority: &SigningKey) -> Result<AiTaskV3, String> {
+    let (model_commitment, rules_commitment, width) = match &spec.qmlp {
+        None => (
+            model_commitment_v3(spec.weights)?,
+            rules_commitment_v1(),
+            spec.weights.len(),
+        ),
+        Some(model) => (
+            model.commitment()?,
+            qmlp_rules_commitment_v1(),
+            model.d_in as usize,
+        ),
+    };
     let task = AiTaskV3 {
         sequence: spec.sequence,
         created_ms: now_ms(),
         deadline_height: spec.deadline_height,
         fee_budget: spec.fee_budget,
-        model_commitment: model_commitment_v3(spec.weights)?,
-        input_commitment: input_commitment_v3(spec.rows, spec.weights.len())?,
-        rules_commitment: rules_commitment_v1(),
+        model_commitment,
+        input_commitment: input_commitment_v3(spec.rows, width)?,
+        rules_commitment,
         weights: spec.weights.to_vec(),
         rows: spec.rows.to_vec(),
+        qmlp: spec.qmlp,
         partitions: spec.partitions,
         task_id: [0; 32],
         authority_signature: [0; 64],
@@ -230,13 +298,18 @@ pub fn build_task(spec: TaskSpec<'_>, authority: &SigningKey) -> Result<AiTaskV3
 }
 
 fn task_json(task: &AiTaskV3) -> Value {
+    let (workload, features) = match &task.qmlp {
+        None => ("integer-linear-v1", task.weights.len()),
+        Some(model) => ("qmlp-v1", model.d_in as usize),
+    };
     json!({
         "task_id": hex(&task.task_id),
+        "workload": workload,
         "sequence": task.sequence,
         "deadline_height": task.deadline_height,
         "fee_budget": task.fee_budget,
         "rows": task.rows.len(),
-        "features": task.weights.len(),
+        "features": features,
         "partitions": task.partitions.iter().map(|p| json!({
             "worker": hex(&p.worker),
             "start": p.start,
@@ -279,12 +352,19 @@ fn submit_task_command(address: &str, flags: &BTreeMap<String, String>) -> Resul
         .get("workload")
         .map(String::as_str)
         .unwrap_or("fixture");
-    let (weights, rows) = workload(
-        kind,
-        number(flags, "rows", 12)?,
-        number(flags, "features", 4)?,
-        number(flags, "seed", sequence)?,
-    );
+    let row_count = number(flags, "rows", 12)?;
+    let seed = number(flags, "seed", sequence)?;
+    let (weights, rows, qmlp) = if let Some(path) = flags.get("qmlp-file") {
+        let (model, rows) = load_qmlp_file(path)?;
+        (Vec::new(), rows, Some(model))
+    } else if kind == "qmlp" {
+        let (model, rows) = qmlp_workload(row_count, seed);
+        (Vec::new(), rows, Some(model))
+    } else {
+        let features = number(flags, "features", 4)?;
+        let (weights, rows) = workload(kind, row_count, features, seed);
+        (weights, rows, None)
+    };
     let mut workers = online_workers(&current)?;
     let limit = number(flags, "max-workers", workers.len())?;
     workers.truncate(limit.max(1));
@@ -295,6 +375,7 @@ fn submit_task_command(address: &str, flags: &BTreeMap<String, String>) -> Resul
             fee_budget: number(flags, "fee-budget", 30u64)?,
             weights: &weights,
             rows: &rows,
+            qmlp,
             partitions: partition_rows(rows.len(), &workers),
         },
         &authority,
@@ -423,6 +504,7 @@ fn fixture_task(
             fee_budget,
             weights: &weights,
             rows: &rows,
+            qmlp: None,
             partitions,
         },
         authority,
@@ -583,6 +665,40 @@ fn adversarial_command(address: &str, flags: &BTreeMap<String, String>) -> Resul
     suite.expect(
         "malformed_task_bytes",
         call(address, &malformed),
+        &["rejected"],
+    );
+
+    // Attacks on the quantized-MLP (QMLP-V1) workload.
+    let (model, mut qmlp_rows) = qmlp_workload(3, future);
+    let qmlp_task = |rows: &[Vec<i64>], model: QmlpModelV1| {
+        build_task(
+            TaskSpec {
+                sequence: future,
+                deadline_height: deadline,
+                fee_budget,
+                weights: &[],
+                rows,
+                qmlp: Some(model),
+                partitions: honest.clone(),
+            },
+            &authority,
+        )
+    };
+    qmlp_rows[0][0] = 128;
+    let wide = qmlp_task(&qmlp_rows, model.clone())?;
+    suite.expect(
+        "qmlp_input_outside_int8",
+        submit(address, &wide),
+        &["rejected"],
+    );
+    qmlp_rows[0][0] = 1;
+    let mut swapped = qmlp_task(&qmlp_rows, model)?;
+    if let Some(model) = swapped.qmlp.as_mut() {
+        model.b1[0] += 1;
+    }
+    suite.expect(
+        "qmlp_model_swapped_after_signing",
+        submit(address, &swapped),
         &["rejected"],
     );
 

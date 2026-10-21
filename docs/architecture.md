@@ -49,7 +49,7 @@ Every independently operated full node maintains its own ledger and data directo
 
 - The initial research testnet uses a **fixed permissioned validator set**. A genuinely permissionless consensus and Sybil-resistance mechanism is an open research problem.
 - Existing Haskell voting helpers only calculate quorum weights; they do not finalize blocks.
-- The current Python puzzle uses deterministic integer linear inference. Verification currently repeats the computation, so inexpensive verification of arbitrary AI work is **not solved**.
+- Two AI workloads are consensus-valid: deterministic integer linear inference and QMLP-V1, an integer-only quantized two-layer MLP (`protocol/spec/quantized-mlp-v1.md`). Verification repeats the computation, so inexpensive verification of arbitrary AI work is **not solved**, and floating-point PyTorch/ONNX models are only quantized into QMLP-V1 off-chain, never executed in consensus.
 - The Rust scheduler operates locally and does not guarantee decentralized task assignment.
 - RocksDB storage is local per node; atomic finalized-block writes and recovery still need implementation.
 - Protobuf describes transport messages. Consensus hashes require separate canonical encodings and cross-language test vectors.

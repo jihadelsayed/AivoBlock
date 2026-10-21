@@ -43,34 +43,60 @@ impl WorkerBackend {
             .partitions
             .get(partition as usize)
             .ok_or("Nonexistent partition")?;
-        let request = json!({
-            "protocol_version": 1,
-            "type": "execute_integer_inference",
-            "worker_id": hex(worker_id),
-            "puzzle": {
-                "puzzle_id": hex(&task.task_id),
-                "version": 1,
-                "model_commitment": hex(&task.model_commitment),
-                "input_commitment": hex(&task.input_commitment),
-                "rules_commitment": hex(&task.rules_commitment),
-                "units": task.rows.len(),
-                "deadline_height": task.deadline_height,
-            },
-            "start": entry.start,
-            "count": entry.count,
-            "rows": task.rows,
-            "weights": task.weights,
-        });
+        let (kind, request) = match &task.qmlp {
+            None => (
+                "execute_integer_inference",
+                json!({
+                    "protocol_version": 1,
+                    "type": "execute_integer_inference",
+                    "worker_id": hex(worker_id),
+                    "puzzle": {
+                        "puzzle_id": hex(&task.task_id),
+                        "version": 1,
+                        "model_commitment": hex(&task.model_commitment),
+                        "input_commitment": hex(&task.input_commitment),
+                        "rules_commitment": hex(&task.rules_commitment),
+                        "units": task.rows.len(),
+                        "deadline_height": task.deadline_height,
+                    },
+                    "start": entry.start,
+                    "count": entry.count,
+                    "rows": task.rows,
+                    "weights": task.weights,
+                }),
+            ),
+            Some(model) => (
+                "execute_qmlp_inference",
+                json!({
+                    "protocol_version": 1,
+                    "type": "execute_qmlp_inference",
+                    "worker_id": hex(worker_id),
+                    "task_id": hex(&task.task_id),
+                    "model_commitment": hex(&task.model_commitment),
+                    "input_commitment": hex(&task.input_commitment),
+                    "rules_commitment": hex(&task.rules_commitment),
+                    "model": model.to_json(),
+                    "rows": task.rows,
+                    "start": entry.start,
+                    "count": entry.count,
+                }),
+            ),
+        };
         let bytes = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
         let response = client
             .exchange(&bytes)
             .map_err(|e| format!("Python worker IPC: {e:?}"))?;
         let value: Value =
             serde_json::from_slice(&response).map_err(|e| format!("Python reply: {e}"))?;
-        if value["ok"] != json!(true) || value["type"] != json!("execute_integer_inference") {
+        if value["ok"] != json!(true) || value["type"] != json!(kind) {
             return Err(format!("Python worker refused the partition: {value}"));
         }
-        let proof = &value["proof"];
+        // The linear reply nests its claimed proof; the QMLP reply is flat.
+        let proof = if task.qmlp.is_some() {
+            &value
+        } else {
+            &value["proof"]
+        };
         if proof["start_unit"] != json!(entry.start) || proof["unit_count"] != json!(entry.count) {
             return Err("Python worker answered a different range".into());
         }
@@ -89,22 +115,23 @@ impl WorkerBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_block_v3::tests::fixture_task;
+    use crate::ai_block_v3::tests::{fixture_task, qmlp_task};
 
     #[test]
     fn rust_reference_matches_independent_recomputation() {
-        let task = fixture_task(1);
-        for partition in 0..3 {
-            assert_eq!(
-                WorkerBackend::RustReference
-                    .execute(&task, partition, &[1; 32])
-                    .unwrap(),
-                expected_result_v3(&task, partition).unwrap()
-            );
+        for task in [fixture_task(1), qmlp_task(1)] {
+            for partition in 0..3 {
+                assert_eq!(
+                    WorkerBackend::RustReference
+                        .execute(&task, partition, &[1; 32])
+                        .unwrap(),
+                    expected_result_v3(&task, partition).unwrap()
+                );
+            }
+            assert!(WorkerBackend::RustReference
+                .execute(&task, 7, &[1; 32])
+                .is_err());
         }
-        assert!(WorkerBackend::RustReference
-            .execute(&task, 7, &[1; 32])
-            .is_err());
     }
 
     /// Runs the real Python worker when it is installed (CI rust job).
@@ -119,14 +146,16 @@ mod tests {
             eprintln!("SKIP: Python AI worker is not installed");
             return;
         }
-        let task = fixture_task(1);
         let backend = WorkerBackend::Python(client);
-        for partition in 0..3 {
-            let worker = task.partitions[partition as usize].worker;
-            assert_eq!(
-                backend.execute(&task, partition, &worker).unwrap(),
-                expected_result_v3(&task, partition).unwrap()
-            );
+        // Both consensus workloads: Python must agree with Rust byte for byte.
+        for task in [fixture_task(1), qmlp_task(1)] {
+            for partition in 0..3 {
+                let worker = task.partitions[partition as usize].worker;
+                assert_eq!(
+                    backend.execute(&task, partition, &worker).unwrap(),
+                    expected_result_v3(&task, partition).unwrap()
+                );
+            }
         }
     }
 }
