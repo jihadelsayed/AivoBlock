@@ -16,7 +16,10 @@ The existing `aivoblock-node bench` command now reports
 validated Rust QMLP-V1 logits API sequentially on all task rows,
 using `std::hint::black_box` to retain the computation and a warm-up pass.
 The model, weights, integer arithmetic and rows are **identical** to the
-corresponding full-block verifier trial.
+corresponding full-block verifier trial. Every repeated benchmark exports
+SHA-256 model and input commitments from the signed task; the analyzer
+requires both to match across all process invocations, not just tensor
+sizes and layer counts.
 
 The matched alternatives are:
 
