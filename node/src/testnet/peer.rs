@@ -207,10 +207,7 @@ struct OutboundAttemptPermit {
 }
 
 impl OutboundAttemptPermit {
-    fn acquire(
-        dialing: &Arc<Mutex<BTreeSet<[u8; 32]>>>,
-        peer: [u8; 32],
-    ) -> Option<Self> {
+    fn acquire(dialing: &Arc<Mutex<BTreeSet<[u8; 32]>>>, peer: [u8; 32]) -> Option<Self> {
         let mut active = dialing.lock().ok()?;
         if !active.insert(peer) {
             return None;
