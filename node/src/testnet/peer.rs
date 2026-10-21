@@ -135,8 +135,8 @@ pub fn mutual_handshake(
     }
     send_frame(stream, &sign_hello(chain_id, local, &theirs))
         .map_err(|e| format!("send hello: {e}"))?;
-    let hello = recv_frame_bounded(stream, HELLO_BYTES)
-        .map_err(|e| format!("receive hello: {e}"))?;
+    let hello =
+        recv_frame_bounded(stream, HELLO_BYTES).map_err(|e| format!("receive hello: {e}"))?;
     let verified = verify_hello(&hello, chain_id, &challenge)?;
     let own = local.verifying_key().to_bytes();
     if verified.public_key == own {
@@ -350,17 +350,14 @@ mod tests {
         (mine, other.join().unwrap())
     }
 
-
     #[test]
     fn oversized_challenge_is_rejected_before_its_body_is_read() {
         use std::io::Write;
 
         let local = SigningKey::from_bytes(&[1; 32]);
-        let allowed: BTreeSet<_> = [SigningKey::from_bytes(&[2; 32])
-            .verifying_key()
-            .to_bytes()]
-        .into_iter()
-        .collect();
+        let allowed: BTreeSet<_> = [SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes()]
+            .into_iter()
+            .collect();
         let (mut client, mut server) = pair();
         server.write_all(&33u32.to_be_bytes()).unwrap();
         let err = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap_err();
