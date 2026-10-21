@@ -15,7 +15,12 @@
 //! - More than two thirds of voting power on (h, r, B) forms a quorum
 //!   certificate. Only then is B persisted and are rewards credited.
 //! - Without progress the round advances after a timeout and the next
-//!   leader re-proposes (its locked block if it has one).
+//!   leader re-proposes (its locked block if it has one). A node also moves
+//!   to a later round once validators holding more than one third of the
+//!   power precommitted there; a single proposal never moves its round.
+//! - Authenticated peers may still be Byzantine: proposals are accepted only
+//!   from the round leader, identical bytes are executed once per height,
+//!   and votes, rounds and early messages are bounded per validator.
 //!
 //! Limitations: no proposer signatures or equivocation evidence, no
 //! validator-set changes, liveness assumes partial synchrony and a single
@@ -32,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::bounds::{proposal_digest, ProposalAdmission, ProposalGate, VoteAdmission, VoteBook};
 use super::chain::{rules, Chain, StartupReport, VoteLock};
 use super::config::{NetworkConfig, NodeKeys, CHAIN_ID};
 use super::control::{require_local_control_listener, spawn_control_server, ControlRequest};
@@ -60,6 +66,13 @@ const MAX_CONCURRENT_WORKER_EXECUTIONS: usize = 8;
 const MAX_ORPHAN_CLAIMS: usize = 256;
 const MAX_FUTURE_COMMITS: usize = 128;
 const MAX_EARLY_MESSAGES: usize = 512;
+/// Early (next-height) messages buffered per sender, so one validator
+/// cannot crowd out the others or park megabytes of proposal bodies.
+const MAX_EARLY_PROPOSALS_PER_SOURCE: usize = 4;
+const MAX_EARLY_VOTES_PER_SOURCE: usize = 128;
+/// Proposals further ahead than this many rounds are ignored. Rounds only
+/// advance by timeout or by evidence from more than one third of the power.
+const MAX_ROUND_LOOKAHEAD: u64 = 8;
 const SYNC_BATCH: u64 = 64;
 const TICK: Duration = Duration::from_millis(100);
 const HEARTBEAT: Duration = Duration::from_millis(1_000);
@@ -130,6 +143,7 @@ pub struct Counters {
     pub votes_cast: u64,
     pub accepted_votes: u64,
     pub rejected_votes: u64,
+    pub equivocating_votes: u64,
     pub refused_by_lock: u64,
     pub finalized_blocks: u64,
     pub synced_blocks: u64,
@@ -282,7 +296,8 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
         voted_rounds: BTreeSet::new(),
         lock: None,
         candidates: BTreeMap::new(),
-        votes: BTreeMap::new(),
+        proposals: ProposalGate::default(),
+        votes: VoteBook::default(),
         future_commits: BTreeMap::new(),
         early_messages: Vec::new(),
         last_status: Instant::now(),
@@ -337,9 +352,11 @@ struct Node {
     voted_rounds: BTreeSet<u64>,
     lock: Option<VoteLock>,
     candidates: BTreeMap<[u8; 32], ExecutedBlockV3>,
-    votes: BTreeMap<(u64, [u8; 32]), BTreeMap<[u8; 32], SignedPrecommitV1>>,
+    proposals: ProposalGate,
+    votes: VoteBook,
     future_commits: BTreeMap<u64, (Vec<u8>, QuorumCertificateV1)>,
-    early_messages: Vec<WireMessage>,
+    /// Next-height messages with their authenticated sender (None: local).
+    early_messages: Vec<(Option<[u8; 32]>, WireMessage)>,
     last_status: Instant,
     last_sync_request: Option<Instant>,
     counters: Counters,
@@ -526,7 +543,7 @@ impl Node {
                 height,
                 round,
                 block,
-            } => self.on_proposal(height, round, &block),
+            } => self.on_proposal(source, height, round, &block),
             WireMessage::Vote {
                 height,
                 round,
@@ -808,7 +825,7 @@ impl Node {
         }
         let started = *self.round_started.get_or_insert_with(Instant::now);
         if started.elapsed() > self.round_timeout() {
-            self.round += 1;
+            self.round = self.round.saturating_add(1);
             self.round_started = Some(Instant::now());
             self.counters.rounds_advanced += 1;
             let leader = self.config.leader(self.next_height(), self.round);
@@ -870,43 +887,84 @@ impl Node {
         self.check_quorum();
     }
 
-    fn on_proposal(&mut self, height: u64, round: u64, block: &str) -> Verdict {
+    fn on_proposal(
+        &mut self,
+        source: Option<[u8; 32]>,
+        height: u64,
+        round: u64,
+        block: &str,
+    ) -> Verdict {
         if height <= self.chain.height {
             return Verdict::Ignored("proposal for an already finalized height".into());
         }
+        if height > self.next_height() + 1 {
+            return Verdict::Ignored("proposal for a future height".into());
+        }
+        if block.len() > 2 * MAX_BLOCK_BYTES {
+            self.counters.rejected_proposals += 1;
+            return Verdict::Rejected("oversized proposal".into());
+        }
+        // Proposals are never relayed, so an authenticated sender must lead
+        // the proposal's round. Local operator injections carry no peer
+        // identity and are still fully verified below.
+        if source.is_some_and(|peer| self.config.leader(height, round) != peer) {
+            self.counters.rejected_proposals += 1;
+            return Verdict::Rejected(
+                "proposal from a validator that does not lead its round".into(),
+            );
+        }
         if height == self.next_height() + 1 {
-            self.buffer_early(WireMessage::Proposal {
+            let message = WireMessage::Proposal {
                 height,
                 round,
                 block: block.to_owned(),
-            });
-            return Verdict::Ignored("proposal for the next height buffered".into());
+            };
+            return self.buffer_early(source, message);
         }
-        if height > self.next_height() {
-            return Verdict::Ignored("proposal for a future height".into());
+        if round > self.round.saturating_add(MAX_ROUND_LOOKAHEAD) {
+            return Verdict::Ignored("proposal round is too far ahead".into());
         }
-        let executed = match decode_block_hex(block).and_then(|raw| {
-            execute_block_v3(
-                &self.chain.parent(),
-                &rules(&self.config),
-                &self.engine,
-                &raw,
-                None,
-            )
-        }) {
-            Ok(executed) => executed,
+        let raw = match decode_block_hex(block) {
+            Ok(raw) => raw,
             Err(error) => {
                 self.counters.rejected_proposals += 1;
                 return Verdict::Rejected(format!("invalid proposal: {error}"));
             }
         };
-        let id = executed.id;
+        let digest = proposal_digest(&raw);
+        let id = match self.proposals.admit(&digest, source.as_ref()) {
+            ProposalAdmission::Known(id) => id,
+            ProposalAdmission::Rejected(error) => {
+                self.counters.rejected_proposals += 1;
+                return Verdict::Rejected(format!("invalid proposal: {error}"));
+            }
+            ProposalAdmission::OverBudget => {
+                return Verdict::Ignored("leader exceeded its distinct proposals".into());
+            }
+            ProposalAdmission::Execute => {
+                let executed = execute_block_v3(
+                    &self.chain.parent(),
+                    &rules(&self.config),
+                    &self.engine,
+                    &raw,
+                    None,
+                );
+                let outcome = executed.as_ref().map(|e| e.id).map_err(Clone::clone);
+                self.proposals.record(digest, source, outcome);
+                match executed {
+                    Ok(executed) => {
+                        let id = executed.id;
+                        self.candidates.entry(id).or_insert(executed);
+                        id
+                    }
+                    Err(error) => {
+                        self.counters.rejected_proposals += 1;
+                        return Verdict::Rejected(format!("invalid proposal: {error}"));
+                    }
+                }
+            }
+        };
         self.counters.accepted_proposals += 1;
-        self.candidates.entry(id).or_insert(executed);
-        if round > self.round {
-            self.round = round;
-            self.round_started = Some(Instant::now());
-        }
         self.try_vote(round, id);
         self.check_quorum();
         Verdict::Accepted(format!(
@@ -915,10 +973,27 @@ impl Node {
         ))
     }
 
-    fn buffer_early(&mut self, message: WireMessage) {
-        if self.early_messages.len() < MAX_EARLY_MESSAGES {
-            self.early_messages.push(message);
+    /// Buffer a next-height proposal or vote under a per-sender quota.
+    fn buffer_early(&mut self, source: Option<[u8; 32]>, message: WireMessage) -> Verdict {
+        let kind = message.kind();
+        let proposal = matches!(message, WireMessage::Proposal { .. });
+        let quota = if proposal {
+            MAX_EARLY_PROPOSALS_PER_SOURCE
+        } else {
+            MAX_EARLY_VOTES_PER_SOURCE
+        };
+        let queued = self
+            .early_messages
+            .iter()
+            .filter(|(from, queued)| {
+                *from == source && matches!(queued, WireMessage::Proposal { .. }) == proposal
+            })
+            .count();
+        if queued >= quota || self.early_messages.len() >= MAX_EARLY_MESSAGES {
+            return Verdict::Ignored(format!("early {kind} buffer is full"));
         }
+        self.early_messages.push((source, message));
+        Verdict::Ignored(format!("{kind} for the next height buffered"))
     }
 
     fn try_vote(&mut self, round: u64, id: [u8; 32]) {
@@ -961,10 +1036,7 @@ impl Node {
         self.voted_rounds.insert(round);
         self.counters.votes_cast += 1;
         self.gossip(None, &WireMessage::vote(height, round, &id, &vote));
-        self.votes
-            .entry((round, id))
-            .or_default()
-            .insert(vote.public_key, vote);
+        self.votes.insert(round, id, vote);
         self.note(format!(
             "precommitted block {} in round {round}",
             short(&id)
@@ -991,8 +1063,7 @@ impl Node {
             return Verdict::Ignored("vote for an already finalized height".into());
         }
         if height == self.next_height() + 1 {
-            self.buffer_early(WireMessage::vote(height, round, &id, &vote));
-            return Verdict::Ignored("vote for the next height buffered".into());
+            return self.buffer_early(source, WireMessage::vote(height, round, &id, &vote));
         }
         if height > self.next_height() {
             if let Some(peer) = source {
@@ -1005,39 +1076,53 @@ impl Node {
             self.counters.rejected_votes += 1;
             return Verdict::Rejected(error);
         }
-        let fresh = self
-            .votes
-            .entry((round, id))
-            .or_default()
-            .insert(vote.public_key, vote)
-            .is_none();
-        if !fresh {
-            return Verdict::Duplicate("vote already counted".into());
+        match self.votes.insert(round, id, vote) {
+            VoteAdmission::Fresh => {}
+            VoteAdmission::Duplicate => {
+                return Verdict::Duplicate("vote already counted".into());
+            }
+            VoteAdmission::Stale => {
+                return Verdict::Ignored("vote older than retained rounds".into());
+            }
+            VoteAdmission::Equivocation(first) => {
+                self.counters.rejected_votes += 1;
+                self.counters.equivocating_votes += 1;
+                return Verdict::Rejected(format!(
+                    "equivocating precommit: validator already precommitted {}",
+                    short(&first)
+                ));
+            }
         }
         self.counters.accepted_votes += 1;
+        self.skip_to_honest_round();
         self.check_quorum();
         Verdict::Accepted(format!("authenticated precommit for {}", short(&id)))
     }
 
+    /// Move to a later round only on precommits from validators holding
+    /// more than one third of the power, so at least one honest validator
+    /// is already there. A Byzantine minority cannot drive the round.
+    fn skip_to_honest_round(&mut self) {
+        let floor = self.votes.honest_round_floor(&self.config.validator_set);
+        let Some(round) = floor.filter(|round| *round > self.round) else {
+            return;
+        };
+        self.round = round;
+        self.round_started = Some(Instant::now());
+        self.counters.rounds_advanced += 1;
+        self.note(format!(
+            "advanced to round {round} on precommits from over one third of the power"
+        ));
+    }
+
     fn check_quorum(&mut self) {
-        let required = self.config.validator_set.required_power();
-        let ready = self.votes.iter().find_map(|((round, id), voters)| {
-            let power: u64 = voters
-                .keys()
-                .filter_map(|key| self.config.validator_set.power_of(key))
-                .sum();
-            (power >= required).then_some((*round, *id))
-        });
-        let Some((round, id)) = ready else {
+        let Some((round, id, votes)) = self.votes.quorum(&self.config.validator_set) else {
             return;
         };
         let Some(executed) = self.candidates.get(&id).cloned() else {
             // Quorum without the block body: a peer's Commit will deliver it.
             return;
         };
-        let mut votes: Vec<SignedPrecommitV1> =
-            self.votes[&(round, id)].values().copied().collect();
-        votes.sort_by_key(|vote| vote.public_key);
         let certificate = QuorumCertificateV1 {
             chain_id: CHAIN_ID,
             height: executed.block.header.height,
@@ -1169,7 +1254,8 @@ impl Node {
         self.proposed_round = None;
         self.voted_rounds.clear();
         self.candidates.clear();
-        self.votes.clear();
+        self.proposals = ProposalGate::default();
+        self.votes = VoteBook::default();
         self.lock = self.chain.load_vote_lock(next).unwrap_or(None);
         let rewards: Vec<String> = executed
             .block
@@ -1199,8 +1285,8 @@ impl Node {
         ));
         self.gossip(None, &self.status_message());
         // Proposals and votes that arrived one height early are re-validated.
-        for message in std::mem::take(&mut self.early_messages) {
-            self.on_message(None, message);
+        for (source, message) in std::mem::take(&mut self.early_messages) {
+            self.on_message(source, message);
         }
     }
 
