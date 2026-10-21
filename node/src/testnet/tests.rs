@@ -304,11 +304,17 @@ fn three_validators_finalize_quantized_mlp_work_and_reject_forged_results() {
     let mut wrong = correct;
     wrong[0] ^= 1;
     let forged = sign_claim_v3(&pending, index, key, wrong).unwrap();
-    assert_eq!(net.inject(WireMessage::claim(&forged))["verdict"], "rejected");
+    assert_eq!(
+        net.inject(WireMessage::claim(&forged))["verdict"],
+        "rejected"
+    );
     let honest = sign_claim_v3(&pending, index, key, correct).unwrap();
     let first = net.inject(WireMessage::claim(&honest));
     assert!(first["verdict"] == "accepted" || first["verdict"] == "duplicate");
-    assert_eq!(net.inject(WireMessage::claim(&honest))["verdict"], "duplicate");
+    assert_eq!(
+        net.inject(WireMessage::claim(&honest))["verdict"],
+        "duplicate"
+    );
     assert_eq!(net.submit(3, 3, &workers)["verdict"], "accepted");
     net.wait_height(&[0, 1, 2], 4);
     net.assert_consistent(&[0, 1, 2]);
