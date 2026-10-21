@@ -724,12 +724,12 @@ mod tests {
 
         // Keep a bounded node event queue full without running its consumer.
         let (events, queued) = mpsc::sync_channel(1);
-        events
+        assert!(events
             .try_send(Event::HandshakeRejected {
                 remote: "existing".into(),
                 reason: "earlier failure".into(),
             })
-            .unwrap();
+            .is_ok());
         let active = Arc::new(AtomicUsize::new(0));
         let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
         let address: IpAddr = "127.0.0.1".parse().unwrap();
