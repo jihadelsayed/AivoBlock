@@ -55,6 +55,22 @@ pip install -e "ai-engine[dev,research]"
 python -m aivoblock_ai.research --out research-out
 ```
 
+Run the actual **three-node private blockchain** using the model exported above
+(requires Docker with Compose v2; builds the Haskell/Rust/Python node image):
+
+```bash
+python3 scripts/testnet.py demo --qmlp-file research-out/digits.qmlp.json
+```
+
+The final task is read from `digits.qmlp.json` inside node-1, signed by the
+testnet authority, split among the real Python workers, recomputed by each Rust
+validator and settled through Haskell after BFT finality. The harness checks
+that all three nodes agree on the chain/state root and that worker balances
+match an **independent Python Sayed Token reward model**. This is a private
+research network using generated keys, not a public-chain deployment. CI
+downloads the exact trained model artifact from the off-chain research job and
+runs this same end-to-end demonstration.
+
 `research-out/report.json` records the accuracy of the float and integer
 models, their agreement, the ONNX Runtime float deviation from PyTorch and
 whether the integer ONNX graph matched exactly, together with library
