@@ -44,6 +44,10 @@ const MAX_INBOUND_ATTEMPTS_PER_IP_PER_WINDOW: usize = 16;
 const INBOUND_ATTEMPT_WINDOW: Duration = Duration::from_secs(1);
 /// Bound source-tracking memory under connection floods from many IPs.
 const MAX_TRACKED_INBOUND_SOURCES: usize = 256;
+/// Bound authenticated validator flooding before a peer can fill the node
+/// event queue with valid-but-excessive signed/encrypted frames.
+const MAX_AUTHENTICATED_FRAMES_PER_WINDOW: usize = 128;
+const AUTHENTICATED_FRAME_WINDOW: Duration = Duration::from_secs(1);
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -194,6 +198,35 @@ impl SourceRateLimiter {
                 attempts: 1,
             },
         );
+        true
+    }
+}
+
+/// A lightweight per-connection meter for successfully authenticated peer
+/// frames. The first frame in a new window is always counted, and excess
+/// frames cause the connection to close instead of overwhelming consensus.
+struct AuthenticatedFrameLimiter {
+    started: Instant,
+    accepted: usize,
+}
+
+impl AuthenticatedFrameLimiter {
+    fn new(now: Instant) -> Self {
+        Self {
+            started: now,
+            accepted: 0,
+        }
+    }
+
+    fn allow(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.started) >= AUTHENTICATED_FRAME_WINDOW {
+            self.started = now;
+            self.accepted = 0;
+        }
+        if self.accepted >= MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
+            return false;
+        }
+        self.accepted += 1;
         true
     }
 }
@@ -518,6 +551,7 @@ fn run_connection(
         return;
     }
     let mut last_sequence = 0;
+    let mut frame_limiter = AuthenticatedFrameLimiter::new(Instant::now());
     while !transport.shutdown.load(Ordering::Relaxed) {
         // A partially received encrypted frame cannot keep this worker alive
         // indefinitely: the header and payload share one fixed time budget.
@@ -528,6 +562,12 @@ fn run_connection(
         );
         match incoming {
             Ok(message) => {
+                // Reject an authenticated flood before placing more work into
+                // the bounded shared node queue. This meter is per live link,
+                // and starts over only when its clock window expires.
+                if !frame_limiter.allow(Instant::now()) {
+                    break;
+                }
                 let inbound = Event::Inbound {
                     peer,
                     link_id,
@@ -864,6 +904,35 @@ mod tests {
         let later = now + INBOUND_ATTEMPT_WINDOW;
         assert!(limiter.allow(new_source, later));
         assert_eq!(limiter.sources.len(), 1);
+    }
+
+    #[test]
+    fn authenticated_peer_frame_flood_is_rejected_and_window_recovers() {
+        let now = Instant::now();
+        let mut limiter = AuthenticatedFrameLimiter::new(now);
+        for _ in 0..MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
+            assert!(limiter.allow(now));
+        }
+        assert_eq!(limiter.accepted, MAX_AUTHENTICATED_FRAMES_PER_WINDOW);
+        assert!(!limiter.allow(now));
+        assert!(!limiter.allow(
+            now + AUTHENTICATED_FRAME_WINDOW - Duration::from_nanos(1)
+        ));
+        assert!(limiter.allow(now + AUTHENTICATED_FRAME_WINDOW));
+        assert_eq!(limiter.accepted, 1);
+    }
+
+    #[test]
+    fn separate_authenticated_connections_have_independent_frame_budgets() {
+        let now = Instant::now();
+        let mut first = AuthenticatedFrameLimiter::new(now);
+        let mut second = AuthenticatedFrameLimiter::new(now);
+        for _ in 0..MAX_AUTHENTICATED_FRAMES_PER_WINDOW {
+            assert!(first.allow(now));
+        }
+        assert!(!first.allow(now));
+        assert!(second.allow(now));
+        assert_eq!(second.accepted, 1);
     }
 
     #[test]
