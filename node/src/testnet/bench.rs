@@ -66,7 +66,10 @@ struct BlockTimings {
     worker_us: f64,
     claim_us: f64,
     block_us: f64,
+    /// One `aivoblock-core ipc-health` process per block.
     haskell_us: Option<f64>,
+    /// One persistent `ipc-serve` process, after a warm-up request.
+    haskell_persistent_us: Option<f64>,
 }
 
 /// Honest claims for every partition (Rust reference), then claim and
@@ -104,17 +107,26 @@ fn time_block(
         execute_block_v3(parent, rules, &mirror, &built.bytes, Some(&built.id))?;
     }
     let block_us = per_op_us(started, iterations);
-    let haskell_us = match std::env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE") {
-        Some(path) if !path.is_empty() => {
-            let core = HaskellValidatorClient::new(path).map_err(|e| format!("{e:?}"))?;
-            let engine = SettlementEngine::Haskell(core);
-            let started = Instant::now();
-            for _ in 0..iterations {
-                execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
-            }
-            Some(per_op_us(started, iterations))
+    let haskell = std::env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE").filter(|p| !p.is_empty());
+    let (haskell_us, haskell_persistent_us) = match haskell {
+        Some(path) => {
+            let once = HaskellValidatorClient::new(&path).map_err(|e| format!("{e:?}"))?;
+            let persistent = once.clone().persistent();
+            let time = |engine: SettlementEngine, warm_up: bool| {
+                if warm_up {
+                    execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
+                }
+                let started = Instant::now();
+                for _ in 0..iterations {
+                    execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
+                }
+                Ok::<_, String>(per_op_us(started, iterations))
+            };
+            let once_us = time(SettlementEngine::Haskell(once), false)?;
+            let persistent_us = time(SettlementEngine::Haskell(persistent), true)?;
+            (Some(once_us), Some(persistent_us))
         }
-        _ => None,
+        None => (None, None),
     };
     Ok(BlockTimings {
         block_bytes: built.bytes.len(),
@@ -122,6 +134,7 @@ fn time_block(
         claim_us,
         block_us,
         haskell_us,
+        haskell_persistent_us,
     })
 }
 
@@ -136,6 +149,7 @@ fn timings_json(timings: &BlockTimings, rows: usize, partitions: usize) -> Value
         "claim_verify_us": timings.claim_us,
         "full_block_verify_rust_mirror_us": timings.block_us,
         "full_block_verify_haskell_cross_checked_us": timings.haskell_us,
+        "full_block_verify_haskell_persistent_us": timings.haskell_persistent_us,
         "block_verify_over_all_worker_compute": timings.block_us / worker_total_us,
         "rows_verified_per_second": rows as f64 * 1e6 / timings.block_us,
     })
@@ -340,6 +354,7 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
         "claim_verify_us": linear.claim_us,
         "full_block_verify_rust_mirror_us": linear.block_us,
         "full_block_verify_haskell_cross_checked_us": linear.haskell_us,
+        "full_block_verify_haskell_persistent_us": linear.haskell_persistent_us,
         "rows_verified_per_second": rows.len() as f64 * 1e6 / linear.block_us,
         "qmlp_v1": {
             "rows": qmlp_rows.len(),
@@ -351,6 +366,7 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
             "claim_verify_us": qmlp.claim_us,
             "full_block_verify_rust_mirror_us": qmlp.block_us,
             "full_block_verify_haskell_cross_checked_us": qmlp.haskell_us,
+            "full_block_verify_haskell_persistent_us": qmlp.haskell_persistent_us,
             "rows_verified_per_second": qmlp_rows.len() as f64 * 1e6 / qmlp.block_us,
         },
         "quorum_certificate_verify_us": {
