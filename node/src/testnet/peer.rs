@@ -799,8 +799,14 @@ mod tests {
 
         // A successful partial read must not give the peer another timeout.
         timed.deadline = Instant::now() - Duration::from_millis(1);
-        assert_eq!(timed.read(&mut byte).unwrap_err().kind(), io::ErrorKind::TimedOut);
-        assert_eq!(timed.write(b"x").unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            timed.read(&mut byte).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(
+            timed.write(b"x").unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
         assert_eq!(timed.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
 
@@ -819,8 +825,8 @@ mod tests {
         let server_thread = thread::spawn(move || {
             let mut timed = DeadlineStream::new(&mut server, Duration::from_secs(3));
             let session = mutual_handshake(&mut timed, 1, &remote, &allowed_remote, None).unwrap();
-            let channel = negotiate(&mut timed, 1, session.session_id, &remote, session.peer)
-                .unwrap();
+            let channel =
+                negotiate(&mut timed, 1, session.session_id, &remote, session.peer).unwrap();
             (session.session_id, channel)
         });
         let mut timed = DeadlineStream::new(&mut client, Duration::from_secs(3));
