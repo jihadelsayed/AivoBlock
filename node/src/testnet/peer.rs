@@ -974,21 +974,22 @@ mod tests {
     #[test]
     fn outgoing_frame_deadline_does_not_reset_after_partial_writes() {
         let (mut client, mut server) = pair();
-        let mut timed = DeadlineStream::outgoing_frame(&mut client);
-        assert!(timed.remaining().unwrap() <= IO_TIMEOUT);
-        timed.write_all(b"one").unwrap();
-        let mut got = [0u8; 3];
-        server.read_exact(&mut got).unwrap();
-        assert_eq!(&got, b"one");
+        {
+            let mut timed = DeadlineStream::outgoing_frame(&mut client);
+            assert!(timed.remaining().unwrap() <= IO_TIMEOUT);
+            timed.write_all(b"one").unwrap();
+            let mut got = [0u8; 3];
+            server.read_exact(&mut got).unwrap();
+            assert_eq!(&got, b"one");
 
-        // Partial socket progress must not extend the original frame budget.
-        timed.deadline = Instant::now() - Duration::from_millis(1);
-        assert_eq!(
-            timed.write(b"two").unwrap_err().kind(),
-            io::ErrorKind::TimedOut
-        );
-        assert_eq!(timed.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
-        drop(timed);
+            // Partial socket progress must not extend the original frame budget.
+            timed.deadline = Instant::now() - Duration::from_millis(1);
+            assert_eq!(
+                timed.write(b"two").unwrap_err().kind(),
+                io::ErrorKind::TimedOut
+            );
+            assert_eq!(timed.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
+        }
 
         // A new complete frame gets an independent fresh deadline.
         let mut next = DeadlineStream::outgoing_frame(&mut client);
