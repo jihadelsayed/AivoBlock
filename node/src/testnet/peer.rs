@@ -25,8 +25,8 @@ use super::node::Event;
 use super::random_bytes32;
 use super::secure::{negotiate, EncryptedChannel};
 use super::wire::WireMessage;
-use crate::network::handshake::{sign_hello, verify_hello};
-use crate::network::tcp::{configure_stream, recv_frame, send_frame, IO_TIMEOUT};
+use crate::network::handshake::{sign_hello, verify_hello, HELLO_BYTES};
+use crate::network::tcp::{configure_stream, recv_frame_bounded, send_frame, IO_TIMEOUT};
 
 /// A live link dies when nothing (not even a heartbeat) arrives for this long.
 pub const PEER_READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -125,7 +125,7 @@ pub fn mutual_handshake(
 ) -> Result<AuthenticatedSession, String> {
     let challenge = random_bytes32();
     send_frame(stream, &challenge).map_err(|e| format!("send challenge: {e}"))?;
-    let theirs = recv_frame(stream).map_err(|e| format!("receive challenge: {e}"))?;
+    let theirs = recv_frame_bounded(stream, 32).map_err(|e| format!("receive challenge: {e}"))?;
     let theirs: [u8; 32] = theirs
         .as_slice()
         .try_into()
@@ -135,7 +135,8 @@ pub fn mutual_handshake(
     }
     send_frame(stream, &sign_hello(chain_id, local, &theirs))
         .map_err(|e| format!("send hello: {e}"))?;
-    let hello = recv_frame(stream).map_err(|e| format!("receive hello: {e}"))?;
+    let hello =
+        recv_frame_bounded(stream, HELLO_BYTES).map_err(|e| format!("receive hello: {e}"))?;
     let verified = verify_hello(&hello, chain_id, &challenge)?;
     let own = local.verifying_key().to_bytes();
     if verified.public_key == own {
@@ -347,6 +348,46 @@ mod tests {
         let other = thread::spawn(move || mutual_handshake(&mut right, 1, &b, &allowed_b, None));
         let mine = mutual_handshake(&mut left, 1, &a, &allowed, None);
         (mine, other.join().unwrap())
+    }
+
+    #[test]
+    fn oversized_challenge_is_rejected_before_its_body_is_read() {
+        use std::io::Write;
+
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let allowed: BTreeSet<_> = [SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes()]
+            .into_iter()
+            .collect();
+        let (mut client, mut server) = pair();
+        server.write_all(&33u32.to_be_bytes()).unwrap();
+        let err = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap_err();
+        assert!(err.contains("receive challenge"));
+    }
+
+    #[test]
+    fn oversized_hello_is_rejected_before_its_body_is_read() {
+        use std::io::Write;
+
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let remote = SigningKey::from_bytes(&[2; 32]);
+        let allowed: BTreeSet<_> = [remote.verifying_key().to_bytes()].into_iter().collect();
+        let (mut client, mut server) = pair();
+        let peer_thread = thread::spawn(move || {
+            // Respond with a legal challenge, read the local signed hello,
+            // then advertise an oversized peer hello without sending its body.
+            assert_eq!(recv_frame_bounded(&mut server, 32).unwrap().len(), 32);
+            send_frame(&mut server, &[8u8; 32]).unwrap();
+            assert_eq!(
+                recv_frame_bounded(&mut server, HELLO_BYTES).unwrap().len(),
+                HELLO_BYTES
+            );
+            server
+                .write_all(&((HELLO_BYTES + 1) as u32).to_be_bytes())
+                .unwrap();
+        });
+        let err = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap_err();
+        assert!(err.contains("receive hello"));
+        peer_thread.join().unwrap();
     }
 
     #[test]
