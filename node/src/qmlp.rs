@@ -383,6 +383,35 @@ pub mod tests {
         );
     }
 
+    /// CI "PyTorch / ONNX off-chain" job: a model quantized from PyTorch and
+    /// its Python reference logits are reproduced bit-exactly by validators.
+    #[test]
+    fn exported_pytorch_qmlp_model_matches_rust_when_provided() {
+        let Some(path) = std::env::var_os("AIVOBLOCK_QMLP_FILE") else {
+            eprintln!("SKIP: AIVOBLOCK_QMLP_FILE is not set");
+            return;
+        };
+        let raw = std::fs::read(&path).unwrap();
+        let export: Value = serde_json::from_slice(&raw).unwrap();
+        let model = QmlpModelV1::from_json(&export["model"]).unwrap();
+        let model_commitment = hex(&model.commitment().unwrap());
+        assert_eq!(model_commitment, export["model_commitment"]);
+        let rows: Vec<Vec<i64>> = serde_json::from_value(export["rows"].clone()).unwrap();
+        let logits: Vec<Vec<i64>> = rows.iter().map(|row| model.logits(row).unwrap()).collect();
+        let expected: Vec<Vec<i64>> = serde_json::from_value(export["logits"].clone()).unwrap();
+        assert_eq!(logits, expected);
+        let range = WorkRange {
+            start: 0,
+            count: rows.len() as u64,
+        };
+        let commitment = qmlp_result_commitment_v1(&model, &rows, range).unwrap();
+        assert_eq!(hex(&commitment), export["result_commitment"]);
+        println!(
+            "Rust reproduced {} PyTorch-quantized rows exactly; model {model_commitment}",
+            rows.len()
+        );
+    }
+
     #[test]
     fn requantization_rounds_half_up_relu_clamps_and_cannot_overflow() {
         let single = |weight: i8, bias: i32, multiplier: u32, shift: u32| QmlpModelV1 {

@@ -41,6 +41,39 @@ jobs:
       - name: Run tests
         run: python -m pytest ai-engine/tests
 
+  pytorch_onnx:
+    name: PyTorch / ONNX off-chain research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU PyTorch, ONNX and ONNX Runtime
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<3"
+          python -m pip install -e "./ai-engine[dev,research]"
+      - name: Off-chain research tests (dataset, quantization, ONNX)
+        run: python -m pytest ai-engine/tests/test_offchain_research.py ai-engine/tests/test_qmlp.py -ra
+      - name: Train, quantize and export the digits model (machine-readable report)
+        run: python -m aivoblock_ai.research --out research-out
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install RocksDB build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
+      - name: Rust validator reproduces the PyTorch-quantized model exactly
+        working-directory: node
+        env:
+          AIVOBLOCK_QMLP_FILE: ${{ github.workspace }}/research-out/digits.qmlp.json
+        run: cargo test --locked exported_pytorch_qmlp_model_matches_rust -- --nocapture
+      - name: Upload research report, ONNX files and QMLP export
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytorch-onnx-research
+          path: research-out/
+          if-no-files-found: warn
+
   haskell:
     name: Haskell core
     runs-on: ubuntu-24.04
