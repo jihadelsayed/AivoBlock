@@ -19,7 +19,7 @@ use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 
 use super::random_bytes32;
 use super::wire::{recv_authenticated_message, send_authenticated_message, WireMessage};
-use crate::network::tcp::{recv_frame, send_frame};
+use crate::network::tcp::{recv_frame_bounded, send_frame};
 use crate::network::MAX_MESSAGE_BYTES;
 
 const EXCHANGE_DOMAIN: &[u8] = b"AIVOBLOCK-ENCRYPTED-HANDSHAKE-V1\0";
@@ -109,7 +109,8 @@ pub fn negotiate<S: Read + Write>(
     offer.extend_from_slice(&signature);
     send_frame(stream, &offer).map_err(|e| format!("send encrypted key exchange: {e}"))?;
     let response =
-        recv_frame(stream).map_err(|e| format!("receive encrypted key exchange: {e}"))?;
+        recv_frame_bounded(stream, EXCHANGE_BYTES)
+            .map_err(|e| format!("receive encrypted key exchange: {e}"))?;
     if response.len() != EXCHANGE_BYTES {
         return Err("Incorrect encrypted key-exchange length".into());
     }
@@ -520,6 +521,45 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(last, 0);
+    }
+
+
+    #[test]
+    fn key_exchange_rejects_oversized_offer_before_reading_payload() {
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let peer = SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes();
+        // Simulate a peer that advertises a huge exchange without sending its
+        // body. The receiver must reject the header, not wait to read megabytes.
+        let mut malformed = Vec::new();
+        malformed.extend_from_slice(&((EXCHANGE_BYTES + 1) as u32).to_be_bytes());
+        let mut reader = Cursor::new(malformed);
+        let mut offer = Vec::new();
+        offer.extend_from_slice(&[0u8; EXCHANGE_BYTES]);
+        // A harmless writer sink allows the normal local offer to be sent.
+        struct ExchangeStream<R, W> {
+            reader: R,
+            writer: W,
+        }
+        impl<R: Read, W: Write> Read for ExchangeStream<R, W> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.reader.read(buf)
+            }
+        }
+        impl<R: Read, W: Write> Write for ExchangeStream<R, W> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.writer.write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.writer.flush()
+            }
+        }
+        let mut stream = ExchangeStream {
+            reader: &mut reader,
+            writer: &mut offer,
+        };
+        let err = negotiate(&mut stream, 1, [3u8; 32], &local, peer).unwrap_err();
+        assert!(err.contains("receive encrypted key exchange"));
+        assert_eq!(reader.position(), 4);
     }
 
     #[test]
