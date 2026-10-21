@@ -424,14 +424,21 @@ pub mod tests {
         let model = QmlpModelV1::from_json(&export["model"]).unwrap();
         let rows: Vec<Vec<i64>> = serde_json::from_value(export["rows"].clone()).unwrap();
         assert!(!rows.is_empty() && rows.len() <= 256);
-        assert_eq!(hex(&model.commitment().unwrap()), export["model_commitment"]);
+        assert_eq!(
+            hex(&model.commitment().unwrap()),
+            export["model_commitment"]
+        );
         let inputs = crate::ai_block_v3::input_commitment_v3(&rows, model.d_in as usize).unwrap();
         assert_eq!(hex(&inputs), export["input_commitment"]);
         let result = qmlp_result_commitment_v1(
             &model,
             &rows,
-            WorkRange { start: 0, count: rows.len() as u64 },
-        ).unwrap();
+            WorkRange {
+                start: 0,
+                count: rows.len() as u64,
+            },
+        )
+        .unwrap();
         assert_eq!(hex(&result), export["result_commitment"]);
 
         // This timing includes the same public Rust API's per-row validation,
