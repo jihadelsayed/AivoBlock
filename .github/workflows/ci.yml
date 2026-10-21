@@ -205,22 +205,33 @@ jobs:
           done
           bash ../scripts/ci-cabal-build.sh exe:aivoblock-core
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
-      - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
+      - name: Run Rust ↔ Haskell IPC tests with per-command diagnostics
         working-directory: node
+        timeout-minutes: 35
         run: |
-          cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
-          cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
-          cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
-          cargo test --locked persistent_core_answers_repeatedly -- --nocapture
-          cargo test --locked testnet:: -- --nocapture --test-threads=1
-          cargo run --locked -- core-health
-          cargo run --locked -- core-validate
-          cargo run --locked -- core-json
-          cargo run --locked -- ai-partition-demo
-          cargo run --locked -- ledger-transition-demo
-          cargo run --locked -- multi-transfer-demo
-          cargo run --locked -- ai-reward-block-demo
-          cargo run --locked -- ai-proof-v2-demo
+          set -euo pipefail
+          run_checked() {
+            echo "::group::$*"
+            echo "Starting $(date -u +%FT%TZ): $*"
+            local rc=0
+            timeout --signal=TERM --kill-after=10s 300s "$@" || rc=$?
+            echo "Finished $(date -u +%FT%TZ): $* (exit $rc)"
+            echo "::endgroup::"
+            return "$rc"
+          }
+          run_checked cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
+          run_checked cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
+          run_checked cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
+          run_checked cargo test --locked persistent_core_answers_repeatedly -- --nocapture
+          run_checked cargo test --locked testnet:: -- --nocapture --test-threads=1
+          run_checked cargo run --locked -- core-health
+          run_checked cargo run --locked -- core-validate
+          run_checked cargo run --locked -- core-json
+          run_checked cargo run --locked -- ai-partition-demo
+          run_checked cargo run --locked -- ledger-transition-demo
+          run_checked cargo run --locked -- multi-transfer-demo
+          run_checked cargo run --locked -- ai-reward-block-demo
+          run_checked cargo run --locked -- ai-proof-v2-demo
 
   testnet_e2e:
     name: Docker private testnet (3 nodes + 4 validators)
