@@ -77,6 +77,31 @@ jobs:
         env:
           AIVOBLOCK_QMLP_FILE: ${{ github.workspace }}/research-out/digits.qmlp.json
         run: cargo test --locked exported_pytorch_qmlp_model_matches_rust -- --nocapture
+      - name: Validate trained model as a standalone committed fixture
+        run: |
+          python -m aivoblock_ai.service_fixture \
+            --qmlp-file research-out/digits.qmlp.json \
+            --out research-out/service-fixture.json
+          python -m aivoblock_ai.service_benchmark \
+            --fixture research-out/service-fixture.json \
+            --iterations 20 --batch 12 \
+            --out research-out/service-trusted.json
+          python -m aivoblock_ai.service_benchmark \
+            --fixture research-out/service-fixture.json \
+            --iterations 20 --batch 12 --verify \
+            --out research-out/service-recomputed.json
+      - name: Time Rust inference against the identical trained QMLP fixture
+        working-directory: node
+        env:
+          AIVOBLOCK_SERVICE_FIXTURE: ${{ github.workspace }}/research-out/service-fixture.json
+          AIVOBLOCK_RUST_SERVICE_REPORT: ${{ github.workspace }}/research-out/rust-service.json
+        run: cargo test --locked exported_qmlp_fixture_rust_timing_when_provided -- --nocapture
+      - name: Validate matching Rust and Python service measurements
+        run: |
+          python -m aivoblock_ai.matched_report \
+            --python research-out/service-trusted.json \
+            --rust research-out/rust-service.json \
+            --out research-out/matched-service-report.json
       - name: Upload research report, ONNX files and QMLP export
         if: always()
         uses: actions/upload-artifact@v4
