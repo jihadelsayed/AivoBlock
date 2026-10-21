@@ -1,8 +1,9 @@
 //! Networking subsystem for independently operated AivoBlock nodes.
 //!
 //! This module defines protocol-level networking limits and exposes the
-//! peer-management primitives in `p2p`. A transport, peer discovery,
-//! encryption, and gossip implementation will be added separately.
+//! peer-management primitives in `p2p`. The private-testnet validator links
+//! implement authenticated encryption in `testnet::secure`; broader peer
+//! discovery and public-network transport remain future work.
 //! Networking must never decide whether a block or AI proof is valid.
 
 pub mod handshake;

@@ -229,7 +229,7 @@ Python worker process start-up and the harness's 1 s polling interval.
 - Verification is full recomputation of a deterministic integer workload;
   no succinct/zero-knowledge proofs, no large or floating-point models.
 - Permissioned validators; no stake, slashing, rotation or Sybil resistance.
-- Transport is mutually authenticated and each frame is signed and replay-checked, but **not encrypted**. An eavesdropper can read the data and block or delay traffic.
+- Validator-to-validator links use authenticated ephemeral X25519 key exchange, directional HKDF keys and ChaCha20-Poly1305 encryption. Signed, replay-checked frames remain inside the ciphertext. An on-path attacker can still observe connection metadata, block, delay or reset traffic; endpoint compromise and the local operator control API are out of scope. Older plaintext validator nodes cannot join.
 - A single task authority (node-1's operator) issues tasks and assignments;
   if an assigned worker goes offline mid-task there is no reassignment, so
   that height waits until the worker returns (assignments use the workers

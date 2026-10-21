@@ -110,13 +110,13 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 5. **Native rewards:** Sayed Token accounting for verified contributions.
 6. **Private testnet:** multi-node testing, adversarial checks and performance measurement.
 
-**First milestone (reached on the private testnet):** three independent nodes collaboratively compute a puzzle, independently verify contributions, agree on a valid block, and record rewards; a four-validator network tolerates one crashed validator. Open problems: succinct verification of real AI workloads, permissionless validator selection, encrypted transport, a fee market.
+**First milestone (reached on the private testnet):** three independent nodes collaboratively compute a puzzle, independently verify contributions, agree on a valid block, and record rewards; a four-validator network tolerates one crashed validator. Open problems: succinct verification of real AI workloads, permissionless validator selection, peer identity rotation, a fee market.
 
 ## Security and project limitations
 
 - AI result hashes are commitments; correctness is established only by full recomputation of the small integer workload.
 - The private-testnet validator model is permissioned; permissionless Sybil resistance remains unresolved.
-- P2P peers authenticate during the handshake and sign all subsequent frames with session-specific sequence numbers; traffic is **not encrypted**.
+- Validator P2P links mutually authenticate and derive ephemeral X25519 session keys. Frames are encrypted with ChaCha20-Poly1305 and remain signed and replay-checked. Peer encryption does **not** secure the local operator control API, protect endpoints, or prevent network-level traffic analysis and denial of service.
 - Consensus-critical encodings and signature rules are versioned research formats, not finalized standards.
 - Do not use this prototype to protect real funds or deploy a public mainnet.
 - Build, test and testnet results are produced by CI; see the testnet guide for the latest verified run.

@@ -4,7 +4,7 @@
 //! tasks, worker-signed claims, validator-signed votes, self-verifying
 //! blocks plus quorum certificates). Live peer frames additionally carry a
 //! session-bound Ed25519 signature and strictly increasing sequence number.
-//! This authenticates frames and rejects replay, but does NOT encrypt traffic.
+//! Signed frames are carried inside the mandatory encrypted P2P channel.
 
 use std::io;
 
