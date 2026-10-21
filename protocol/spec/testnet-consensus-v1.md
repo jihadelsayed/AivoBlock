@@ -202,6 +202,27 @@ equal the key in the file. Names are cosmetic and unsigned.
   certificate **and** re-execute the block before persisting it.
 - Round timeout: `round_timeout_ms * (1 + min(r, 3))` while work is pending;
   the next leader re-proposes (its locked block if it has one).
+- Round changes: a node's round advances on its own timeout, or jumps to
+  round `R` once validators holding **more than 1/3** of the voting power have
+  precommitted in round `R` or later (so at least one honest validator is
+  there). A single proposal never changes the local round, so a Byzantine
+  minority cannot drive rounds forward.
+- Admission bounds for authenticated (but possibly Byzantine) validators,
+  per height:
+  - a proposal received from a peer must come from the leader of its own
+    `(h, r)`; proposals are not relayed. Proposals more than 8 rounds ahead of
+    the local round are ignored, as is block hex above twice the block limit;
+  - identical proposal bytes are executed at most once per height (accepted
+    or rejected outcome is cached by SHA-256), and each leader can make a node
+    execute at most 4 distinct block bodies per height;
+  - a validator's precommits are kept for **one block** per height (a second
+    block is reported as an equivocating vote and ignored) and at most 16
+    rounds, evicting the lowest;
+  - next-height proposals and votes are buffered at most 4 and 128 per sender
+    (512 overall).
+  Honest behavior is unchanged: honest leaders only propose in their own
+  rounds, re-proposals are byte-identical, and honest validators precommit
+  one block per height.
 - Sync: peers advertise `(height, tip)` every second; a node behind sends
   `get_blocks(from)` and receives up to 64 certified commits per request,
   cut off after 8 MiB of hex. Requests go to each peer at most every 750 ms,
@@ -220,8 +241,10 @@ equal the key in the file. Names are cosmetic and unsigned.
 - Liveness assumes partial synchrony and a single valid task per height. A
   Byzantine leader proposing a *different valid* block (e.g. a second
   authority-signed task for the same height) can split locks and stall the
-  height; there is no unlock / proof-of-lock round. Equivocation evidence and
-  proposer signatures are not implemented.
+  height; there is no unlock / proof-of-lock round. Equivocating precommits are
+  detected and ignored locally, but no equivocation evidence is gossiped or
+  punished, and proposals carry no proposer signature beyond the
+  authenticated, encrypted peer link.
 
 ## Restart recovery
 
