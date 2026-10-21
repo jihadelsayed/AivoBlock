@@ -82,10 +82,14 @@ equal the key in the file. Names are cosmetic and unsigned.
   trusted loopback-only exposure.
 - The node dispatches peer, operator-control and AI-worker events through a
   shared **128-event bounded channel** rather than an unbounded queue. When the
-  consumer falls behind, producers must wait for queue capacity, which applies
-  TCP backpressure to the authenticated peer reader before it can accept more
-  complete frames. This bounds queued event *count*, not CPU cost or the
-  individual message size; it does not replace network-wide flood protection.
+  consumer falls behind, authenticated peer and AI-worker producers wait for
+  capacity; the peer reader applies TCP backpressure before accepting further
+  complete frames. **Operator-control requests are different:** if the shared
+  event queue is full, they fail immediately with an explicit JSON error rather
+  than indefinitely occupying one of the 16 control connection slots while
+  blocking on queue admission. A disconnected node returns a shutdown error.
+  This bounds queued event *count*, not CPU cost or the individual message
+  size; it does not replace network-wide flood protection.
 - Each configured validator identity is permitted at most **128 fully
   verified encrypted frames per one-second fixed window**, shared across its
   authenticated TCP links and reconnects. The 129th verified frame closes
