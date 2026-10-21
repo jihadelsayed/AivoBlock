@@ -176,6 +176,7 @@ jobs:
 
   testnet_e2e:
     name: Docker private testnet (3 nodes + 4 validators)
+    needs: [pytorch_onnx]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -193,12 +194,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Download trained QMLP model from research CI
+        uses: actions/download-artifact@v4
+        with:
+          name: pytorch-onnx-research
+          path: research-out
+      - name: Verify research export exists
+        run: test -s research-out/digits.qmlp.json
       - name: Verifier, settlement and scaling benchmarks (release build)
         run: |
           mkdir -p testnet/generated
           docker run --rm aivoblock-node:testnet bench --iterations 20 --sweep | tee testnet/generated/bench.json
-      - name: Three-node end-to-end demonstration
-        run: python3 scripts/testnet.py demo --skip-build
+      - name: Three-node end-to-end demonstration with trained QMLP export
+        run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
       - name: Upload testnet reports and node logs
