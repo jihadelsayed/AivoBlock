@@ -64,6 +64,26 @@ class RecorderTests(unittest.TestCase):
             record([self.sample(**{**values, "model_commitment": "z" * 64})],
                    "service_direct")
 
+    def test_accepts_declared_artifact_digests(self):
+        row = self.sample(**{
+            f"artifact_{name}_sha256": hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+            for name in ("model", "input", "result")
+        })
+        self.assertEqual(len(record([row], "service_direct")["samples"]), 1)
+
+    def test_rejects_tampered_declared_artifact_digest(self):
+        row = self.sample(**{
+            f"artifact_{name}_sha256": hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+            for name in ("model", "input", "result")
+        })
+        (self.root / "result").write_bytes(b"altered")
+        with self.assertRaisesRegex(ValueError, "artifact result digest mismatch"):
+            record([row], "service_direct")
+
+    def test_rejects_partial_declared_artifact_digests(self):
+        with self.assertRaisesRegex(ValueError, "partial artifact digests"):
+            record([self.sample(artifact_model_sha256="a" * 64)], "service_direct")
+
     def test_rejects_changed_input(self):
         other = self.root / "other_input"
         other.write_bytes(b"different")
