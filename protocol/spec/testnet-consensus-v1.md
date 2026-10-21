@@ -40,6 +40,11 @@ equal the key in the file. Names are cosmetic and unsigned.
   admission capacity. Authenticated links return to their normal read/write
   timeouts after negotiation.
 - One link per pair: the smaller key dials; reconnects every 0.5 s.
+  The dialer permits **at most one active outbound connection worker per
+  configured validator key**, counting the entire TCP connection, handshake,
+  and authenticated-link lifetime. Duplicate dial attempts are skipped until
+  that worker exits, including after authentication or connection failures.
+  Other validator targets are not blocked by a stalled target.
 - The TCP listener admits at most **32 concurrent inbound, unauthenticated
   handshakes**, with a further maximum of **8 pending handshakes per source IP**.
   Extra connections are closed before allocating a worker thread. Both admission

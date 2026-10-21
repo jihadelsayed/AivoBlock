@@ -198,6 +198,37 @@ impl SourceRateLimiter {
     }
 }
 
+/// Hold an outbound target reservation for the full lifetime of its connection
+/// worker. An unauthenticated or stalled target must not cause the dialer to
+/// launch duplicate workers every reconnect tick before PeerUp is processed.
+struct OutboundAttemptPermit {
+    dialing: Arc<Mutex<BTreeSet<[u8; 32]>>>,
+    peer: [u8; 32],
+}
+
+impl OutboundAttemptPermit {
+    fn acquire(dialing: &Arc<Mutex<BTreeSet<[u8; 32]>>>, peer: [u8; 32]) -> Option<Self> {
+        let mut active = dialing.lock().ok()?;
+        if !active.insert(peer) {
+            return None;
+        }
+        Some(Self {
+            dialing: Arc::clone(dialing),
+            peer,
+        })
+    }
+}
+
+impl Drop for OutboundAttemptPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .dialing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.remove(&self.peer);
+    }
+}
+
 /// TCP reader/writer with a single absolute handshake deadline. A socket
 /// read timeout is per blocking operation and can otherwise be repeatedly
 /// extended by a peer that sends only one byte at a time.
@@ -529,6 +560,7 @@ pub fn spawn_listener(listener: TcpListener, transport: Arc<Transport>) -> JoinH
 /// greater than ours; reconnect after failures and restarts.
 pub fn spawn_dialer(transport: Arc<Transport>, targets: Vec<([u8; 32], String)>) -> JoinHandle<()> {
     thread::spawn(move || {
+        let dialing = Arc::new(Mutex::new(BTreeSet::new()));
         while !transport.shutdown.load(Ordering::Relaxed) {
             for (key, address) in &targets {
                 let linked = transport
@@ -539,6 +571,11 @@ pub fn spawn_dialer(transport: Arc<Transport>, targets: Vec<([u8; 32], String)>)
                 if linked {
                     continue;
                 }
+                // Reserve before DNS and TCP connect, so a pending handshake
+                // cannot be redialed until its worker actually exits.
+                let Some(attempt) = OutboundAttemptPermit::acquire(&dialing, *key) else {
+                    continue;
+                };
                 let Some(addr) = address
                     .to_socket_addrs()
                     .ok()
@@ -549,7 +586,10 @@ pub fn spawn_dialer(transport: Arc<Transport>, targets: Vec<([u8; 32], String)>)
                 if let Ok(stream) = TcpStream::connect_timeout(&addr, IO_TIMEOUT) {
                     let transport = Arc::clone(&transport);
                     let key = *key;
-                    thread::spawn(move || run_connection(stream, transport, Some(key), true, None));
+                    thread::spawn(move || {
+                        let _attempt = attempt;
+                        run_connection(stream, transport, Some(key), true, None);
+                    });
                     // Give the handshake time to register before redialing.
                     thread::sleep(Duration::from_millis(200));
                 }
@@ -786,6 +826,64 @@ mod tests {
         let later = now + INBOUND_ATTEMPT_WINDOW;
         assert!(limiter.allow(new_source, later));
         assert_eq!(limiter.sources.len(), 1);
+    }
+
+    #[test]
+    fn outbound_attempts_are_unique_per_validator_and_release_on_failure() {
+        let dialing = Arc::new(Mutex::new(BTreeSet::new()));
+        let first = [1u8; 32];
+        let second = [2u8; 32];
+
+        let attempt = OutboundAttemptPermit::acquire(&dialing, first).unwrap();
+        assert!(OutboundAttemptPermit::acquire(&dialing, first).is_none());
+        let other = OutboundAttemptPermit::acquire(&dialing, second).unwrap();
+        assert_eq!(dialing.lock().unwrap().len(), 2);
+
+        drop(attempt);
+        assert!(!dialing.lock().unwrap().contains(&first));
+        let retried = OutboundAttemptPermit::acquire(&dialing, first).unwrap();
+        assert!(OutboundAttemptPermit::acquire(&dialing, first).is_none());
+        drop(retried);
+        drop(other);
+        assert!(dialing.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn concurrent_outbound_reservations_allow_only_one_worker_for_a_target() {
+        use std::sync::Barrier;
+
+        let dialing = Arc::new(Mutex::new(BTreeSet::new()));
+        let start = Arc::new(Barrier::new(17));
+        let hold = Arc::new(Barrier::new(17));
+        let release = Arc::new(Barrier::new(17));
+        let workers: Vec<_> = (0..16)
+            .map(|_| {
+                let dialing = Arc::clone(&dialing);
+                let start = Arc::clone(&start);
+                let hold = Arc::clone(&hold);
+                let release = Arc::clone(&release);
+                thread::spawn(move || {
+                    start.wait();
+                    let permit = OutboundAttemptPermit::acquire(&dialing, [7u8; 32]);
+                    hold.wait();
+                    release.wait();
+                    permit.is_some()
+                })
+            })
+            .collect();
+        start.wait();
+        hold.wait();
+        assert_eq!(dialing.lock().unwrap().len(), 1);
+        release.wait();
+        assert_eq!(
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .filter(|accepted| *accepted)
+                .count(),
+            1
+        );
+        assert!(dialing.lock().unwrap().is_empty());
     }
 
     #[test]
