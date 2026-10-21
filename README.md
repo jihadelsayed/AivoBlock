@@ -116,7 +116,7 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 
 - AI result hashes are commitments; correctness is established only by full recomputation of the small integer workload.
 - The private-testnet validator model is permissioned; permissionless Sybil resistance remains unresolved.
-- The P2P transport authenticates peers at handshake but is not encrypted.
+- P2P peers authenticate during the handshake and sign all subsequent frames with session-specific sequence numbers; traffic is **not encrypted**.
 - Consensus-critical encodings and signature rules are versioned research formats, not finalized standards.
 - Do not use this prototype to protect real funds or deploy a public mainnet.
 - Build, test and testnet results are produced by CI; see the testnet guide for the latest verified run.
