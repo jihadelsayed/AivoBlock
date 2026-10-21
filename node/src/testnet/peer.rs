@@ -4,8 +4,9 @@
 //! with a signed `network::handshake` hello, and accept the peer only if its
 //! Ed25519 key is a configured validator (and, when dialing, the expected
 //! key for that address). Both challenges and identities are bound to a
-//! unique session ID. All subsequent peer frames have session-bound Ed25519
-//! signatures and monotonic replay-resistant sequences. NOT encrypted.
+//! unique session ID. The second handshake exchanges signed ephemeral X25519
+//! keys, deriving directional ChaCha20-Poly1305 secrets. Subsequent frames
+//! are encrypted and still carry replay-resistant session-bound signatures.
 //! One connection per validator pair: the node with the smaller key dials.
 
 use std::collections::BTreeSet;
@@ -22,7 +23,8 @@ use sha2::{Digest, Sha256};
 
 use super::node::Event;
 use super::random_bytes32;
-use super::wire::{recv_authenticated_message, send_authenticated_message, WireMessage};
+use super::secure::{negotiate, EncryptedChannel};
+use super::wire::WireMessage;
 use crate::network::handshake::{sign_hello, verify_hello};
 use crate::network::tcp::{configure_stream, recv_frame, send_frame, IO_TIMEOUT};
 
@@ -46,8 +48,7 @@ pub struct PeerLink {
     pub remote: String,
     writer: Arc<Mutex<SignedWriter>>,
     local_key: SigningKey,
-    chain_id: u32,
-    session_id: [u8; 32],
+    channel: EncryptedChannel,
 }
 
 impl PeerLink {
@@ -60,15 +61,10 @@ impl PeerLink {
         let next = sequence
             .checked_add(1)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Peer sequence overflow"))?;
-        match send_authenticated_message(
-            &mut writer.stream,
-            message,
-            &self.local_key,
-            &self.key,
-            self.chain_id,
-            &self.session_id,
-            sequence,
-        ) {
+        match self
+            .channel
+            .send(&mut writer.stream, message, &self.local_key, sequence)
+        {
             Ok(()) => {
                 writer.next_sequence = next;
                 Ok(())
@@ -197,6 +193,22 @@ fn run_connection(
         }
     };
     let peer = session.peer;
+    let channel = match negotiate(
+        &mut stream,
+        transport.chain_id,
+        session.session_id,
+        &transport.key,
+        peer,
+    ) {
+        Ok(channel) => channel,
+        Err(reason) => {
+            let _ = stream.shutdown(Shutdown::Both);
+            let _ = transport
+                .events
+                .send(Event::HandshakeRejected { remote, reason });
+            return;
+        }
+    };
     let Ok(writer) = stream.try_clone() else {
         return;
     };
@@ -213,8 +225,7 @@ fn run_connection(
             next_sequence: 1,
         })),
         local_key: transport.key.clone(),
-        chain_id: transport.chain_id,
-        session_id: session.session_id,
+        channel: channel.clone(),
     };
     let link_id = link.id;
     if transport.events.send(Event::PeerUp(link.clone())).is_err() {
@@ -222,14 +233,7 @@ fn run_connection(
     }
     let mut last_sequence = 0;
     while !transport.shutdown.load(Ordering::Relaxed) {
-        match recv_authenticated_message(
-            &mut stream,
-            &peer,
-            &transport.key.verifying_key().to_bytes(),
-            transport.chain_id,
-            &session.session_id,
-            &mut last_sequence,
-        ) {
+        match channel.recv(&mut stream, &mut last_sequence) {
             Ok(message) => {
                 let inbound = Event::Inbound {
                     peer,
