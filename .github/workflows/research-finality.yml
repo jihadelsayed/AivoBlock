@@ -1,7 +1,13 @@
 name: Research QMLP observed finality (manual)
 
+# Run when this workflow change lands on main, or by explicit manual request.
+# The path filter prevents ordinary code changes from re-running a costly experiment.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/research-finality.yml'
 
 permissions:
   contents: read
