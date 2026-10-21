@@ -56,6 +56,14 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "layer dimensions"):
             make_manifest(data, **self.kwargs)
 
+    def test_hidden_and_output_protocol_limits_rejected(self):
+        for shape in ("32 -> 65 -> 16", "32 -> 64 -> 17"):
+            data = copy.deepcopy(self.data)
+            for b in data:
+                b["qmlp_v1"]["layers"] = shape
+            with self.subTest(shape=shape), self.assertRaisesRegex(ValueError, "layer dimensions"):
+                make_manifest(data, **self.kwargs)
+
     def test_incorrect_operation_count_rejected(self):
         data = copy.deepcopy(self.data)
         for b in data:
