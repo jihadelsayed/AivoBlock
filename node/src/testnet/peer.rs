@@ -757,7 +757,10 @@ mod tests {
         // reports a failure instead of leaving a stuck detached thread.
         drop(queued);
         worker.join().unwrap();
-        assert!(finished, "rejected handshake blocked on the full node queue");
+        assert!(
+            finished,
+            "rejected handshake blocked on the full node queue"
+        );
         assert_eq!(active.load(Ordering::Acquire), 0);
         assert!(per_ip.lock().unwrap().is_empty());
     }
