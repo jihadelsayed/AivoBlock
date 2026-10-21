@@ -90,6 +90,12 @@ jobs:
             --fixture research-out/service-fixture.json \
             --iterations 20 --batch 12 --verify \
             --out research-out/service-recomputed.json
+      - name: Benchmark repeated service-core latency (three fresh processes per mode)
+        run: |
+          python -m aivoblock_ai.service_replicates \
+            --fixture research-out/service-fixture.json \
+            --launches 3 --iterations 30 --batch 12 \
+            --out research-out/service-replicates.json
       - name: Time Rust inference against the identical trained QMLP fixture
         working-directory: node
         env:
