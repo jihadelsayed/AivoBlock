@@ -338,12 +338,10 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
     #    off-chain by PyTorch, quantized, exported, and verified by Rust.
     #    Docker nodes use Python workers, Haskell settlement and BFT finality.
     before_qmlp = net.status("node-1")
-    # Client-visible latency includes signed submission, distributed AI work,
-    # BFT commit, and polling until every validator reports the finalized height.
-    qmlp_started = time.monotonic()
-    if qmlp_file is None:
-        task = net.submit("--workload", "qmlp", "--rows", "12")
-    else:
+    # Prepare and validate the artifact before timing the client submission.
+    # In particular, Docker copying and local JSON checks are setup, not
+    # submission-to-finality latency. The CLI's own model load remains timed.
+    if qmlp_file is not None:
         if not qmlp_file.is_file():
             raise Failure(f"research QMLP export not found: {qmlp_file}")
         try:
@@ -354,8 +352,14 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
         check(isinstance(export.get("rows"), list) and bool(export["rows"]),
               "research artifact has nonempty inference input rows")
         check(isinstance(export.get("model"), dict), "research artifact has model parameters")
-        # The signed submit-task CLI loads this same artifact inside node-1.
         net.compose("cp", str(qmlp_file.resolve()), "node-1:/tmp/digits.qmlp.json")
+
+    # Client-visible latency includes signed CLI submission, distributed AI
+    # work, BFT finalization, and polling of every validator.
+    qmlp_started = time.monotonic()
+    if qmlp_file is None:
+        task = net.submit("--workload", "qmlp", "--rows", "12")
+    else:
         task = net.submit("--qmlp-file", "/tmp/digits.qmlp.json")
         check(task["rows"] == len(export["rows"]), "submitted the exported input rows")
         check(task["features"] == export["model"]["d_in"], "submitted the exported model dimensions")
