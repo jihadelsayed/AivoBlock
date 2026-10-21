@@ -915,9 +915,7 @@ mod tests {
         }
         assert_eq!(limiter.accepted, MAX_AUTHENTICATED_FRAMES_PER_WINDOW);
         assert!(!limiter.allow(now));
-        assert!(!limiter.allow(
-            now + AUTHENTICATED_FRAME_WINDOW - Duration::from_nanos(1)
-        ));
+        assert!(!limiter.allow(now + AUTHENTICATED_FRAME_WINDOW - Duration::from_nanos(1)));
         assert!(limiter.allow(now + AUTHENTICATED_FRAME_WINDOW));
         assert_eq!(limiter.accepted, 1);
     }
