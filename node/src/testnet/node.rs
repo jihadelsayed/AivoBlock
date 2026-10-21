@@ -61,7 +61,7 @@ const HEARTBEAT: Duration = Duration::from_millis(1_000);
 const LOG_LINES: usize = 200;
 
 pub enum Event {
-    PeerUp(PeerLink),
+    PeerUp(Box<PeerLink>),
     PeerDown {
         peer: [u8; 32],
         link_id: u64,
@@ -387,7 +387,7 @@ impl Node {
                     .validator(&link.key)
                     .map(|v| v.name.clone())
                     .unwrap_or_default();
-                if let Some(old) = self.peers.insert(link.key, link.clone()) {
+                if let Some(old) = self.peers.insert(link.key, (*link).clone()) {
                     old.close();
                 }
                 if let Ok(mut set) = self.connected.lock() {
