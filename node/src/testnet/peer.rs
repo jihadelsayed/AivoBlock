@@ -3,10 +3,10 @@
 //! Both sides send a fresh 32-byte challenge, answer the other's challenge
 //! with a signed `network::handshake` hello, and accept the peer only if its
 //! Ed25519 key is a configured validator (and, when dialing, the expected
-//! key for that address). The channel is NOT encrypted or integrity
-//! protected after the handshake; consensus messages are authenticated
-//! individually. One connection per validator pair: the node with the
-//! smaller key dials.
+//! key for that address). Both challenges and identities are bound to a
+//! unique session ID. All subsequent peer frames have session-bound Ed25519
+//! signatures and monotonic replay-resistant sequences. NOT encrypted.
+//! One connection per validator pair: the node with the smaller key dials.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -18,10 +18,11 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
+use sha2::{Digest, Sha256};
 
 use super::node::Event;
 use super::random_bytes32;
-use super::wire::{recv_message, send_message, WireMessage};
+use super::wire::{recv_authenticated_message, send_authenticated_message, WireMessage};
 use crate::network::handshake::{sign_hello, verify_hello};
 use crate::network::tcp::{configure_stream, recv_frame, send_frame, IO_TIMEOUT};
 
@@ -31,39 +32,101 @@ const DIAL_INTERVAL: Duration = Duration::from_millis(500);
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Debug)]
+struct SignedWriter {
+    stream: TcpStream,
+    next_sequence: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerLink {
     pub key: [u8; 32],
     pub id: u64,
     pub outbound: bool,
     pub remote: String,
-    writer: Arc<Mutex<TcpStream>>,
+    writer: Arc<Mutex<SignedWriter>>,
+    local_key: SigningKey,
+    chain_id: u32,
+    session_id: [u8; 32],
 }
 
 impl PeerLink {
     pub fn send(&self, message: &WireMessage) -> io::Result<()> {
-        let mut stream = self
+        let mut writer = self
             .writer
             .lock()
             .map_err(|_| io::Error::other("peer writer lock poisoned"))?;
-        send_message(&mut *stream, message)
+        let sequence = writer.next_sequence;
+        let next = sequence
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Peer sequence overflow"))?;
+        match send_authenticated_message(
+            &mut writer.stream,
+            message,
+            &self.local_key,
+            &self.key,
+            self.chain_id,
+            &self.session_id,
+            sequence,
+        ) {
+            Ok(()) => {
+                writer.next_sequence = next;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = writer.stream.shutdown(Shutdown::Both);
+                Err(error)
+            }
+        }
     }
 
     pub fn close(&self) {
-        if let Ok(stream) = self.writer.lock() {
-            let _ = stream.shutdown(Shutdown::Both);
+        if let Ok(writer) = self.writer.lock() {
+            let _ = writer.stream.shutdown(Shutdown::Both);
         }
     }
 }
 
-/// Symmetric challenge-response. Returns the authenticated peer key.
+#[derive(Debug)]
+pub struct AuthenticatedSession {
+    pub peer: [u8; 32],
+    pub session_id: [u8; 32],
+}
+
+/// Bind both identities and both independently generated challenges to a
+/// single session identifier, independent of which party dialed.
+fn session_id(
+    chain_id: u32,
+    local_key: &[u8; 32],
+    local_challenge: &[u8; 32],
+    peer_key: &[u8; 32],
+    peer_challenge: &[u8; 32],
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"AIVOBLOCK-PEER-SESSION-V1\0");
+    hash.update(chain_id.to_be_bytes());
+    if local_key < peer_key {
+        hash.update(local_key);
+        hash.update(local_challenge);
+        hash.update(peer_key);
+        hash.update(peer_challenge);
+    } else {
+        hash.update(peer_key);
+        hash.update(peer_challenge);
+        hash.update(local_key);
+        hash.update(local_challenge);
+    }
+    hash.finalize().into()
+}
+
+/// Symmetric challenge-response. Returns peer identity and session ID.
 pub fn mutual_handshake(
     stream: &mut TcpStream,
     chain_id: u32,
     local: &SigningKey,
     allowed: &BTreeSet<[u8; 32]>,
     expected: Option<&[u8; 32]>,
-) -> Result<[u8; 32], String> {
+) -> Result<AuthenticatedSession, String> {
     let challenge = random_bytes32();
     send_frame(stream, &challenge).map_err(|e| format!("send challenge: {e}"))?;
     let theirs = recv_frame(stream).map_err(|e| format!("receive challenge: {e}"))?;
@@ -88,7 +151,10 @@ pub fn mutual_handshake(
     if expected.is_some_and(|key| *key != verified.public_key) {
         return Err("Peer key differs from the configured key for this address".into());
     }
-    Ok(verified.public_key)
+    Ok(AuthenticatedSession {
+        peer: verified.public_key,
+        session_id: session_id(chain_id, &own, &challenge, &verified.public_key, &theirs),
+    })
 }
 
 /// Shared transport settings for listener and dialer threads.
@@ -114,14 +180,14 @@ fn run_connection(
     if configure_stream(&stream).is_err() {
         return;
     }
-    let peer = match mutual_handshake(
+    let session = match mutual_handshake(
         &mut stream,
         transport.chain_id,
         &transport.key,
         &transport.allowed,
         expected.as_ref(),
     ) {
-        Ok(peer) => peer,
+        Ok(session) => session,
         Err(reason) => {
             let _ = stream.shutdown(Shutdown::Both);
             let _ = transport
@@ -130,6 +196,7 @@ fn run_connection(
             return;
         }
     };
+    let peer = session.peer;
     let Ok(writer) = stream.try_clone() else {
         return;
     };
@@ -141,14 +208,28 @@ fn run_connection(
         id: NEXT_LINK_ID.fetch_add(1, Ordering::Relaxed),
         outbound,
         remote,
-        writer: Arc::new(Mutex::new(writer)),
+        writer: Arc::new(Mutex::new(SignedWriter {
+            stream: writer,
+            next_sequence: 1,
+        })),
+        local_key: transport.key.clone(),
+        chain_id: transport.chain_id,
+        session_id: session.session_id,
     };
     let link_id = link.id;
     if transport.events.send(Event::PeerUp(link.clone())).is_err() {
         return;
     }
+    let mut last_sequence = 0;
     while !transport.shutdown.load(Ordering::Relaxed) {
-        match recv_message(&mut stream) {
+        match recv_authenticated_message(
+            &mut stream,
+            &peer,
+            &transport.key.verifying_key().to_bytes(),
+            transport.chain_id,
+            &session.session_id,
+            &mut last_sequence,
+        ) {
             Ok(message) => {
                 let inbound = Event::Inbound {
                     peer,
@@ -249,7 +330,7 @@ mod tests {
         a: SigningKey,
         b: SigningKey,
         allowed: BTreeSet<[u8; 32]>,
-    ) -> (Result<[u8; 32], String>, Result<[u8; 32], String>) {
+    ) -> (Result<AuthenticatedSession, String>, Result<AuthenticatedSession, String>) {
         let (mut left, mut right) = pair();
         let allowed_b = allowed.clone();
         let other = thread::spawn(move || mutual_handshake(&mut right, 1, &b, &allowed_b, None));
@@ -265,8 +346,24 @@ mod tests {
             .into_iter()
             .collect();
         let (left, right) = handshake_both(a.clone(), b.clone(), allowed);
-        assert_eq!(left.unwrap(), b.verifying_key().to_bytes());
-        assert_eq!(right.unwrap(), a.verifying_key().to_bytes());
+        let left = left.unwrap();
+        let right = right.unwrap();
+        assert_eq!(left.peer, b.verifying_key().to_bytes());
+        assert_eq!(right.peer, a.verifying_key().to_bytes());
+        assert_eq!(left.session_id, right.session_id);
+        assert_ne!(left.session_id, [0; 32]);
+    }
+
+    #[test]
+    fn new_handshake_gets_a_new_session_id() {
+        let a = SigningKey::from_bytes(&[1; 32]);
+        let b = SigningKey::from_bytes(&[2; 32]);
+        let allowed: BTreeSet<_> = [a.verifying_key().to_bytes(), b.verifying_key().to_bytes()]
+            .into_iter()
+            .collect();
+        let (first, _) = handshake_both(a.clone(), b.clone(), allowed.clone());
+        let (second, _) = handshake_both(a, b, allowed);
+        assert_ne!(first.unwrap().session_id, second.unwrap().session_id);
     }
 
     #[test]
