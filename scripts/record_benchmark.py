@@ -28,6 +28,8 @@ def record(observations, mode):
     if not isinstance(observations, list) or not observations:
         raise ValueError("at least one observation required")
     samples, reference, ids, heights = [], None, set(), set()
+    canonical_reference = None
+    canonical_fields = tuple(f"{field}_commitment" for field in FIELDS)
     for index, row in enumerate(observations):
         if not isinstance(row, dict):
             raise ValueError(f"observation {index}: object required")
@@ -43,13 +45,31 @@ def record(observations, mode):
         if row.get("status") != "success":
             raise ValueError(f"observation {index}: non-success request")
         identity = {f"{field}_commitment": digest_file(row[f"{field}_path"]) for field in FIELDS}
+        # QMLP canonical protocol commitments and SHA-256 of serialized
+        # artifact bytes are distinct identity namespaces. Preserve both,
+        # but never silently substitute one for the other.
+        supplied = [field in row for field in canonical_fields]
+        if any(supplied) and not all(supplied):
+            raise ValueError(f"observation {index}: partial canonical commitments")
+        canonical = None
+        if all(supplied):
+            canonical = {f"canonical_{field}": row[field]
+                         for field in canonical_fields}
+            if any(not isinstance(value, str) or len(value) != 64
+                   or any(ch not in "0123456789abcdef" for ch in value)
+                   for value in canonical.values()):
+                raise ValueError(f"observation {index}: invalid canonical commitment")
+        if index == 0:
+            canonical_reference = canonical
+        elif canonical != canonical_reference:
+            raise ValueError(f"observation {index}: inconsistent canonical commitments")
         if reference is None:
             reference = identity
         elif identity != reference:
             raise ValueError(f"observation {index}: inconsistent workload or result bytes")
         sample = {"request_id": rid, "launch_id": launch,
                   "elapsed_ms": (end - start) / 1_000_000,
-                  "status": "success", **identity}
+                  "status": "success", **identity, **(canonical or {})}
         if mode == "chain_observed_finality":
             height = row.get("finalized_height")
             if isinstance(height, bool) or not isinstance(height, int) or height <= 0 or height in heights:
@@ -57,7 +77,7 @@ def record(observations, mode):
             heights.add(height)
             sample["finalized_height"] = height
         samples.append(sample)
-    return {**reference, "samples": samples}
+    return {**reference, **(canonical_reference or {}), "samples": samples}
 
 
 def main():
