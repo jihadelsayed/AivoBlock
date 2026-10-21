@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -31,8 +31,41 @@ use crate::network::tcp::{configure_stream, recv_frame_bounded, send_frame, IO_T
 /// A live link dies when nothing (not even a heartbeat) arrives for this long.
 pub const PEER_READ_TIMEOUT: Duration = Duration::from_secs(15);
 const DIAL_INTERVAL: Duration = Duration::from_millis(500);
+/// Cap detached pre-authentication workers so idle/hostile sockets cannot
+/// consume unbounded threads. Authenticated links do not occupy these slots.
+const MAX_PENDING_INBOUND_HANDSHAKES: usize = 32;
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
+
+/// RAII admission slot, owned by the handshake thread until it either
+/// authenticates and negotiates encryption or exits on any failure.
+struct HandshakePermit(Arc<AtomicUsize>);
+
+impl HandshakePermit {
+    fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
+        let mut count = active.load(Ordering::Acquire);
+        loop {
+            if count >= MAX_PENDING_INBOUND_HANDSHAKES {
+                return None;
+            }
+            match active.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(Self(Arc::clone(active))),
+                Err(observed) => count = observed,
+            }
+        }
+    }
+}
+
+impl Drop for HandshakePermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 #[derive(Debug)]
 struct SignedWriter {
@@ -169,6 +202,7 @@ fn run_connection(
     transport: Arc<Transport>,
     expected: Option<[u8; 32]>,
     outbound: bool,
+    admission: Option<HandshakePermit>,
 ) {
     let remote = stream
         .peer_addr()
@@ -210,6 +244,9 @@ fn run_connection(
             return;
         }
     };
+    // Once both authentication stages pass, free capacity for new peers.
+    // Every early return above also releases its slot through Drop.
+    drop(admission);
     let Ok(writer) = stream.try_clone() else {
         return;
     };
@@ -268,6 +305,7 @@ fn run_connection(
 /// listening socket be released promptly for an in-process restart.
 pub fn spawn_listener(listener: TcpListener, transport: Arc<Transport>) -> JoinHandle<()> {
     thread::spawn(move || {
+        let pending = Arc::new(AtomicUsize::new(0));
         if listener.set_nonblocking(true).is_err() {
             return;
         }
@@ -275,8 +313,16 @@ pub fn spawn_listener(listener: TcpListener, transport: Arc<Transport>) -> JoinH
             match listener.accept() {
                 Ok((stream, _)) => {
                     if stream.set_nonblocking(false).is_ok() {
+                        let Some(permit) = HandshakePermit::acquire(&pending) else {
+                            // Never start a worker for an over-capacity socket;
+                            // avoid events that would amplify admission floods.
+                            let _ = stream.shutdown(Shutdown::Both);
+                            continue;
+                        };
                         let transport = Arc::clone(&transport);
-                        thread::spawn(move || run_connection(stream, transport, None, false));
+                        thread::spawn(move || {
+                            run_connection(stream, transport, None, false, Some(permit))
+                        });
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -312,7 +358,7 @@ pub fn spawn_dialer(transport: Arc<Transport>, targets: Vec<([u8; 32], String)>)
                 if let Ok(stream) = TcpStream::connect_timeout(&addr, IO_TIMEOUT) {
                     let transport = Arc::clone(&transport);
                     let key = *key;
-                    thread::spawn(move || run_connection(stream, transport, Some(key), true));
+                    thread::spawn(move || run_connection(stream, transport, Some(key), true, None));
                     // Give the handshake time to register before redialing.
                     thread::sleep(Duration::from_millis(200));
                 }
@@ -348,6 +394,65 @@ mod tests {
         let other = thread::spawn(move || mutual_handshake(&mut right, 1, &b, &allowed_b, None));
         let mine = mutual_handshake(&mut left, 1, &a, &allowed, None);
         (mine, other.join().unwrap())
+    }
+
+    #[test]
+    fn inbound_handshake_capacity_rejects_overflow_and_releases_slots() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let permits: Vec<_> = (0..MAX_PENDING_INBOUND_HANDSHAKES)
+            .map(|_| HandshakePermit::acquire(&active).unwrap())
+            .collect();
+        assert_eq!(
+            active.load(Ordering::Acquire),
+            MAX_PENDING_INBOUND_HANDSHAKES
+        );
+        assert!(HandshakePermit::acquire(&active).is_none());
+        drop(permits);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+        let recovered = HandshakePermit::acquire(&active).unwrap();
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        drop(recovered);
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn simultaneous_admission_cannot_exceed_handshake_capacity() {
+        use std::sync::Barrier;
+
+        let workers = MAX_PENDING_INBOUND_HANDSHAKES * 2;
+        let active = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(workers + 1));
+        let attempted = Arc::new(Barrier::new(workers + 1));
+        let release = Arc::new(Barrier::new(workers + 1));
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let active = Arc::clone(&active);
+                let start = Arc::clone(&start);
+                let attempted = Arc::clone(&attempted);
+                let release = Arc::clone(&release);
+                thread::spawn(move || {
+                    start.wait();
+                    let permit = HandshakePermit::acquire(&active);
+                    attempted.wait();
+                    release.wait();
+                    permit.is_some()
+                })
+            })
+            .collect();
+        start.wait();
+        attempted.wait();
+        let held = active.load(Ordering::Acquire);
+        release.wait();
+        assert_eq!(held, MAX_PENDING_INBOUND_HANDSHAKES);
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .filter(|accepted| *accepted)
+                .count(),
+            MAX_PENDING_INBOUND_HANDSHAKES
+        );
+        assert_eq!(active.load(Ordering::Acquire), 0);
     }
 
     #[test]
