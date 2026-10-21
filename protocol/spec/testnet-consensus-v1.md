@@ -82,6 +82,11 @@ equal the key in the file. Names are cosmetic and unsigned.
   ChaCha20-Poly1305 ciphertext (16-byte authentication tag). The ciphertext,
   **including its tag**, must fit within the 4 MiB outer-frame limit. The
   sender rejects oversized messages before writing any outer-frame bytes.
+  Each complete encrypted frame (header plus ciphertext) must arrive within
+  one **15-second absolute deadline**; partial reads cannot renew the budget.
+  After a complete authenticated frame, a new 15-second deadline starts for the
+  next frame. A stalled or incomplete frame closes the connection, matching the
+  existing 15-second peer inactivity policy.
   The inner plaintext is the signed peer frame
   `version:u8=1 || sequence:u64_be || Ed25519-signature:64 || JSON`
   prefixed by its own 4-byte size. The nonce is `00000000 || sequence:u64_be`
