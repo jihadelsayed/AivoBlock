@@ -6,7 +6,7 @@
 use std::io;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender, SyncSender};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
