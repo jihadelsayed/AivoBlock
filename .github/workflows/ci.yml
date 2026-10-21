@@ -163,6 +163,7 @@ jobs:
           cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
           cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
           cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
+          cargo test --locked persistent_core_answers_repeatedly -- --nocapture
           cargo test --locked testnet:: -- --nocapture --test-threads=1
           cargo run --locked -- core-health
           cargo run --locked -- core-validate
@@ -192,8 +193,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verifier and settlement benchmarks (release build)
-        run: docker run --rm aivoblock-node:testnet bench --iterations 20
+      - name: Verifier, settlement and scaling benchmarks (release build)
+        run: |
+          mkdir -p testnet/generated
+          docker run --rm aivoblock-node:testnet bench --iterations 20 --sweep | tee testnet/generated/bench.json
       - name: Three-node end-to-end demonstration
         run: python3 scripts/testnet.py demo --skip-build
       - name: Four-validator fault-tolerance scenario
@@ -204,6 +207,7 @@ jobs:
         with:
           name: testnet-reports
           path: |
+            testnet/generated/bench.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
           if-no-files-found: warn

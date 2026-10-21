@@ -7,14 +7,16 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use ed25519_dalek::SigningKey;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::cli::{build_task, partition_rows, qmlp_workload_with, workload, TaskSpec};
+use super::worker::WorkerBackend;
 use crate::ai_block_v3::{
     build_block_v3, execute_block_v3, expected_result_v3, sign_claim_v3, verify_claim_v3, AiTaskV3,
     ParentContext, V3Rules, MAX_FEATURES, MAX_PARTITIONS, MAX_ROWS,
 };
 use crate::ipc::haskell::HaskellValidatorClient;
+use crate::ipc::python::PythonWorkerClient;
 use crate::issuance::IssuancePolicyV1;
 use crate::settlement_v3::SettlementEngine;
 use crate::storage::ledger_state::{LedgerState, LocalAccount};
@@ -64,7 +66,10 @@ struct BlockTimings {
     worker_us: f64,
     claim_us: f64,
     block_us: f64,
+    /// One `aivoblock-core ipc-health` process per block.
     haskell_us: Option<f64>,
+    /// One persistent `ipc-serve` process, after a warm-up request.
+    haskell_persistent_us: Option<f64>,
 }
 
 /// Honest claims for every partition (Rust reference), then claim and
@@ -102,17 +107,26 @@ fn time_block(
         execute_block_v3(parent, rules, &mirror, &built.bytes, Some(&built.id))?;
     }
     let block_us = per_op_us(started, iterations);
-    let haskell_us = match std::env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE") {
-        Some(path) if !path.is_empty() => {
-            let core = HaskellValidatorClient::new(path).map_err(|e| format!("{e:?}"))?;
-            let engine = SettlementEngine::Haskell(core);
-            let started = Instant::now();
-            for _ in 0..iterations {
-                execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
-            }
-            Some(per_op_us(started, iterations))
+    let haskell = std::env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE").filter(|p| !p.is_empty());
+    let (haskell_us, haskell_persistent_us) = match haskell {
+        Some(path) => {
+            let once = HaskellValidatorClient::new(&path).map_err(|e| format!("{e:?}"))?;
+            let persistent = once.clone().persistent();
+            let time = |engine: SettlementEngine, warm_up: bool| {
+                if warm_up {
+                    execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
+                }
+                let started = Instant::now();
+                for _ in 0..iterations {
+                    execute_block_v3(parent, rules, &engine, &built.bytes, Some(&built.id))?;
+                }
+                Ok::<_, String>(per_op_us(started, iterations))
+            };
+            let once_us = time(SettlementEngine::Haskell(once), false)?;
+            let persistent_us = time(SettlementEngine::Haskell(persistent), true)?;
+            (Some(once_us), Some(persistent_us))
         }
-        _ => None,
+        None => (None, None),
     };
     Ok(BlockTimings {
         block_bytes: built.bytes.len(),
@@ -120,15 +134,151 @@ fn time_block(
         claim_us,
         block_us,
         haskell_us,
+        haskell_persistent_us,
     })
 }
 
-pub fn bench_command(args: &[String]) -> Result<(), String> {
-    let iterations: u32 = match args {
-        [] => 10,
-        [flag, value] if flag == "--iterations" => value.parse().map_err(|_| "Bad --iterations")?,
-        _ => return Err("Usage: bench [--iterations N]".into()),
+fn timings_json(timings: &BlockTimings, rows: usize, partitions: usize) -> Value {
+    let worker_total_us = timings.worker_us * partitions as f64;
+    json!({
+        "rows": rows,
+        "partitions": partitions,
+        "block_bytes": timings.block_bytes,
+        "worker_compute_and_sign_us_per_partition": timings.worker_us,
+        "worker_compute_and_sign_us_all_partitions": worker_total_us,
+        "claim_verify_us": timings.claim_us,
+        "full_block_verify_rust_mirror_us": timings.block_us,
+        "full_block_verify_haskell_cross_checked_us": timings.haskell_us,
+        "full_block_verify_haskell_persistent_us": timings.haskell_persistent_us,
+        "block_verify_over_all_worker_compute": timings.block_us / worker_total_us,
+        "rows_verified_per_second": rows as f64 * 1e6 / timings.block_us,
+    })
+}
+
+/// Wall-clock time of one real Python worker execution of partition 0
+/// (process spawn, JSON IPC, computation, Rust cross-check), if configured.
+fn python_partition_us(task: &AiTaskV3, iterations: u32) -> Result<Option<f64>, String> {
+    let Some(script) = std::env::var_os("AIVOBLOCK_PYTHON_WORKER").filter(|v| !v.is_empty()) else {
+        return Ok(None);
     };
+    let python =
+        std::env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE").unwrap_or_else(|| "python3".into());
+    let client = PythonWorkerClient::new(python, script).map_err(|e| format!("{e:?}"))?;
+    let backend = WorkerBackend::Python(client);
+    let worker = task.partitions[0].worker;
+    let started = Instant::now();
+    for _ in 0..iterations {
+        backend.execute(task, 0, &worker)?;
+    }
+    Ok(Some(per_op_us(started, iterations)))
+}
+
+/// Scaling sweeps that change one variable at a time.
+fn sweeps(
+    authority: &SigningKey,
+    workers: &[SigningKey],
+    worker_ids: &[[u8; 32]],
+    rules: &V3Rules<'_>,
+    parent: &ParentContext<'_>,
+    iterations: u32,
+) -> Result<Value, String> {
+    let qmlp_task = |rows: usize, dims: (usize, usize, usize), partitions: usize| {
+        let (model, matrix) = qmlp_workload_with(rows, dims, 7);
+        build_task(
+            TaskSpec {
+                sequence: 1,
+                deadline_height: 10,
+                fee_budget: 64,
+                weights: &[],
+                rows: &matrix,
+                qmlp: Some(model),
+                partitions: partition_rows(matrix.len(), &worker_ids[..partitions]),
+            },
+            authority,
+        )
+    };
+    let linear_task = |rows: usize, partitions: usize| {
+        let (weights, matrix) = workload("synthetic", rows, MAX_FEATURES, 42);
+        build_task(
+            TaskSpec {
+                sequence: 1,
+                deadline_height: 10,
+                fee_budget: 64,
+                weights: &weights,
+                rows: &matrix,
+                qmlp: None,
+                partitions: partition_rows(matrix.len(), &worker_ids[..partitions]),
+            },
+            authority,
+        )
+    };
+    let mut by_partitions = Vec::new();
+    for partitions in [1, 2, 4, 8, 16, 32, 64] {
+        let task = qmlp_task(MAX_ROWS, (32, 64, 16), partitions)?;
+        let timings = time_block(&task, workers, rules, parent, iterations)?;
+        by_partitions.push(timings_json(&timings, MAX_ROWS, partitions));
+    }
+    let mut by_model = Vec::new();
+    for (d_in, d_hidden, d_out) in [(8, 16, 4), (16, 32, 10), (32, 64, 16)] {
+        let task = qmlp_task(MAX_ROWS, (d_in, d_hidden, d_out), 8)?;
+        let timings = time_block(&task, workers, rules, parent, iterations)?;
+        let mut entry = timings_json(&timings, MAX_ROWS, 8);
+        entry["layers"] = json!(format!("{d_in} -> {d_hidden} -> {d_out}"));
+        entry["integer_multiply_adds_per_row"] = json!(d_in * d_hidden + d_hidden * d_out);
+        by_model.push(entry);
+    }
+    let mut by_rows = Vec::new();
+    for rows in [16, 64, 256] {
+        let linear = time_block(&linear_task(rows, 8)?, workers, rules, parent, iterations)?;
+        let task = qmlp_task(rows, (32, 64, 16), 8)?;
+        let qmlp = time_block(&task, workers, rules, parent, iterations)?;
+        by_rows.push(json!({
+            "rows": rows,
+            "integer_linear_v1": timings_json(&linear, rows, 8),
+            "qmlp_v1": timings_json(&qmlp, rows, 8),
+        }));
+    }
+    let mut by_validators = serde_json::Map::new();
+    for validators in [4, 7, 16, 32, 64] {
+        let us = certificate_bench(validators, iterations * 4)?;
+        by_validators.insert(validators.to_string(), json!(us));
+    }
+    // Real worker processes are slow to spawn; a few runs suffice.
+    let runs = iterations.clamp(1, 5);
+    let linear_small = python_partition_us(&linear_task(MAX_ROWS, 64)?, runs)?;
+    let qmlp_small = python_partition_us(&qmlp_task(MAX_ROWS, (32, 64, 16), 64)?, runs)?;
+    let qmlp_large = python_partition_us(&qmlp_task(MAX_ROWS, (32, 64, 16), 1)?, runs)?;
+    let python = json!({
+        "integer_linear_v1_4_rows": linear_small,
+        "qmlp_v1_4_rows": qmlp_small,
+        "qmlp_v1_256_rows": qmlp_large,
+    });
+    Ok(json!({
+        "qmlp_32_64_16_by_partitions": by_partitions,
+        "qmlp_by_model_size_8_partitions": by_model,
+        "by_rows_8_partitions": by_rows,
+        "quorum_certificate_verify_us_by_validators": by_validators,
+        "python_worker_partition_us": python,
+    }))
+}
+
+pub fn bench_command(args: &[String]) -> Result<(), String> {
+    let mut iterations: u32 = 10;
+    let mut sweep = false;
+    let mut flags = args.iter();
+    while let Some(flag) = flags.next() {
+        match flag.as_str() {
+            "--iterations" => {
+                let value = flags.next().ok_or("Missing --iterations value")?;
+                iterations = value.parse().map_err(|_| "Bad --iterations")?;
+            }
+            "--sweep" => sweep = true,
+            _ => return Err("Usage: bench [--iterations N] [--sweep]".into()),
+        }
+    }
+    if iterations == 0 {
+        return Err("--iterations must be positive".into());
+    }
     let authority = SigningKey::from_bytes(&[17; 32]);
     let workers: Vec<SigningKey> = (0..MAX_PARTITIONS)
         .map(|i| SigningKey::from_bytes(&[(i as u8).wrapping_add(100); 32]))
@@ -192,7 +342,7 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
     };
     let linear = time_block(&task, &workers, &rules, &parent, iterations)?;
     let qmlp = time_block(&qmlp_task, &workers, &rules, &parent, iterations)?;
-    let report = json!({
+    let mut report = json!({
         "iterations": iterations,
         "task": {
             "rows": rows.len(),
@@ -204,6 +354,7 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
         "claim_verify_us": linear.claim_us,
         "full_block_verify_rust_mirror_us": linear.block_us,
         "full_block_verify_haskell_cross_checked_us": linear.haskell_us,
+        "full_block_verify_haskell_persistent_us": linear.haskell_persistent_us,
         "rows_verified_per_second": rows.len() as f64 * 1e6 / linear.block_us,
         "qmlp_v1": {
             "rows": qmlp_rows.len(),
@@ -215,6 +366,7 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
             "claim_verify_us": qmlp.claim_us,
             "full_block_verify_rust_mirror_us": qmlp.block_us,
             "full_block_verify_haskell_cross_checked_us": qmlp.haskell_us,
+            "full_block_verify_haskell_persistent_us": qmlp.haskell_persistent_us,
             "rows_verified_per_second": qmlp_rows.len() as f64 * 1e6 / qmlp.block_us,
         },
         "quorum_certificate_verify_us": {
@@ -222,6 +374,16 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
             "64_validators": certificate_bench(64, iterations)?,
         },
     });
+    if sweep {
+        report["sweeps"] = sweeps(
+            &authority,
+            &workers,
+            &worker_ids,
+            &rules,
+            &parent,
+            iterations,
+        )?;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?

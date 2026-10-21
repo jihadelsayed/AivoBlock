@@ -24,7 +24,10 @@ use crate::settlement_v3::SettlementEngine;
 
 fn engine() -> SettlementEngine {
     match std::env::var_os("AIVOBLOCK_HASKELL_EXECUTABLE").filter(|v| !v.is_empty()) {
-        Some(path) => SettlementEngine::Haskell(HaskellValidatorClient::new(path).unwrap()),
+        Some(path) => {
+            let core = HaskellValidatorClient::new(path).unwrap().persistent();
+            SettlementEngine::Haskell(core)
+        }
         None => SettlementEngine::RustMirror,
     }
 }

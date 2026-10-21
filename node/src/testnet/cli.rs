@@ -78,7 +78,10 @@ pub fn run_command(args: &[String]) -> Result<(), String> {
         if path.is_empty() {
             return Err("Set AIVOBLOCK_HASKELL_EXECUTABLE to the aivoblock-core binary".into());
         }
-        let core = HaskellValidatorClient::new(path).map_err(|e| format!("{e:?}"))?;
+        // One supervised `ipc-serve` process instead of a GHC start per block.
+        let core = HaskellValidatorClient::new(path)
+            .map_err(|e| format!("{e:?}"))?
+            .persistent();
         if let Err(error) = core.exchange(HEALTH) {
             return Err(format!("Haskell core health check failed: {error:?}"));
         }

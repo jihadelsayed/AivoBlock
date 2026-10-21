@@ -178,9 +178,11 @@ equal the key in the file. Names are cosmetic and unsigned.
    retry storms. The cap bounds local concurrency, not total work or CPU usage.
    Each Python worker process is killed if it has not answered within 30 s,
    so a hung worker fails its partition instead of holding a slot forever.
-   Haskell settlement processes have a 10 s deadline; a timeout makes the
+   Haskell settlement requests have a 10 s deadline; a timeout makes the
    block fail validation locally (the node does not vote), never a different
-   state transition.
+   state transition. Nodes keep one supervised `aivoblock-core ipc-serve`
+   process instead of starting the GHC runtime per block; any failed request
+   discards that process, and settlement bytes are identical in both modes.
 3. Rejections: forged/foreign authority, expired (`deadline < next height`),
    stale sequence, already-settled task, overlapping/gapped partitions,
    unregistered workers, manipulated results, wrong worker, forged signature,
