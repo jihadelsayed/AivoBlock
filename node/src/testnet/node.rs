@@ -74,6 +74,13 @@ const MAX_EARLY_VOTES_PER_SOURCE: usize = 128;
 /// advance by timeout or by evidence from more than one third of the power.
 const MAX_ROUND_LOOKAHEAD: u64 = 8;
 const SYNC_BATCH: u64 = 64;
+/// One sync response stops after this many hex bytes (at least one block),
+/// well inside a peer's outbound queue budget.
+const MAX_SYNC_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+/// Sync requests go to each peer at most this often; a peer is served at most
+/// this often, so `get_blocks` floods cannot amplify disk and network work.
+const SYNC_REQUEST_INTERVAL: Duration = Duration::from_millis(750);
+const SERVE_INTERVAL: Duration = Duration::from_millis(250);
 const TICK: Duration = Duration::from_millis(100);
 const HEARTBEAT: Duration = Duration::from_millis(1_000);
 const LOG_LINES: usize = 200;
@@ -301,7 +308,8 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
         future_commits: BTreeMap::new(),
         early_messages: Vec::new(),
         last_status: Instant::now(),
-        last_sync_request: None,
+        last_sync_request: BTreeMap::new(),
+        last_served: BTreeMap::new(),
         counters: Counters::default(),
         log: VecDeque::new(),
         finality_ms: Vec::new(),
@@ -358,7 +366,9 @@ struct Node {
     /// Next-height messages with their authenticated sender (None: local).
     early_messages: Vec<(Option<[u8; 32]>, WireMessage)>,
     last_status: Instant,
-    last_sync_request: Option<Instant>,
+    /// Per connected peer, so one peer cannot monopolize sync requests.
+    last_sync_request: BTreeMap<[u8; 32], Instant>,
+    last_served: BTreeMap<[u8; 32], Instant>,
     counters: Counters,
     log: VecDeque<String>,
     finality_ms: Vec<u64>,
@@ -464,6 +474,8 @@ impl Node {
                 if self.peers.get(&peer).is_some_and(|link| link.id == link_id) {
                     self.peers.remove(&peer);
                     self.peer_heights.remove(&peer);
+                    self.last_sync_request.remove(&peer);
+                    self.last_served.remove(&peer);
                     if let Ok(mut set) = self.connected.lock() {
                         set.remove(&peer);
                     }
@@ -564,35 +576,44 @@ impl Node {
     }
 
     fn request_sync(&mut self, peer: [u8; 32]) {
-        if self
-            .last_sync_request
-            .is_some_and(|at| at.elapsed() < Duration::from_millis(750))
-        {
+        let Some(link) = self.peers.get(&peer) else {
+            return;
+        };
+        let recent = self.last_sync_request.get(&peer);
+        if recent.is_some_and(|at| at.elapsed() < SYNC_REQUEST_INTERVAL) {
             return;
         }
-        self.last_sync_request = Some(Instant::now());
-        if let Some(link) = self.peers.get(&peer) {
-            let _ = link.send(&WireMessage::GetBlocks {
-                from_height: self.chain.height + 1,
-            });
-        }
+        let _ = link.send(&WireMessage::GetBlocks {
+            from_height: self.chain.height + 1,
+        });
+        self.last_sync_request.insert(peer, Instant::now());
     }
 
+    /// Answer `get_blocks` with consecutive certified commits, bounded by
+    /// count, bytes and a per-peer rate. Sends only enqueue (never block).
     fn serve_blocks(&mut self, peer: [u8; 32], from_height: u64) {
         let Some(link) = self.peers.get(&peer).cloned() else {
             return;
         };
+        let recent = self.last_served.get(&peer);
+        if recent.is_some_and(|at| at.elapsed() < SERVE_INTERVAL) {
+            return;
+        }
+        self.last_served.insert(peer, Instant::now());
         let first = from_height.max(1);
         let last = self.chain.height.min(first.saturating_add(SYNC_BATCH - 1));
+        let mut sent_bytes = 0usize;
         for height in first..=last {
-            match self.chain.record_at(height) {
-                Ok(Some(record)) => {
-                    let _ = link.send(&WireMessage::Commit {
-                        block: hex(&record.bytes),
-                        certificate: hex(&record.certificate),
-                    });
-                }
-                _ => break,
+            let Ok(Some(record)) = self.chain.record_at(height) else {
+                break;
+            };
+            let commit = WireMessage::Commit {
+                block: hex(&record.bytes),
+                certificate: hex(&record.certificate),
+            };
+            sent_bytes = sent_bytes.saturating_add(commit.approx_bytes());
+            if link.send(&commit).is_err() || sent_bytes >= MAX_SYNC_RESPONSE_BYTES {
+                break;
             }
         }
     }
@@ -809,11 +830,14 @@ impl Node {
         if self.last_status.elapsed() >= HEARTBEAT {
             self.last_status = Instant::now();
             self.gossip(None, &self.status_message());
+            // Rotate among peers that claim to be ahead, least recently asked
+            // first, so a peer advertising a false height cannot starve sync.
             let behind = self
                 .peer_heights
                 .iter()
-                .find(|(_, height)| **height > self.chain.height)
-                .map(|(peer, _)| *peer);
+                .filter(|(_, height)| **height > self.chain.height)
+                .map(|(peer, _)| *peer)
+                .min_by_key(|peer| self.last_sync_request.get(peer).copied());
             if let Some(peer) = behind {
                 self.request_sync(peer);
             }
