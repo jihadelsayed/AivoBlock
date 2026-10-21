@@ -23,6 +23,8 @@ jobs:
           components: rustfmt
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
+      - name: Verify Rust dependency lockfile
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
 
   python:
     name: Python AI engine
@@ -83,15 +85,15 @@ jobs:
         run: python -m pip install -e "../ai-engine"
       - name: Rust-to-Python partitioned AI integration test
         run: |
-          cargo run -- ai-health
-          cargo run -- ai-demo
-          cargo run -- ai-verify
-          cargo run -- ai-partition-demo
-          cargo run -- validator-quorum-demo
+          cargo run --locked -- ai-health
+          cargo run --locked -- ai-demo
+          cargo run --locked -- ai-verify
+          cargo run --locked -- ai-partition-demo
+          cargo run --locked -- validator-quorum-demo
       - name: Build and test
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -125,18 +127,18 @@ jobs:
       - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
         working-directory: node
         run: |
-          cargo test haskell_json_ipc_validation_cases -- --nocapture
-          cargo test haskell_rejects_malformed_ipc_frames -- --nocapture
-          cargo test haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
-          cargo test testnet:: -- --nocapture --test-threads=1
-          cargo run -- core-health
-          cargo run -- core-validate
-          cargo run -- core-json
-          cargo run -- ai-partition-demo
-          cargo run -- ledger-transition-demo
-          cargo run -- multi-transfer-demo
-          cargo run -- ai-reward-block-demo
-          cargo run -- ai-proof-v2-demo
+          cargo test --locked haskell_json_ipc_validation_cases -- --nocapture
+          cargo test --locked haskell_rejects_malformed_ipc_frames -- --nocapture
+          cargo test --locked haskell_v3_settlement_agrees_with_rust_mirror -- --nocapture
+          cargo test --locked testnet:: -- --nocapture --test-threads=1
+          cargo run --locked -- core-health
+          cargo run --locked -- core-validate
+          cargo run --locked -- core-json
+          cargo run --locked -- ai-partition-demo
+          cargo run --locked -- ledger-transition-demo
+          cargo run --locked -- multi-transfer-demo
+          cargo run --locked -- ai-reward-block-demo
+          cargo run --locked -- ai-proof-v2-demo
 
   testnet_e2e:
     name: Docker private testnet (3 nodes + 4 validators)
