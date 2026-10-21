@@ -336,7 +336,10 @@ mod tests {
                 ..
             })
         ));
-        assert!(matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]
