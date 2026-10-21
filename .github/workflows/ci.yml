@@ -40,6 +40,8 @@ jobs:
         run: python -m pip install -e "./ai-engine[dev]"
       - name: Run tests
         run: python -m pytest ai-engine/tests
+      - name: Validate research statistics helpers (stdlib only)
+        run: python -m unittest discover -s scripts -p "test_analyze_replicates.py" -v
 
   pytorch_onnx:
     name: PyTorch / ONNX off-chain research
@@ -58,6 +60,13 @@ jobs:
         run: python -m pytest ai-engine/tests/test_offchain_research.py ai-engine/tests/test_qmlp.py -ra
       - name: Train, quantize and export the digits model (machine-readable report)
         run: python -m aivoblock_ai.research --out research-out
+      - name: Independent training/dataset seeds (three complete experiments)
+        run: |
+          for seed in 11 17 23; do
+            python -m aivoblock_ai.research \
+              --out "research-out/replicates/seed-$seed" \
+              --seed "$seed" --training-seed "$seed" > /dev/null
+          done
       - uses: dtolnay/rust-toolchain@stable
       - name: Install RocksDB build prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libsnappy-dev
@@ -205,6 +214,12 @@ jobs:
         run: |
           mkdir -p testnet/generated
           docker run --rm aivoblock-node:testnet bench --iterations 20 --sweep | tee testnet/generated/bench.json
+          cp testnet/generated/bench.json testnet/generated/bench-replicate-1.json
+      - name: Repeat verifier benchmarks in independent invocations
+        run: |
+          for run in 2 3; do
+            docker run --rm aivoblock-node:testnet bench --iterations 20 > "testnet/generated/bench-replicate-$run.json"
+          done
       - name: Three-node end-to-end demonstration with trained QMLP export
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
@@ -217,6 +232,16 @@ jobs:
             --three testnet/generated/three-node/report.json \
             --four testnet/generated/four-validator/report.json \
             --out testnet/generated/research-summary.json
+      - name: Validate multi-seed accuracy and benchmark variability
+        run: |
+          python3 scripts/analyze_replicates.py \
+            --models research-out/replicates/seed-11/report.json \
+                     research-out/replicates/seed-17/report.json \
+                     research-out/replicates/seed-23/report.json \
+            --benchmarks testnet/generated/bench-replicate-1.json \
+                         testnet/generated/bench-replicate-2.json \
+                         testnet/generated/bench-replicate-3.json \
+            --out testnet/generated/variability-summary.json
       - name: Upload testnet reports and node logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -225,6 +250,8 @@ jobs:
           path: |
             testnet/generated/bench.json
             testnet/generated/research-summary.json
+            testnet/generated/bench-replicate-*.json
+            testnet/generated/variability-summary.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
           if-no-files-found: warn

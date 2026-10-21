@@ -32,6 +32,7 @@ def run_experiment(
     train: int = 2000,
     test: int = 500,
     seed: int = 7,
+    training_seed: int = 0,
     hidden: int = 32,
     epochs: int = 200,
 ):
@@ -45,7 +46,9 @@ def run_experiment(
     test_rows, test_labels = digits.make_dataset(test, seed + 1)
 
     started = time.perf_counter()
-    model = torch_qmlp.train_float_mlp(train_rows, train_labels, hidden=hidden, epochs=epochs)
+    model = torch_qmlp.train_float_mlp(
+        train_rows, train_labels, hidden=hidden, epochs=epochs, seed=training_seed
+    )
     train_seconds = time.perf_counter() - started
 
     started = time.perf_counter()
@@ -78,6 +81,7 @@ def run_experiment(
             "train": train,
             "test": test,
             "seed": seed,
+            "training_seed": training_seed,
             "features": digits.PIXELS,
             "classes": digits.CLASSES,
         },
@@ -145,9 +149,12 @@ def main() -> int:
     parser.add_argument("--test", type=int, default=500)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--training-seed", type=int, default=0,
+                        help="PyTorch initialization seed (default 0 preserves earlier CI experiments)")
     args = parser.parse_args()
     report, quantized, float_proto, int_proto, (rows, labels) = run_experiment(
-        train=args.train, test=args.test, seed=args.seed, epochs=args.epochs
+        train=args.train, test=args.test, seed=args.seed,
+        training_seed=args.training_seed, epochs=args.epochs
     )
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "float-mlp.onnx").write_bytes(float_proto.SerializeToString())
