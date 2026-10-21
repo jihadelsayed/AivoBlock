@@ -9,6 +9,7 @@
 //! use this to protect real funds or to run a public network.
 
 pub mod bench;
+pub mod bounds;
 pub mod chain;
 pub mod cli;
 pub mod config;

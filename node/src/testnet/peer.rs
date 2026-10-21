@@ -479,6 +479,13 @@ pub struct Transport {
     pub frame_limiter: Arc<Mutex<AuthenticatedFrameLimiter>>,
 }
 
+/// Malformed-frame telemetry must not hold an authenticated reader hostage
+/// when the bounded node queue is full. Link teardown still delivers PeerDown
+/// through the normal channel so the consensus loop can clean up peer state.
+fn report_malformed_message(events: &SyncSender<Event>, peer: [u8; 32], reason: String) {
+    let _ = events.try_send(Event::MalformedMessage { peer, reason });
+}
+
 fn run_connection(
     mut stream: TcpStream,
     transport: Arc<Transport>,
@@ -592,10 +599,9 @@ fn run_connection(
             }
             Err(error) => {
                 if error.kind() == io::ErrorKind::InvalidData {
-                    let _ = transport.events.send(Event::MalformedMessage {
-                        peer,
-                        reason: error.to_string(),
-                    });
+                    // Invalid frames are fatal. Do not block teardown waiting
+                    // to enqueue optional diagnostics when the node is busy.
+                    report_malformed_message(&transport.events, peer, error.to_string());
                 }
                 break;
             }
@@ -763,6 +769,39 @@ mod tests {
         );
         assert_eq!(active.load(Ordering::Acquire), 0);
         assert!(per_ip.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn malformed_frame_diagnostics_do_not_wait_for_a_full_event_queue() {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender
+            .send(Event::HandshakeRejected {
+                remote: "queued".into(),
+                reason: "test".into(),
+            })
+            .unwrap();
+
+        // A saturated node must keep its existing event, not stall the peer
+        // reader trying to enqueue a best-effort diagnostic.
+        report_malformed_message(&sender, [7; 32], "bad frame".into());
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Event::HandshakeRejected { .. })
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        // Once capacity is available, the same diagnostic is delivered.
+        report_malformed_message(&sender, [7; 32], "bad frame".into());
+        match receiver.try_recv().unwrap() {
+            Event::MalformedMessage { peer, reason } => {
+                assert_eq!(peer, [7; 32]);
+                assert_eq!(reason, "bad frame");
+            }
+            _ => panic!("expected malformed-message diagnostic"),
+        }
     }
 
     #[test]

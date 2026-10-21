@@ -10,8 +10,50 @@ pub mod haskell;
 pub mod ledger_responses;
 pub mod python;
 
+use std::io;
+use std::process::{Child, ChildStdin, ChildStdout};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
 /// Maximum permitted payload size for one local IPC message (4 MiB).
 pub const MAX_IPC_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+
+/// Run one request/response `exchange` over a spawned child's pipes on a
+/// helper thread, and wait at most `timeout` for it. On expiry the child is
+/// killed, which closes its pipes and lets the helper finish on its own, so
+/// a hung or stalled local executable cannot block the caller (for example
+/// the consensus event loop or a worker slot) indefinitely.
+///
+/// Returns None on timeout. The caller still reaps the child with `wait`.
+pub fn exchange_within<T, E>(
+    child: &mut Child,
+    timeout: Duration,
+    exchange: impl FnOnce(ChildStdin, ChildStdout) -> Result<T, E> + Send + 'static,
+) -> Option<Result<T, E>>
+where
+    T: Send + 'static,
+    E: From<io::Error> + Send + 'static,
+{
+    let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        return Some(Err(io::Error::other("missing child pipes").into()));
+    };
+    let (sender, receiver) = mpsc::channel();
+    let helper = thread::spawn(move || {
+        let _ = sender.send(exchange(stdin, stdout));
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => {
+            let _ = helper.join();
+            Some(result)
+        }
+        Err(_) => {
+            // Do not join: a grandchild could still hold the pipes open.
+            let _ = child.kill();
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
@@ -84,6 +126,55 @@ mod tests {
             decode_frame(&[0, 0, 0, 1, 1, 2]),
             Err(FrameError::TrailingBytes)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exchange_within_returns_a_prompt_answer() {
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let echo = |mut stdin: ChildStdin, mut stdout: ChildStdout| {
+            stdin.write_all(b"ping")?;
+            drop(stdin);
+            let mut echoed = Vec::new();
+            stdout.read_to_end(&mut echoed)?;
+            Ok::<_, io::Error>(echoed)
+        };
+        let echoed = exchange_within(&mut child, Duration::from_secs(10), echo);
+        assert_eq!(echoed.unwrap().unwrap(), b"ping");
+        assert!(child.wait().unwrap().success());
+    }
+
+    /// A child that never answers is killed at the deadline instead of
+    /// blocking the caller (for example the consensus event loop).
+    #[cfg(unix)]
+    #[test]
+    fn exchange_within_kills_a_child_that_never_answers() {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::time::Instant;
+
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        let read_one = |_: ChildStdin, mut stdout: ChildStdout| {
+            let mut byte = [0u8; 1];
+            stdout.read_exact(&mut byte).map(|()| byte[0])
+        };
+        let outcome = exchange_within(&mut child, Duration::from_millis(200), read_one);
+        assert!(outcome.is_none());
+        assert!(!child.wait().unwrap().success());
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]
