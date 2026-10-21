@@ -156,7 +156,10 @@ mod tests {
         let client = PythonWorkerClient::new("sleep", "30")
             .unwrap()
             .with_timeout(Duration::from_millis(300));
-        assert!(matches!(client.exchange(b"{}"), Err(PythonIpcError::TimedOut)));
+        assert!(matches!(
+            client.exchange(b"{}"),
+            Err(PythonIpcError::TimedOut)
+        ));
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 
