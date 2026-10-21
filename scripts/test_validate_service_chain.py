@@ -1,86 +1,100 @@
-import copy
-import unittest
+#!/usr/bin/env python3
+"""Fail closed on mismatched or insufficient service-vs-chain benchmark data.
 
-from validate_service_chain import validate
+Inputs are normalized JSON measurement bundles, not arbitrary source CI reports.
+See docs/service-chain-evidence-audit.md for the expected bundle schema.
+"""
+import argparse
+import json
+import math
+from collections import Counter
+from pathlib import Path
 
-
-def fixture():
-    digest = "a" * 64
-    scenarios = {}
-    for mode in ("service_direct", "service_recomputed", "chain_observed_finality"):
-        rows = []
-        for launch in range(3):
-            for i in range(30):
-                row = {"launch_id": f"launch-{launch}", "request_id": f"{mode}-{launch}-{i}",
-                       "elapsed_ms": 1.5, "status": "success",
-                       "model_commitment": digest, "input_commitment": "b" * 64,
-                       "result_commitment": "c" * 64}
-                if mode == "chain_observed_finality":
-                    row["finalized_height"] = 1 + launch * 30 + i
-                rows.append(row)
-        scenarios[mode] = {"model_commitment": digest, "input_commitment": "b" * 64,
-                           "result_commitment": "c" * 64, "samples": rows}
-    return {"scenarios": scenarios}
+FIELDS = ("model_commitment", "input_commitment", "result_commitment")
+CANONICAL_FIELDS = tuple("canonical_" + field for field in FIELDS)
+SCENARIOS = ("service_direct", "service_recomputed", "chain_observed_finality")
 
 
-class ValidateServiceChainTests(unittest.TestCase):
-    def test_accepts_three_by_thirty(self):
-        self.assertEqual(validate(fixture())["status"], "PASS")
+def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("scenarios"), dict):
+        raise ValueError("Missing scenarios object")
+    ref = None
+    canonical_ref = None
+    result = {}
+    for mode in SCENARIOS:
+        scenario = bundle["scenarios"].get(mode)
+        if not isinstance(scenario, dict):
+            raise ValueError(f"{mode}: missing scenario")
+        identity = tuple(scenario.get(field) for field in FIELDS)
+        if any(not isinstance(x, str) or len(x) != 64 or
+               any(c not in "0123456789abcdef" for c in x) for x in identity):
+            raise ValueError(f"{mode}: missing or invalid SHA-256 commitments")
+        canonical = tuple(scenario.get(field) for field in CANONICAL_FIELDS)
+        if any(not isinstance(x, str) or len(x) != 64 or
+               any(c not in "0123456789abcdef" for c in x) for x in canonical):
+            raise ValueError(f"{mode}: missing or invalid canonical QMLP commitments")
+        if canonical_ref is None:
+            canonical_ref = canonical
+        elif canonical != canonical_ref:
+            raise ValueError(f"{mode}: canonical model/input/result commitments differ")
+        if ref is None:
+            ref = identity
+        elif identity != ref:
+            raise ValueError(f"{mode}: model/input/result commitments differ")
+        samples = scenario.get("samples")
+        if not isinstance(samples, list):
+            raise ValueError(f"{mode}: missing samples")
+        counts = Counter()
+        request_ids = set()
+        heights = set()
+        for s in samples:
+            if not isinstance(s, dict):
+                raise ValueError(f"{mode}: invalid sample")
+            launch = s.get("launch_id")
+            rid = s.get("request_id")
+            ms = s.get("elapsed_ms")
+            if not isinstance(launch, str) or not launch or not isinstance(rid, str) or not rid:
+                raise ValueError(f"{mode}: launch_id/request_id required")
+            for field, expected in zip(FIELDS, ref):
+                supplied = s.get(field)
+                if supplied != expected:
+                    raise ValueError(f"{mode}: request {rid} missing or mismatched {field}")
+            for field, expected in zip(CANONICAL_FIELDS, canonical_ref):
+                if s.get(field) != expected:
+                    raise ValueError(f"{mode}: request {rid} missing or mismatched {field}")
+            if rid in request_ids:
+                raise ValueError(f"{mode}: duplicate request ID: {rid}")
+            request_ids.add(rid)
+            if isinstance(ms, bool) or not isinstance(ms, (int, float)) or not math.isfinite(ms) or ms <= 0:
+                raise ValueError(f"{mode}: invalid elapsed_ms")
+            if s.get("status") != "success":
+                raise ValueError(f"{mode}: non-success sample; report failures separately")
+            if mode == "chain_observed_finality":
+                h = s.get("finalized_height")
+                if isinstance(h, bool) or not isinstance(h, int) or h < 1 or h in heights:
+                    raise ValueError(f"{mode}: missing/duplicate finalized height")
+                heights.add(h)
+            counts[launch] += 1
+        if len(counts) < minimum_launches or any(n < minimum_per_launch for n in counts.values()):
+            raise ValueError(f"{mode}: need >= {minimum_launches} launches with >= {minimum_per_launch} measured samples each")
+        result[mode] = {"launches": len(counts), "samples": len(samples)}
+    return {"status": "PASS", "commitments": dict(zip(FIELDS, ref)),
+            "canonical_commitments": dict(zip(CANONICAL_FIELDS, canonical_ref)),
+            "scenarios": result}
 
-    def test_rejects_missing_commitment(self):
-        b = fixture()
-        del b["scenarios"]["chain_observed_finality"]["input_commitment"]
-        with self.assertRaises(ValueError):
-            validate(b)
 
-    def test_rejects_different_model(self):
-        b = fixture()
-        b["scenarios"]["chain_observed_finality"]["model_commitment"] = "d" * 64
-        with self.assertRaises(ValueError):
-            validate(b)
-
-    def test_rejects_missing_request_input_commitment(self):
-        b = fixture()
-        del b["scenarios"]["chain_observed_finality"]["samples"][3]["input_commitment"]
-        with self.assertRaisesRegex(ValueError, "missing or mismatched input_commitment"):
-            validate(b)
-
-    def test_rejects_mismatched_request_result_commitment(self):
-        b = fixture()
-        b["scenarios"]["service_direct"]["samples"][17]["result_commitment"] = "d" * 64
-        with self.assertRaisesRegex(ValueError, "missing or mismatched result_commitment"):
-            validate(b)
-
-    def test_rejects_too_few_samples(self):
-        b = fixture()
-        b["scenarios"]["chain_observed_finality"]["samples"].pop()
-        with self.assertRaises(ValueError):
-            validate(b)
-
-    def test_rejects_duplicate_request(self):
-        b = fixture()
-        b["scenarios"]["service_direct"]["samples"][1]["request_id"] = "service_direct-0-0"
-        with self.assertRaises(ValueError):
-            validate(b)
-
-    def test_rejects_reused_finalized_height(self):
-        b = fixture()
-        b["scenarios"]["chain_observed_finality"]["samples"][1]["finalized_height"] = 1
-        with self.assertRaises(ValueError):
-            validate(b)
-
-    def test_rejects_invalid_duration(self):
-        b = fixture()
-        b["scenarios"]["service_recomputed"]["samples"][0]["elapsed_ms"] = float("nan")
-        with self.assertRaises(ValueError):
-            validate(b)
-
-    def test_rejects_non_success(self):
-        b = fixture()
-        b["scenarios"]["service_direct"]["samples"][0]["status"] = "failed"
-        with self.assertRaises(ValueError):
-            validate(b)
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("bundle", type=Path)
+    p.add_argument("--out", type=Path)
+    args = p.parse_args()
+    verified = validate(json.loads(args.bundle.read_text()))
+    rendered = json.dumps(verified, indent=2, sort_keys=True) + "\n"
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(rendered)
+    print(rendered, end="")
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()
