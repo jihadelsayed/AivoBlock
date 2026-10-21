@@ -91,6 +91,10 @@ equal the key in the file. Names are cosmetic and unsigned.
   event queue is full, they fail immediately with an explicit JSON error rather
   than indefinitely occupying one of the 16 control connection slots while
   blocking on queue admission. A disconnected node returns a shutdown error.
+  Malformed authenticated peer-frame diagnostics are also **best effort**: if
+  the queue is full, the diagnostic is discarded instead of preventing the
+  reader from starting connection teardown. Peer disconnect notifications
+  still use the normal queued event path so peer state can be cleaned up.
   This bounds queued event *count*, not CPU cost or the individual message
   size; it does not replace network-wide flood protection.
 - Each configured validator identity is permitted at most **128 fully
