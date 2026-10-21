@@ -4,6 +4,7 @@
     python3 scripts/testnet.py demo      # 3 nodes: AI work, consensus, rewards, restart
     python3 scripts/testnet.py fault     # 4 validators: crash + leader crash + recovery
     python3 scripts/testnet.py all       # both, sharing one image build
+    python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
     python3 scripts/testnet.py down --profile three-node
 
 Every Sayed Token balance is predicted independently with the Python reward
@@ -301,7 +302,7 @@ class Testnet:
         log(f"report written to {self.out / 'report.json'}")
 
 
-def demo(net: Testnet) -> None:
+def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
     nodes = net.nodes()
     net.up()
     net.resources("idle after authentication")
@@ -333,12 +334,41 @@ def demo(net: Testnet) -> None:
     check(restarted["startup"]["replayed_blocks"] == 4, "node-3 replayed 4 finalized blocks from RocksDB")
     check(restarted["startup"]["initialized_genesis"] is False, "node-3 reused its persisted chain")
     net.verify(nodes)
-    # 5. Quantized-MLP (QMLP-V1) work: integer-only inference run by the Python
-    #    workers, recomputed in Rust by every validator, settled by Haskell.
-    net.submit("--workload", "qmlp", "--rows", "12")
+    # 5. QMLP-V1 work: the ordinary seeded fixture, or a REAL model trained
+    #    off-chain by PyTorch, quantized, exported, and verified by Rust.
+    #    Docker nodes use Python workers, Haskell settlement and BFT finality.
+    before_qmlp = net.status("node-1")
+    if qmlp_file is None:
+        task = net.submit("--workload", "qmlp", "--rows", "12")
+    else:
+        if not qmlp_file.is_file():
+            raise Failure(f"research QMLP export not found: {qmlp_file}")
+        try:
+            export = json.loads(qmlp_file.read_text())
+        except (OSError, ValueError) as error:
+            raise Failure(f"invalid research export: {error}") from error
+        check(export.get("workload") == "qmlp-v1", "research artifact is QMLP-V1")
+        check(isinstance(export.get("rows"), list) and bool(export["rows"]),
+              "research artifact has nonempty inference input rows")
+        check(isinstance(export.get("model"), dict), "research artifact has model parameters")
+        # The signed submit-task CLI loads this same artifact inside node-1.
+        net.compose("cp", str(qmlp_file.resolve()), "node-1:/tmp/digits.qmlp.json")
+        task = net.submit("--qmlp-file", "/tmp/digits.qmlp.json")
+        check(task["rows"] == len(export["rows"]), "submitted the exported input rows")
+        check(task["features"] == export["model"]["d_in"], "submitted the exported model dimensions")
+        net.step("pytorch_export", model_commitment=export["model_commitment"],
+                 result_commitment=export["result_commitment"], task_id=task["task_id"])
     net.wait_height(5, nodes)
     final = net.verify(nodes)
     check(final["blocks"][4]["workload"] == "qmlp-v1", "height 5 settled QMLP-V1 inference work")
+    if qmlp_file is not None:
+        workers = [p["worker"] for p in task["partitions"]]
+        gains = [final["accounts"][w]["balance"] -
+                 before_qmlp["accounts"].get(w, {}).get("balance", 0) for w in workers]
+        expected_paid = task["fee_budget"] + final["blocks"][4]["issuance"]
+        check(sum(gains) == expected_paid and all(gain > 0 for gain in gains),
+              f"trained model paid {expected_paid} Sayed Tokens to {len(workers)} workers")
+        net.step("pytorch_rewards", height=5, worker_gains=gains, tokens_paid=expected_paid)
     net.resources("end of demo")
     net.report["final"] = {k: final[k] for k in ("height", "tip", "state_root", "supply", "fee_pool")}
     net.report["finality_ms"] = net.finality(nodes)
@@ -410,9 +440,12 @@ def main() -> int:
     parser.add_argument("command", choices=["demo", "fault", "all", "build", "down"])
     parser.add_argument("--profile", choices=sorted(PROFILES))
     parser.add_argument("--skip-build", action="store_true", help="reuse an existing image")
+    parser.add_argument("--qmlp-file", type=Path, help="PyTorch QMLP export for the three-node demo")
     parser.add_argument("--keep", action="store_true", help="leave containers running")
     parser.add_argument("--out", default=str(ROOT / "testnet" / "generated"))
     args = parser.parse_args()
+    if args.qmlp_file is not None and args.command not in ("demo", "all"):
+        parser.error("--qmlp-file is supported only by demo or all")
     out = Path(args.out).resolve()
     if args.command == "down":
         for profile in [args.profile] if args.profile else sorted(PROFILES):
@@ -426,8 +459,9 @@ def main() -> int:
         run(["docker", "build", "-f", str(ROOT / "docker" / "Dockerfile.node"), "-t", IMAGE, str(ROOT)])
     if args.command == "build":
         return 0
-    plan = {"demo": [("three-node", demo)], "fault": [("four-validator", fault)],
-            "all": [("three-node", demo), ("four-validator", fault)]}[args.command]
+    research_demo = lambda net: demo(net, args.qmlp_file)
+    plan = {"demo": [("three-node", research_demo)], "fault": [("four-validator", fault)],
+            "all": [("three-node", research_demo), ("four-validator", fault)]}[args.command]
     if args.profile:
         plan = [(args.profile, fn) for _, fn in plan]
     failed = False
