@@ -412,6 +412,57 @@ pub mod tests {
         );
     }
 
+    /// Timed Rust inference on the same *trained* model and exact input rows
+    /// used by the Python service control. No blockchain or finality included.
+    #[test]
+    fn exported_qmlp_fixture_rust_timing_when_provided() {
+        let Some(path) = std::env::var_os("AIVOBLOCK_SERVICE_FIXTURE") else {
+            eprintln!("SKIP: AIVOBLOCK_SERVICE_FIXTURE is not set");
+            return;
+        };
+        let export: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let model = QmlpModelV1::from_json(&export["model"]).unwrap();
+        let rows: Vec<Vec<i64>> = serde_json::from_value(export["rows"].clone()).unwrap();
+        assert!(!rows.is_empty() && rows.len() <= 256);
+        assert_eq!(hex(&model.commitment().unwrap()), export["model_commitment"]);
+        let inputs = crate::ai_block_v3::input_commitment_v3(&rows, model.d_in as usize).unwrap();
+        assert_eq!(hex(&inputs), export["input_commitment"]);
+        let result = qmlp_result_commitment_v1(
+            &model,
+            &rows,
+            WorkRange { start: 0, count: rows.len() as u64 },
+        ).unwrap();
+        assert_eq!(hex(&result), export["result_commitment"]);
+
+        // This timing includes the same public Rust API's per-row validation,
+        // but not JSON deserialization, network, signatures or consensus.
+        for row in &rows {
+            std::hint::black_box(model.logits(row).unwrap());
+        }
+        let mut observations = Vec::new();
+        for _ in 0..20 {
+            let started = std::time::Instant::now();
+            for row in &rows {
+                std::hint::black_box(model.logits(std::hint::black_box(row)).unwrap());
+            }
+            observations.push(started.elapsed().as_secs_f64() * 1_000.0);
+        }
+        let output = json!({
+            "schema_version": 1,
+            "mode": "rust_reference_inference_only",
+            "rows": rows.len(),
+            "iterations": observations.len(),
+            "model_commitment": export["model_commitment"],
+            "input_commitment": export["input_commitment"],
+            "result_commitment": export["result_commitment"],
+            "latency_ms": { "observations": observations },
+            "scope": "Rust CPU logits API only, no network or finality"
+        });
+        let path = std::env::var("AIVOBLOCK_RUST_SERVICE_REPORT")
+            .expect("Set AIVOBLOCK_RUST_SERVICE_REPORT for the research artifact");
+        std::fs::write(path, serde_json::to_vec_pretty(&output).unwrap()).unwrap();
+    }
+
     #[test]
     fn requantization_rounds_half_up_relu_clamps_and_cannot_overflow() {
         let single = |weight: i8, bias: i32, multiplier: u32, shift: u32| QmlpModelV1 {
