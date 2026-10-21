@@ -8,7 +8,12 @@
 //! the bytes inside the block (no Python, no worker trust), checks the
 //! scheduled issuance and executes settlement before voting.
 //!
-//! This is full recomputation of a tiny deterministic workload. It is NOT a
+//! Two workloads are consensus-valid: the original integer linear model,
+//! and QMLP-V1, an integer-only quantized two-layer MLP
+//! (`protocol/spec/quantized-mlp-v1.md`). A QMLP task's canonical encoding
+//! starts with its own tag; linear tasks keep their original bytes.
+//!
+//! This is full recomputation of tiny deterministic workloads. It is NOT a
 //! succinct or zero-knowledge proof and does not scale to large models.
 
 use std::collections::BTreeSet;
@@ -21,6 +26,7 @@ use crate::block_replay::decode_header_v1;
 use crate::issuance::{ledger_supply, IssuancePolicyV1, IssuedSettlementV3};
 use crate::mining::receipts::VerifiedWorkReceipt;
 use crate::mining::scheduler::WorkRange;
+use crate::qmlp::{qmlp_result_commitment_v1, qmlp_rules_commitment_v1, QmlpModelV1};
 use crate::reward_block::RewardWorkV1;
 use crate::settlement_v3::{SettledBlockV3, SettlementEngine};
 use crate::storage::ledger_state::LedgerState;
@@ -36,6 +42,9 @@ const BATCH_DOMAIN: &[u8] = b"AIVOBLOCK-AI-WORK-REWARD-BATCH-V3\0";
 const ROOT_DOMAIN: &[u8] = b"AIVOBLOCK-AI-WORK-ROOT-V3\0";
 const MODEL_DOMAIN: &[u8] = b"AIVOBLOCK-INT-LINEAR-V1\0";
 const INPUT_DOMAIN: &[u8] = b"AIVOBLOCK-INFERENCE-INPUT-V1\0";
+/// Prefix of a QMLP-V1 task encoding. A linear task starts with its u64
+/// sequence instead; heights never approach these leading bytes.
+const QMLP_TASK_TAG: &[u8] = b"AIVOBLOCK-AI-TASK-QMLP-V1\0";
 pub const CHAIN_ID: u32 = 1;
 pub const MAX_ROWS: usize = 256;
 pub const MAX_FEATURES: usize = 32;
@@ -63,8 +72,11 @@ pub struct AiTaskV3 {
     pub model_commitment: [u8; 32],
     pub input_commitment: [u8; 32],
     pub rules_commitment: [u8; 32],
+    /// Integer linear model weights; empty for a QMLP task.
     pub weights: Vec<i64>,
     pub rows: Vec<Vec<i64>>,
+    /// When set, the task runs QMLP-V1 inference instead of the linear model.
+    pub qmlp: Option<QmlpModelV1>,
     pub partitions: Vec<PartitionV3>,
     pub task_id: [u8; 32],
     pub authority_signature: [u8; 64],
@@ -163,6 +175,9 @@ pub fn input_commitment_v3(rows: &[Vec<i64>], width: usize) -> Result<[u8; 32], 
 /// Canonical task fields preceding the task ID and signature.
 fn task_body_bytes(task: &AiTaskV3) -> Vec<u8> {
     let mut raw = Vec::new();
+    if task.qmlp.is_some() {
+        raw.extend_from_slice(QMLP_TASK_TAG);
+    }
     raw.extend_from_slice(&task.sequence.to_be_bytes());
     raw.extend_from_slice(&task.created_ms.to_be_bytes());
     raw.extend_from_slice(&task.deadline_height.to_be_bytes());
@@ -170,14 +185,23 @@ fn task_body_bytes(task: &AiTaskV3) -> Vec<u8> {
     raw.extend_from_slice(&task.model_commitment);
     raw.extend_from_slice(&task.input_commitment);
     raw.extend_from_slice(&task.rules_commitment);
-    raw.extend_from_slice(&(task.rows.len() as u32).to_be_bytes());
-    raw.extend_from_slice(&(task.weights.len() as u32).to_be_bytes());
-    for weight in &task.weights {
-        raw.extend_from_slice(&weight.to_be_bytes());
-    }
-    for row in &task.rows {
-        for value in row {
-            raw.extend_from_slice(&value.to_be_bytes());
+    if let Some(model) = &task.qmlp {
+        // model body, then u32 row count and every input as one int8 byte.
+        raw.extend_from_slice(&model.encode_body());
+        raw.extend_from_slice(&(task.rows.len() as u32).to_be_bytes());
+        for row in &task.rows {
+            raw.extend(row.iter().map(|value| *value as i8 as u8));
+        }
+    } else {
+        raw.extend_from_slice(&(task.rows.len() as u32).to_be_bytes());
+        raw.extend_from_slice(&(task.weights.len() as u32).to_be_bytes());
+        for weight in &task.weights {
+            raw.extend_from_slice(&weight.to_be_bytes());
+        }
+        for row in &task.rows {
+            for value in row {
+                raw.extend_from_slice(&value.to_be_bytes());
+            }
         }
     }
     raw.extend_from_slice(&(task.partitions.len() as u32).to_be_bytes());
@@ -234,9 +258,29 @@ pub fn verify_task_v3(task: &AiTaskV3, rules: &V3Rules<'_>, height: u64) -> Resu
     if height != task.sequence {
         return Err("Task sequence does not match the settlement height".into());
     }
-    if task.model_commitment != model_commitment_v3(&task.weights)?
-        || task.input_commitment != input_commitment_v3(&task.rows, task.weights.len())?
-        || task.rules_commitment != rules_commitment_v1()
+    let (model_commitment, rules_commitment, width) = match &task.qmlp {
+        None => (
+            model_commitment_v3(&task.weights)?,
+            rules_commitment_v1(),
+            task.weights.len(),
+        ),
+        Some(model) => {
+            if !task.weights.is_empty() {
+                return Err("A QMLP task must not carry linear weights".into());
+            }
+            for row in &task.rows {
+                model.check_row(row)?;
+            }
+            (
+                model.commitment()?,
+                qmlp_rules_commitment_v1(),
+                model.d_in as usize,
+            )
+        }
+    };
+    if task.model_commitment != model_commitment
+        || task.input_commitment != input_commitment_v3(&task.rows, width)?
+        || task.rules_commitment != rules_commitment
     {
         return Err("Task model, input or rules commitment mismatch".into());
     }
@@ -297,14 +341,14 @@ pub fn expected_result_v3(task: &AiTaskV3, partition: u32) -> Result<[u8; 32], S
         .partitions
         .get(partition as usize)
         .ok_or("Nonexistent partition")?;
-    result_commitment_for_rows_v1(
-        &task.weights,
-        &task.rows,
-        WorkRange {
-            start: entry.start,
-            count: entry.count,
-        },
-    )
+    let range = WorkRange {
+        start: entry.start,
+        count: entry.count,
+    };
+    match &task.qmlp {
+        None => result_commitment_for_rows_v1(&task.weights, &task.rows, range),
+        Some(model) => qmlp_result_commitment_v1(model, &task.rows, range),
+    }
 }
 
 /// Worker-side: sign a result for the partition assigned to `worker_key`.
@@ -469,7 +513,30 @@ impl<'a> Reader<'a> {
     }
 }
 
+type TaskPayload = (Vec<i64>, Vec<Vec<i64>>, Option<QmlpModelV1>);
+
+/// QMLP task payload: model body, u32 row count, int8 inputs.
+fn read_qmlp_payload(reader: &mut Reader<'_>) -> Result<TaskPayload, String> {
+    let (model, used) = QmlpModelV1::decode_body(&reader.raw[reader.at..])?;
+    reader.take(used)?;
+    let row_count = reader.u32()? as usize;
+    if row_count == 0 || row_count > MAX_ROWS {
+        return Err("V3 task dimensions exceed verifier limits".into());
+    }
+    let width = model.d_in as usize;
+    let rows = reader
+        .take(row_count * width)?
+        .chunks_exact(width)
+        .map(|row| row.iter().map(|byte| i64::from(*byte as i8)).collect())
+        .collect();
+    Ok((Vec::new(), rows, Some(model)))
+}
+
 fn read_task(reader: &mut Reader<'_>) -> Result<AiTaskV3, String> {
+    let qmlp_tagged = reader.raw[reader.at..].starts_with(QMLP_TASK_TAG);
+    if qmlp_tagged {
+        reader.take(QMLP_TASK_TAG.len())?;
+    }
     let sequence = reader.u64()?;
     let created_ms = reader.u64()?;
     let deadline_height = reader.u64()?;
@@ -477,26 +544,11 @@ fn read_task(reader: &mut Reader<'_>) -> Result<AiTaskV3, String> {
     let model_commitment = reader.array()?;
     let input_commitment = reader.array()?;
     let rules_commitment = reader.array()?;
-    let row_count = reader.u32()? as usize;
-    let width = reader.u32()? as usize;
-    if row_count == 0 || row_count > MAX_ROWS || width == 0 || width > MAX_FEATURES {
-        return Err("V3 task dimensions exceed verifier limits".into());
-    }
-    if reader.remaining() < (row_count + 1) * width * 8 {
-        return Err("Truncated V3 task matrix".into());
-    }
-    let mut weights = Vec::with_capacity(width);
-    for _ in 0..width {
-        weights.push(reader.i64()?);
-    }
-    let mut rows = Vec::with_capacity(row_count);
-    for _ in 0..row_count {
-        let mut row = Vec::with_capacity(width);
-        for _ in 0..width {
-            row.push(reader.i64()?);
-        }
-        rows.push(row);
-    }
+    let (weights, rows, qmlp) = if qmlp_tagged {
+        read_qmlp_payload(reader)?
+    } else {
+        read_linear_payload(reader)?
+    };
     let partition_count = reader.u32()? as usize;
     if partition_count == 0
         || partition_count > MAX_PARTITIONS
@@ -524,10 +576,36 @@ fn read_task(reader: &mut Reader<'_>) -> Result<AiTaskV3, String> {
         rules_commitment,
         weights,
         rows,
+        qmlp,
         partitions,
         task_id,
         authority_signature,
     })
+}
+
+/// Original integer linear payload: u32 rows, u32 width, i64 weights, rows.
+fn read_linear_payload(reader: &mut Reader<'_>) -> Result<TaskPayload, String> {
+    let row_count = reader.u32()? as usize;
+    let width = reader.u32()? as usize;
+    if row_count == 0 || row_count > MAX_ROWS || width == 0 || width > MAX_FEATURES {
+        return Err("V3 task dimensions exceed verifier limits".into());
+    }
+    if reader.remaining() < (row_count + 1) * width * 8 {
+        return Err("Truncated V3 task matrix".into());
+    }
+    let mut weights = Vec::with_capacity(width);
+    for _ in 0..width {
+        weights.push(reader.i64()?);
+    }
+    let mut rows = Vec::with_capacity(row_count);
+    for _ in 0..row_count {
+        let mut row = Vec::with_capacity(width);
+        for _ in 0..width {
+            row.push(reader.i64()?);
+        }
+        rows.push(row);
+    }
+    Ok((weights, rows, None))
 }
 
 /// Exact decoder for a gossiped task; authenticity is checked separately
@@ -745,6 +823,40 @@ pub mod tests {
                 rules_commitment: rules_commitment_v1(),
                 weights,
                 rows,
+                qmlp: None,
+                partitions,
+                task_id: [0; 32],
+                authority_signature: [0; 64],
+            },
+            &authority(),
+        )
+    }
+
+    /// The QMLP-V1 cross-language vector: 4 rows split 2/1/1 across workers.
+    pub fn qmlp_task(sequence: u64) -> AiTaskV3 {
+        let model = crate::qmlp::tests::fixture_model();
+        let rows = crate::qmlp::tests::fixture_rows();
+        let partitions = worker_keys()
+            .iter()
+            .zip([(0, 2), (2, 1), (3, 1)])
+            .map(|(key, (start, count))| PartitionV3 {
+                start,
+                count,
+                worker: key.verifying_key().to_bytes(),
+            })
+            .collect();
+        sign_task_v3(
+            AiTaskV3 {
+                sequence,
+                created_ms: 1_000 + sequence,
+                deadline_height: sequence + 10,
+                fee_budget: 30,
+                model_commitment: model.commitment().unwrap(),
+                input_commitment: input_commitment_v3(&rows, 2).unwrap(),
+                rules_commitment: qmlp_rules_commitment_v1(),
+                weights: Vec::new(),
+                rows,
+                qmlp: Some(model),
                 partitions,
                 task_id: [0; 32],
                 authority_signature: [0; 64],
@@ -933,6 +1045,76 @@ pub mod tests {
                 decode_block_v3(&built.bytes, Some(&built.id)).unwrap(),
                 built.block
             );
+        });
+    }
+
+    #[test]
+    fn qmlp_task_round_trips_and_settles_rewards_by_rows() {
+        with_rules(|rules| {
+            let task = qmlp_task(1);
+            verify_task_v3(&task, rules, 1).unwrap();
+            let encoded = encode_task_v3(&task);
+            assert!(encoded.starts_with(QMLP_TASK_TAG));
+            assert!(!encode_task_v3(&fixture_task(1)).starts_with(QMLP_TASK_TAG));
+            assert_eq!(decode_task_v3(&encoded).unwrap(), task);
+            assert!(decode_task_v3(&encoded[..encoded.len() - 1]).is_err());
+            let mut extended = encoded;
+            extended.push(0);
+            assert!(decode_task_v3(&extended).is_err());
+            let claims = honest_claims(&task);
+            for claim in &claims {
+                verify_claim_v3(&task, claim).unwrap();
+            }
+            let prior = genesis_ledger();
+            let engine = SettlementEngine::RustMirror;
+            let built = build_block_v3(&parent(&prior), rules, &engine, &task, &claims).unwrap();
+            let executed = execute_block_v3(
+                &parent(&prior),
+                rules,
+                &engine,
+                &built.bytes,
+                Some(&built.id),
+            )
+            .unwrap();
+            assert_eq!(executed, built);
+            assert_eq!(executed.block.task, task);
+            let accounts = &built.settled.post.accounts;
+            let balances: Vec<u64> = worker_keys()
+                .iter()
+                .map(|key| accounts[&key.verifying_key().to_bytes()].balance)
+                .collect();
+            // Fee budget 30 plus issuance 50, split by assigned rows 2:1:1.
+            assert_eq!(balances, vec![40, 20, 20]);
+        });
+    }
+
+    #[test]
+    fn qmlp_rejects_tampered_models_inputs_rules_and_results() {
+        with_rules(|rules| {
+            let task = qmlp_task(1);
+            let resigned = |task: AiTaskV3| sign_task_v3(task, &authority());
+            let mut weight = task.clone();
+            weight.qmlp.as_mut().unwrap().w1[0] += 1;
+            assert!(verify_task_v3(&resigned(weight), rules, 1).is_err());
+            // An out-of-int8 input is rejected even with a matching commitment.
+            let mut wide = task.clone();
+            wide.rows[0][0] = 128;
+            wide.input_commitment = input_commitment_v3(&wide.rows, 2).unwrap();
+            assert!(verify_task_v3(&resigned(wide), rules, 1).is_err());
+            let mut mixed = task.clone();
+            mixed.weights = vec![2, 3];
+            assert!(verify_task_v3(&resigned(mixed), rules, 1).is_err());
+            let mut linear_rules = task.clone();
+            linear_rules.rules_commitment = rules_commitment_v1();
+            assert!(verify_task_v3(&resigned(linear_rules), rules, 1).is_err());
+            let mut wrong = expected_result_v3(&task, 0).unwrap();
+            wrong[0] ^= 1;
+            let manipulated = sign_claim_v3(&task, 0, &worker_keys()[0], wrong).unwrap();
+            assert!(verify_claim_v3(&task, &manipulated).is_err());
+            // A claim for the linear workload over the same rows is not valid.
+            let linear = fixture_task(1);
+            let foreign = honest_claims(&linear)[0];
+            assert!(verify_claim_v3(&task, &foreign).is_err());
         });
     }
 

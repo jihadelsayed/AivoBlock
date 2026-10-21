@@ -297,9 +297,12 @@ def demo(net: Testnet) -> None:
     check(restarted["startup"]["replayed_blocks"] == 4, "node-3 replayed 4 finalized blocks from RocksDB")
     check(restarted["startup"]["initialized_genesis"] is False, "node-3 reused its persisted chain")
     net.verify(nodes)
-    net.submit("--workload", "synthetic", "--rows", "6", "--features", "3")
+    # 5. Quantized-MLP (QMLP-V1) work: integer-only inference run by the Python
+    #    workers, recomputed in Rust by every validator, settled by Haskell.
+    net.submit("--workload", "qmlp", "--rows", "12")
     net.wait_height(5, nodes)
     final = net.verify(nodes)
+    check(final["blocks"][4]["workload"] == "qmlp-v1", "height 5 settled QMLP-V1 inference work")
     net.report["final"] = {k: final[k] for k in ("height", "tip", "state_root", "supply", "fee_pool")}
     net.report["finality_ms"] = net.finality(nodes)
     net.report["issued"] = net.model.issued
@@ -316,7 +319,8 @@ def fault(net: Testnet) -> None:
     net.compose("stop", "node-4")
     live = nodes[:3]
     net.wait_connected(live)
-    net.submit("--workload", "synthetic", "--rows", "12", "--features", "6")
+    # A QMLP-V1 block while node-4 is down: it must later sync and verify it.
+    net.submit("--workload", "qmlp", "--rows", "12")
     net.wait_height(2, live)
     net.submit("--workload", "fixture")
     net.wait_height(3, live)
@@ -327,6 +331,7 @@ def fault(net: Testnet) -> None:
     recovered = net.status("node-4")
     check(recovered["startup"]["replayed_blocks"] == 1, "node-4 replayed its 1 persisted block")
     check(recovered["counters"]["synced_blocks"] >= 2, "node-4 synced 2 certified blocks from peers")
+    check(recovered["blocks"][1]["workload"] == "qmlp-v1", "node-4 re-verified the synced QMLP-V1 block")
     net.wait_connected(nodes)
     net.verify(nodes)
     # Crash the round-0 leader of the next height: a round change must occur.

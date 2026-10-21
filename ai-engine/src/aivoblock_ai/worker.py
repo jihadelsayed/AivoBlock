@@ -16,6 +16,7 @@ from aivoblock_ai.commitments import validate_commitments
 from aivoblock_ai.executor import execute_integer_inference
 from aivoblock_ai.proof import PuzzleProof, proof_from_result, verify_by_recomputation
 from aivoblock_ai.puzzle import Puzzle, WorkRange
+from aivoblock_ai import qmlp
 
 MAX_PAYLOAD = 4 * 1024 * 1024
 MAX_REQUEST_ROWS = 1024
@@ -172,6 +173,41 @@ def _verify_request(request: dict) -> dict:
         "method": "full_recomputation",
     }
 
+def _execute_qmlp_request(request: dict) -> dict:
+    """Run one QMLP-V1 partition after checking every task commitment.
+
+    The caller (the Rust node) still recomputes the result independently and
+    refuses to sign if it differs; this worker's output is never trusted.
+    """
+    _hex32(request.get("task_id"), "task_id")
+    worker_id = _hex32(request.get("worker_id"), "worker_id")
+    model = qmlp.QuantizedMLP.from_json(request.get("model"))
+    rows_data = request.get("rows")
+    if not isinstance(rows_data, list):
+        raise ValueError("rows must be an array")
+    rows = [tuple(row) if isinstance(row, list) else row for row in rows_data]
+    if _hex32(request.get("model_commitment"), "model_commitment") != model.commitment():
+        raise ValueError("Model commitment mismatch")
+    if _hex32(request.get("input_commitment"), "input_commitment") != qmlp.qmlp_input_commitment(model, rows):
+        raise ValueError("Input commitment mismatch")
+    if _hex32(request.get("rules_commitment"), "rules_commitment") != qmlp.rules_commitment():
+        raise ValueError("Rules commitment mismatch")
+    start = _integer(request.get("start"), "start")
+    count = _integer(request.get("count"), "count")
+    logits, commitment = qmlp.execute_partition(model, rows, start, count)
+    return {
+        "ok": True,
+        "type": "execute_qmlp_inference",
+        "protocol_version": 1,
+        "worker_id": worker_id.hex(),
+        "start_unit": start,
+        "unit_count": count,
+        "logits": [list(row) for row in logits],
+        "result_commitment": commitment.hex(),
+        "verified": False,
+    }
+
+
 def handle_request(request: dict) -> dict:
     """Dispatch one request; unsupported or invalid tasks return framed errors."""
     if request.get("protocol_version") != 1:
@@ -190,6 +226,11 @@ def handle_request(request: dict) -> dict:
             return _execute_request(request)
         except (ValueError, TypeError, KeyError):
             return {"ok": False, "error": "invalid_puzzle_request"}
+    if kind == "execute_qmlp_inference":
+        try:
+            return _execute_qmlp_request(request)
+        except (ValueError, TypeError, KeyError):
+            return {"ok": False, "error": "invalid_qmlp_request"}
     if kind == "verify_integer_inference":
         try:
             return _verify_request(request)

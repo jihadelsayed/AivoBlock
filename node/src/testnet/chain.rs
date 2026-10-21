@@ -28,6 +28,8 @@ pub struct BlockSummary {
     pub height: u64,
     pub block_id: String,
     pub task_id: String,
+    /// `integer-linear-v1` or `qmlp-v1`; both are recomputed by validators.
+    pub workload: &'static str,
     pub fee_budget: u64,
     pub issuance: u64,
     pub partitions: Vec<PartitionSummary>,
@@ -69,6 +71,10 @@ fn summary(executed: &ExecutedBlockV3, certificate: &QuorumCertificateV1) -> Blo
         height: header.height,
         block_id: hex(&executed.id),
         task_id: hex(&executed.block.task.task_id),
+        workload: match executed.block.task.qmlp {
+            Some(_) => "qmlp-v1",
+            None => "integer-linear-v1",
+        },
         fee_budget: executed.block.task.fee_budget,
         issuance: executed.block.issuance,
         partitions: executed

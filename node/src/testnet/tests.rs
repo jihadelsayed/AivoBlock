@@ -9,14 +9,15 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::cli::{build_task, client_command, partition_rows, workload, TaskSpec};
+use super::cli::{build_task, client_command, partition_rows, qmlp_workload, workload, TaskSpec};
 use super::config::{verify_network_config, NetworkConfig, NodeKeys};
 use super::control::{control_call, ControlRequest};
 use super::init::{generate, write_testnet, GeneratedTestnet, InitOptions};
 use super::node::{start_node, NodeHandle, NodeOptions};
+use super::wire::WireMessage;
 use super::worker::WorkerBackend;
 use super::{hex, random_bytes32};
-use crate::ai_block_v3::encode_task_v3;
+use crate::ai_block_v3::{encode_task_v3, expected_result_v3, sign_claim_v3, AiTaskV3};
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::issuance::IssuancePolicyV1;
 use crate::settlement_v3::SettlementEngine;
@@ -152,6 +153,7 @@ impl Harness {
                 fee_budget: 30,
                 weights: &weights,
                 rows: &matrix,
+                qmlp: None,
                 partitions: partition_rows(matrix.len(), workers),
             },
             &self.generated.authority,
@@ -161,6 +163,35 @@ impl Harness {
             task: hex(&encode_task_v3(&task)),
         };
         control_call(&self.control[0], &request).unwrap()
+    }
+
+    /// A seeded QMLP-V1 task, split among workers.
+    fn qmlp_task(&self, sequence: u64, rows: usize, workers: &[[u8; 32]]) -> AiTaskV3 {
+        let (model, matrix) = qmlp_workload(rows, sequence);
+        build_task(
+            TaskSpec {
+                sequence,
+                deadline_height: sequence + 20,
+                fee_budget: 30,
+                weights: &[],
+                rows: &matrix,
+                qmlp: Some(model),
+                partitions: partition_rows(matrix.len(), workers),
+            },
+            &self.generated.authority,
+        )
+        .unwrap()
+    }
+
+    fn submit_task(&self, task: &AiTaskV3) -> Value {
+        let request = ControlRequest::SubmitTask {
+            task: hex(&encode_task_v3(task)),
+        };
+        control_call(&self.control[0], &request).unwrap()
+    }
+
+    fn inject(&self, message: WireMessage) -> Value {
+        control_call(&self.control[0], &ControlRequest::Inject { message }).unwrap()
     }
 
     fn worker_key(&self, index: usize) -> [u8; 32] {
@@ -233,6 +264,55 @@ fn four_validators_finalize_survive_a_crash_and_recover_after_restart() {
     assert_eq!(restarted["blocks"].as_array().unwrap().len(), 2);
     let worker_four = net.worker_key(3);
     assert_eq!(Harness::balance(&restarted, &worker_four), 20);
+}
+
+#[test]
+fn three_validators_finalize_quantized_mlp_work_and_reject_forged_results() {
+    let net = Harness::new(3);
+    net.wait_peers(&[0, 1, 2], 2);
+    let mut workers: Vec<[u8; 32]> = (0..3).map(|i| net.worker_key(i)).collect();
+    workers.sort();
+    // A linear block, then QMLP blocks on top: both workloads share one chain.
+    assert_eq!(net.submit(1, 3, &workers)["verdict"], "accepted");
+    net.wait_height(&[0, 1, 2], 1);
+    let before = net.status(0);
+    let qmlp = net.qmlp_task(2, 12, &workers);
+    assert_eq!(net.submit_task(&qmlp)["verdict"], "accepted");
+    net.wait_height(&[0, 1, 2], 2);
+    net.assert_consistent(&[0, 1, 2]);
+    let after = net.status(1);
+    let gained: Vec<u64> = workers
+        .iter()
+        .map(|w| Harness::balance(&after, w) - Harness::balance(&before, w))
+        .collect();
+    // Fee budget 30 plus issuance 50, split by 4 assigned rows per worker.
+    assert_eq!(gained.iter().sum::<u64>(), 80);
+    assert!(gained.iter().all(|g| (26..=27).contains(g)), "{gained:?}");
+    assert_eq!(after["blocks"][1]["workload"], "qmlp-v1");
+
+    // A pending QMLP task for height 4: forged and duplicate claims.
+    let pending = net.qmlp_task(4, 6, &workers);
+    assert_eq!(net.submit_task(&pending)["verdict"], "accepted");
+    let own = net.worker_key(0);
+    let index = pending
+        .partitions
+        .iter()
+        .position(|p| p.worker == own)
+        .unwrap() as u32;
+    let key = &net.generated.workers[0];
+    let correct = expected_result_v3(&pending, index).unwrap();
+    let mut wrong = correct;
+    wrong[0] ^= 1;
+    let forged = sign_claim_v3(&pending, index, key, wrong).unwrap();
+    assert_eq!(net.inject(WireMessage::claim(&forged))["verdict"], "rejected");
+    let honest = sign_claim_v3(&pending, index, key, correct).unwrap();
+    let first = net.inject(WireMessage::claim(&honest));
+    assert!(first["verdict"] == "accepted" || first["verdict"] == "duplicate");
+    assert_eq!(net.inject(WireMessage::claim(&honest))["verdict"], "duplicate");
+    assert_eq!(net.submit(3, 3, &workers)["verdict"], "accepted");
+    net.wait_height(&[0, 1, 2], 4);
+    net.assert_consistent(&[0, 1, 2]);
+    assert_eq!(net.status(2)["blocks"][3]["workload"], "qmlp-v1");
 }
 
 #[test]
