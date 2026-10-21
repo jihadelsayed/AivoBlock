@@ -125,7 +125,12 @@ equal the key in the file. Names are cosmetic and unsigned.
 2. Each node whose worker is assigned a partition runs the Python worker,
    refuses to sign if the result differs from the Rust reference, signs a
    claim and floods it. Every receiving node verifies the claim (assignment,
-   signature, Rust recomputation) before storing or forwarding it.
+   signature, Rust recomputation) before storing or forwarding it. The node
+   runs at most **8 AI task worker executions concurrently**, even with up to
+   256 accepted pending tasks. Excess eligible tasks remain queued for later
+   scheduler ticks; success, failure, and stale task completion release a
+   concurrency slot. A failed task remains marked attempted to avoid automatic
+   retry storms. The cap bounds local concurrency, not total work or CPU usage.
 3. Rejections: forged/foreign authority, expired (`deadline < next height`),
    stale sequence, already-settled task, overlapping/gapped partitions,
    unregistered workers, manipulated results, wrong worker, forged signature,
