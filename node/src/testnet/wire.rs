@@ -234,8 +234,16 @@ mod tests {
         sequence: u64,
     ) -> Vec<u8> {
         let mut out = Vec::new();
-        send_authenticated_message(&mut out, &message(), signer, recipient, 1, session, sequence)
-            .unwrap();
+        send_authenticated_message(
+            &mut out,
+            &message(),
+            signer,
+            recipient,
+            1,
+            session,
+            sequence,
+        )
+        .unwrap();
         out
     }
 
@@ -285,8 +293,12 @@ mod tests {
         let receiver = bob.verifying_key().to_bytes();
         let session = [3u8; 32];
         let valid = signed_frame(&alice, &receiver, &session, 1);
-        let recv = |frame: Vec<u8>, claimed_sender: &[u8; 32], local: &[u8; 32],
-                    chain: u32, session_id: &[u8; 32], last: &mut u64| {
+        let recv = |frame: Vec<u8>,
+                    claimed_sender: &[u8; 32],
+                    local: &[u8; 32],
+                    chain: u32,
+                    session_id: &[u8; 32],
+                    last: &mut u64| {
             recv_authenticated_message(
                 &mut Cursor::new(frame),
                 claimed_sender,
@@ -332,7 +344,15 @@ mod tests {
         let mut wrong_version = valid.clone();
         wrong_version[4] = 99;
         assert!(recv(wrong_version, &sender, &receiver, 1, &session, &mut 0).is_err());
-        assert!(recv(valid[..valid.len() - 1].to_vec(), &sender, &receiver, 1, &session, &mut 0).is_err());
+        assert!(recv(
+            valid[..valid.len() - 1].to_vec(),
+            &sender,
+            &receiver,
+            1,
+            &session,
+            &mut 0
+        )
+        .is_err());
         assert!(send_authenticated_message(
             &mut Vec::new(),
             &message(),
