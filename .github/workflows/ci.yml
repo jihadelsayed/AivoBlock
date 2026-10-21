@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Avoid running obsolete revisions of the same pull request in parallel.
+# Different pull requests and main use independent concurrency groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   format:
     name: Rust formatting
