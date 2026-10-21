@@ -517,9 +517,12 @@ fn run_connection(
         Ok(result) => result,
         Err(reason) => {
             let _ = stream.shutdown(Shutdown::Both);
+            // Failure diagnostics are best effort: a saturated node event
+            // queue must not strand this unauthenticated worker and its
+            // inbound admission permits indefinitely.
             let _ = transport
                 .events
-                .send(Event::HandshakeRejected { remote, reason });
+                .try_send(Event::HandshakeRejected { remote, reason });
             return;
         }
     };
@@ -713,6 +716,53 @@ mod tests {
         let other = thread::spawn(move || mutual_handshake(&mut right, 1, &b, &allowed_b, None));
         let mine = mutual_handshake(&mut left, 1, &a, &allowed, None);
         (mine, other.join().unwrap())
+    }
+
+    #[test]
+    fn saturated_event_queue_does_not_hold_failed_handshake_capacity() {
+        use std::sync::mpsc;
+
+        // Keep a bounded node event queue full without running its consumer.
+        let (events, queued) = mpsc::sync_channel(1);
+        assert!(events
+            .try_send(Event::HandshakeRejected {
+                remote: "existing".into(),
+                reason: "earlier failure".into(),
+            })
+            .is_ok());
+        let active = Arc::new(AtomicUsize::new(0));
+        let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
+        let address: IpAddr = "127.0.0.1".parse().unwrap();
+        let admission = InboundAdmission::acquire(&active, &per_ip, address).unwrap();
+        let transport = Arc::new(Transport {
+            chain_id: 1,
+            key: SigningKey::from_bytes(&[1; 32]),
+            allowed: BTreeSet::new(),
+            events,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            connected: Arc::new(Mutex::new(BTreeSet::new())),
+            frame_limiter: Arc::new(Mutex::new(AuthenticatedFrameLimiter::default())),
+        });
+        let (client, server) = pair();
+        server.shutdown(Shutdown::Both).unwrap();
+        drop(server);
+
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            run_connection(client, transport, None, false, Some(admission));
+            let _ = completed_tx.send(());
+        });
+        let finished = completed_rx.recv_timeout(Duration::from_secs(3)).is_ok();
+        // Release a blocked sender even if the code regresses, so this test
+        // reports a failure instead of leaving a stuck detached thread.
+        drop(queued);
+        worker.join().unwrap();
+        assert!(
+            finished,
+            "rejected handshake blocked on the full node queue"
+        );
+        assert_eq!(active.load(Ordering::Acquire), 0);
+        assert!(per_ip.lock().unwrap().is_empty());
     }
 
     #[test]
