@@ -123,7 +123,11 @@ uint32_be(payload_length) || payload
 - Worker output is untrusted until independently verified.
 - The Python worker accepts a framed JSON diagnostic request, such as `{"protocol_version":1,"type":"health"}`.
 - The current Haskell CLI does **not** yet implement the binary validator IPC endpoint.
-- Typed request/response schemas, supervision, and execution timeouts remain future work.
+- Every child request has a wall-clock deadline from spawn to the final byte
+  (Haskell core 10 s, Python worker 30 s). A child that does not answer in
+  time is killed and the request fails with `TimedOut`; a hung executable
+  cannot block the consensus loop or hold a worker slot forever.
+- Typed request/response schemas and persistent process supervision remain future work.
 
 IPC framing is not blockchain canonical encoding.
 
