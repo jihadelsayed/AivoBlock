@@ -3,7 +3,7 @@
 //! certificates, block sync, restart recovery and a local control API.
 //!
 //! Scope and limits: a fixed, permissioned validator set from a signed
-//! network configuration; no transport encryption; no stake, slashing or
+//! network configuration; signed peer frames but no transport encryption; no stake, slashing or
 //! validator rotation; full recomputation of a tiny integer workload. Never
 //! use this to protect real funds or to run a public network.
 

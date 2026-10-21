@@ -2,10 +2,13 @@
 //! `network::tcp`. Consensus-critical content travels as hex of canonical
 //! binary encodings and is individually authenticated (authority-signed
 //! tasks, worker-signed claims, validator-signed votes, self-verifying
-//! blocks plus quorum certificates). The transport itself is not encrypted.
+//! blocks plus quorum certificates). Live peer frames additionally carry a
+//! session-bound Ed25519 signature and strictly increasing sequence number.
+//! This authenticates frames and rejects replay, but does NOT encrypt traffic.
 
 use std::io;
 
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use super::{hex, unhex, unhex_array};
@@ -105,14 +108,110 @@ pub fn decode_block_hex(block: &str) -> Result<Vec<u8>, String> {
     unhex(block, MAX_BLOCK_BYTES)
 }
 
-pub fn send_message<W: io::Write>(stream: &mut W, message: &WireMessage) -> io::Result<()> {
-    let bytes = serde_json::to_vec(message).map_err(io::Error::other)?;
-    send_frame(stream, &bytes)
+const FRAME_DOMAIN: &[u8] = b"AIVOBLOCK-SIGNED-PEER-FRAME-V1\0";
+const FRAME_VERSION: u8 = 1;
+const SIGNATURE_BYTES: usize = 64;
+const FRAME_PREFIX: usize = 1 + 8 + SIGNATURE_BYTES;
+
+/// Domain-separated, session-bound, direction-bound signing bytes.
+fn signed_preimage(
+    chain_id: u32,
+    session_id: &[u8; 32],
+    sender: &[u8; 32],
+    recipient: &[u8; 32],
+    sequence: u64,
+    payload: &[u8],
+) -> io::Result<Vec<u8>> {
+    let len = u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Oversized signed payload"))?;
+    let mut bytes = Vec::with_capacity(FRAME_DOMAIN.len() + 4 + 32 * 3 + 8 + 4 + payload.len());
+    bytes.extend_from_slice(FRAME_DOMAIN);
+    bytes.extend_from_slice(&chain_id.to_be_bytes());
+    bytes.extend_from_slice(session_id);
+    bytes.extend_from_slice(sender);
+    bytes.extend_from_slice(recipient);
+    bytes.extend_from_slice(&sequence.to_be_bytes());
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    Ok(bytes)
 }
 
-pub fn recv_message<R: io::Read>(stream: &mut R) -> io::Result<WireMessage> {
-    let bytes = recv_frame(stream)?;
-    serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+/// Send an authenticated frame: version:u8 | sequence:u64 | signature:64 | JSON.
+/// Sequence numbers must start at 1 and increase by exactly one per session.
+/// The calling link owns the counter while holding its writer mutex.
+pub fn send_authenticated_message<W: io::Write>(
+    stream: &mut W,
+    message: &WireMessage,
+    local: &SigningKey,
+    recipient: &[u8; 32],
+    chain_id: u32,
+    session_id: &[u8; 32],
+    sequence: u64,
+) -> io::Result<()> {
+    if sequence == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Signed-frame sequence must start at one",
+        ));
+    }
+    let payload = serde_json::to_vec(message).map_err(io::Error::other)?;
+    let signed = signed_preimage(
+        chain_id,
+        session_id,
+        &local.verifying_key().to_bytes(),
+        recipient,
+        sequence,
+        &payload,
+    )?;
+    let signature = local.sign(&signed).to_bytes();
+    let mut frame = Vec::with_capacity(FRAME_PREFIX + payload.len());
+    frame.push(FRAME_VERSION);
+    frame.extend_from_slice(&sequence.to_be_bytes());
+    frame.extend_from_slice(&signature);
+    frame.extend_from_slice(&payload);
+    send_frame(stream, &frame)
+}
+
+/// Receive a frame only if its signature matches the authenticated peer,
+/// session, chain, receiver and the next expected sequence number.
+/// On any error, the caller must terminate this peer connection.
+pub fn recv_authenticated_message<R: io::Read>(
+    stream: &mut R,
+    peer: &[u8; 32],
+    local: &[u8; 32],
+    chain_id: u32,
+    session_id: &[u8; 32],
+    last_sequence: &mut u64,
+) -> io::Result<WireMessage> {
+    let frame = recv_frame(stream)?;
+    if frame.len() <= FRAME_PREFIX || frame[0] != FRAME_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid signed-frame version or length",
+        ));
+    }
+    let sequence = u64::from_be_bytes(frame[1..9].try_into().unwrap());
+    let expected = last_sequence.checked_add(1).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "Signed-frame sequence overflow")
+    })?;
+    if sequence != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Replayed or out-of-order signed frame",
+        ));
+    }
+    let signature: [u8; SIGNATURE_BYTES] = frame[9..FRAME_PREFIX].try_into().unwrap();
+    let payload = &frame[FRAME_PREFIX..];
+    let signed = signed_preimage(chain_id, session_id, peer, local, sequence, payload)?;
+    let verifying_key = VerifyingKey::from_bytes(peer)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid configured peer key"))?;
+    verifying_key
+        .verify_strict(&signed, &Signature::from_bytes(&signature))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid peer-frame signature"))?;
+    let message = serde_json::from_slice(payload)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    *last_sequence = sequence;
+    Ok(message)
 }
 
 #[cfg(test)]
@@ -120,25 +219,149 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    #[test]
-    fn messages_round_trip_through_frames() {
-        let message = WireMessage::Proposal {
+    fn message() -> WireMessage {
+        WireMessage::Proposal {
             height: 3,
             round: 1,
             block: "00ff".into(),
+        }
+    }
+
+    fn signed_frame(
+        signer: &SigningKey,
+        recipient: &[u8; 32],
+        session: &[u8; 32],
+        sequence: u64,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        send_authenticated_message(
+            &mut out,
+            &message(),
+            signer,
+            recipient,
+            1,
+            session,
+            sequence,
+        )
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn authenticated_frames_round_trip_and_advance_sequence() {
+        let alice = SigningKey::from_bytes(&[1; 32]);
+        let bob = SigningKey::from_bytes(&[2; 32]);
+        let session = [3u8; 32];
+        let mut frames = Vec::new();
+        for sequence in 1..=2 {
+            send_authenticated_message(
+                &mut frames,
+                &message(),
+                &alice,
+                &bob.verifying_key().to_bytes(),
+                1,
+                &session,
+                sequence,
+            )
+            .unwrap();
+        }
+        let mut cursor = Cursor::new(frames);
+        let mut last = 0;
+        for sequence in 1..=2 {
+            assert_eq!(
+                recv_authenticated_message(
+                    &mut cursor,
+                    &alice.verifying_key().to_bytes(),
+                    &bob.verifying_key().to_bytes(),
+                    1,
+                    &session,
+                    &mut last,
+                )
+                .unwrap(),
+                message()
+            );
+            assert_eq!(last, sequence);
+        }
+    }
+
+    #[test]
+    fn signed_frames_reject_tampering_forgery_cross_session_and_replay() {
+        let alice = SigningKey::from_bytes(&[1; 32]);
+        let bob = SigningKey::from_bytes(&[2; 32]);
+        let mallory = SigningKey::from_bytes(&[9; 32]);
+        let sender = alice.verifying_key().to_bytes();
+        let receiver = bob.verifying_key().to_bytes();
+        let session = [3u8; 32];
+        let valid = signed_frame(&alice, &receiver, &session, 1);
+        let recv = |frame: Vec<u8>,
+                    claimed_sender: &[u8; 32],
+                    local: &[u8; 32],
+                    chain: u32,
+                    session_id: &[u8; 32],
+                    last: &mut u64| {
+            recv_authenticated_message(
+                &mut Cursor::new(frame),
+                claimed_sender,
+                local,
+                chain,
+                session_id,
+                last,
+            )
         };
-        let mut buffer = Vec::new();
-        send_message(&mut buffer, &message).unwrap();
-        assert_eq!(recv_message(&mut Cursor::new(buffer)).unwrap(), message);
-        let raw = br#"{"type":"get_blocks","from_height":2}"#;
-        let mut framed = (raw.len() as u32).to_be_bytes().to_vec();
-        framed.extend_from_slice(raw);
-        assert_eq!(
-            recv_message(&mut Cursor::new(framed)).unwrap(),
-            WireMessage::GetBlocks { from_height: 2 }
-        );
-        let mut bad = 5u32.to_be_bytes().to_vec();
-        bad.extend_from_slice(b"{bad}");
-        assert!(recv_message(&mut Cursor::new(bad)).is_err());
+        // Valid frame, replay at sequence 1, wrong chain, wrong recipient,
+        // different handshake session, unknown signer, and skipped sequence.
+        let mut last = 0;
+        assert!(recv(valid.clone(), &sender, &receiver, 1, &session, &mut last).is_ok());
+        assert!(recv(valid.clone(), &sender, &receiver, 1, &session, &mut last).is_err());
+        assert_eq!(last, 1);
+        assert!(recv(valid.clone(), &sender, &receiver, 2, &session, &mut 0).is_err());
+        assert!(recv(valid.clone(), &sender, &sender, 1, &session, &mut 0).is_err());
+        assert!(recv(valid.clone(), &sender, &receiver, 1, &[4; 32], &mut 0).is_err());
+        assert!(recv(
+            signed_frame(&mallory, &receiver, &session, 1),
+            &sender,
+            &receiver,
+            1,
+            &session,
+            &mut 0
+        )
+        .is_err());
+        assert!(recv(
+            signed_frame(&alice, &receiver, &session, 2),
+            &sender,
+            &receiver,
+            1,
+            &session,
+            &mut 0
+        )
+        .is_err());
+
+        for index in [4usize, 12, 80, valid.len() - 1] {
+            let mut changed = valid.clone();
+            changed[index] ^= 1;
+            assert!(recv(changed, &sender, &receiver, 1, &session, &mut 0).is_err());
+        }
+        let mut wrong_version = valid.clone();
+        wrong_version[4] = 99;
+        assert!(recv(wrong_version, &sender, &receiver, 1, &session, &mut 0).is_err());
+        assert!(recv(
+            valid[..valid.len() - 1].to_vec(),
+            &sender,
+            &receiver,
+            1,
+            &session,
+            &mut 0
+        )
+        .is_err());
+        assert!(send_authenticated_message(
+            &mut Vec::new(),
+            &message(),
+            &alice,
+            &receiver,
+            1,
+            &session,
+            0
+        )
+        .is_err());
     }
 }
