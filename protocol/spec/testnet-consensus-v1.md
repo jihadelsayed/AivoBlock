@@ -34,11 +34,14 @@ equal the key in the file. Names are cosmetic and unsigned.
   reflected challenges are rejected.
 - One link per pair: the smaller key dials; reconnects every 0.5 s.
 - The TCP listener admits at most **32 concurrent inbound, unauthenticated
-  handshakes**. Extra connections are closed before allocating a worker thread;
-  admission slots are released on failure or after the signed X25519 exchange
-  completes. The outbound dialer and established encrypted validator links are
-  not counted against this inbound pre-authentication cap. This limits thread
-  exhaustion but is not per-IP rate limiting or a full DDoS defense.
+  handshakes**, with a further maximum of **8 pending handshakes per source IP**.
+  Extra connections are closed before allocating a worker thread. Both admission
+  slots are released on authentication failure or after the signed X25519
+  exchange completes. IPv4-mapped IPv6 sources share the IPv4 address's limit;
+  unused IP entries are removed. Outbound dialing and established encrypted
+  validator links are not counted. This protects capacity for other sources
+  but is **not a connection-rate limiter or a full DDoS defense**. Validators
+  sharing one NAT/public IP share the same eight pending slots.
 - Messages are JSON envelopes (`status`, `task`, `claim`, `proposal`, `vote`,
   `commit`, `get_blocks`) carrying hex of canonical binary encodings.
 - For each handshake, both nodes compute a shared SHA-256 session ID over a

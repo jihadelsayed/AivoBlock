@@ -9,9 +9,9 @@
 //! are encrypted and still carry replay-resistant session-bound signatures.
 //! One connection per validator pair: the node with the smaller key dials.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -34,6 +34,8 @@ const DIAL_INTERVAL: Duration = Duration::from_millis(500);
 /// Cap detached pre-authentication workers so idle/hostile sockets cannot
 /// consume unbounded threads. Authenticated links do not occupy these slots.
 const MAX_PENDING_INBOUND_HANDSHAKES: usize = 32;
+/// Reserve capacity for other origins even if a single address stalls handshakes.
+const MAX_PENDING_HANDSHAKES_PER_IP: usize = 8;
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -64,6 +66,76 @@ impl HandshakePermit {
 impl Drop for HandshakePermit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Count concurrent unauthenticated inbound handshakes per remote IP. A
+/// single origin must not starve other configured validators of admission slots.
+struct SourcePermit {
+    counts: Arc<Mutex<BTreeMap<IpAddr, usize>>>,
+    ip: IpAddr,
+}
+
+fn canonical_source_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+        _ => ip,
+    }
+}
+
+impl SourcePermit {
+    fn acquire(counts: &Arc<Mutex<BTreeMap<IpAddr, usize>>>, ip: IpAddr) -> Option<Self> {
+        let ip = canonical_source_ip(ip);
+        let mut locked = counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = locked.entry(ip).or_default();
+        if *count >= MAX_PENDING_HANDSHAKES_PER_IP {
+            return None;
+        }
+        *count += 1;
+        Some(Self {
+            counts: Arc::clone(counts),
+            ip,
+        })
+    }
+}
+
+impl Drop for SourcePermit {
+    fn drop(&mut self) {
+        let mut locked = self
+            .counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = locked.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                locked.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// Reserving the global slot first ensures the source map never grows beyond
+/// the global admission bound. A rejected per-IP reservation automatically
+/// releases the global slot through the RAII guard.
+struct InboundAdmission {
+    _global: HandshakePermit,
+    _source: SourcePermit,
+}
+
+impl InboundAdmission {
+    fn acquire(
+        pending: &Arc<AtomicUsize>,
+        per_ip: &Arc<Mutex<BTreeMap<IpAddr, usize>>>,
+        ip: IpAddr,
+    ) -> Option<Self> {
+        let global = HandshakePermit::acquire(pending)?;
+        let source = SourcePermit::acquire(per_ip, ip)?;
+        Some(Self {
+            _global: global,
+            _source: source,
+        })
     }
 }
 
@@ -202,7 +274,7 @@ fn run_connection(
     transport: Arc<Transport>,
     expected: Option<[u8; 32]>,
     outbound: bool,
-    admission: Option<HandshakePermit>,
+    admission: Option<InboundAdmission>,
 ) {
     let remote = stream
         .peer_addr()
@@ -306,14 +378,17 @@ fn run_connection(
 pub fn spawn_listener(listener: TcpListener, transport: Arc<Transport>) -> JoinHandle<()> {
     thread::spawn(move || {
         let pending = Arc::new(AtomicUsize::new(0));
+        let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
         if listener.set_nonblocking(true).is_err() {
             return;
         }
         while !transport.shutdown.load(Ordering::Relaxed) {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok((stream, address)) => {
                     if stream.set_nonblocking(false).is_ok() {
-                        let Some(permit) = HandshakePermit::acquire(&pending) else {
+                        let Some(permit) =
+                            InboundAdmission::acquire(&pending, &per_ip, address.ip())
+                        else {
                             // Never start a worker for an over-capacity socket;
                             // avoid events that would amplify admission floods.
                             let _ = stream.shutdown(Shutdown::Both);
@@ -453,6 +528,96 @@ mod tests {
             MAX_PENDING_INBOUND_HANDSHAKES
         );
         assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn per_ip_capacity_preserves_slots_for_other_origins_and_recovers() {
+        let pending = Arc::new(AtomicUsize::new(0));
+        let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
+        let source_a: IpAddr = "192.0.2.1".parse().unwrap();
+        let source_b: IpAddr = "192.0.2.2".parse().unwrap();
+        let permits: Vec<_> = (0..MAX_PENDING_HANDSHAKES_PER_IP)
+            .map(|_| InboundAdmission::acquire(&pending, &per_ip, source_a).unwrap())
+            .collect();
+        assert!(InboundAdmission::acquire(&pending, &per_ip, source_a).is_none());
+        // A rejected source must not leak its temporary global admission slot.
+        assert_eq!(
+            pending.load(Ordering::Acquire),
+            MAX_PENDING_HANDSHAKES_PER_IP
+        );
+        let other = InboundAdmission::acquire(&pending, &per_ip, source_b).unwrap();
+        assert_eq!(
+            pending.load(Ordering::Acquire),
+            MAX_PENDING_HANDSHAKES_PER_IP + 1
+        );
+        drop(other);
+        drop(permits);
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+        assert!(per_ip.lock().unwrap().is_empty());
+        let retry = InboundAdmission::acquire(&pending, &per_ip, source_a).unwrap();
+        drop(retry);
+        assert!(per_ip.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mapped_ipv4_source_shares_admission_capacity_with_ipv4() {
+        let pending = Arc::new(AtomicUsize::new(0));
+        let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
+        let direct: IpAddr = "192.0.2.7".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.0.2.7".parse().unwrap();
+        assert_eq!(canonical_source_ip(mapped), direct);
+        let permits: Vec<_> = (0..MAX_PENDING_HANDSHAKES_PER_IP)
+            .map(|_| InboundAdmission::acquire(&pending, &per_ip, direct).unwrap())
+            .collect();
+        assert!(InboundAdmission::acquire(&pending, &per_ip, mapped).is_none());
+        drop(permits);
+        assert!(per_ip.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn concurrent_same_source_admissions_cannot_exceed_per_ip_cap() {
+        use std::sync::Barrier;
+
+        let workers = MAX_PENDING_HANDSHAKES_PER_IP * 2;
+        let pending = Arc::new(AtomicUsize::new(0));
+        let per_ip = Arc::new(Mutex::new(BTreeMap::new()));
+        let source: IpAddr = "192.0.2.9".parse().unwrap();
+        let start = Arc::new(Barrier::new(workers + 1));
+        let attempted = Arc::new(Barrier::new(workers + 1));
+        let release = Arc::new(Barrier::new(workers + 1));
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let pending = Arc::clone(&pending);
+                let per_ip = Arc::clone(&per_ip);
+                let start = Arc::clone(&start);
+                let attempted = Arc::clone(&attempted);
+                let release = Arc::clone(&release);
+                thread::spawn(move || {
+                    start.wait();
+                    let permit = InboundAdmission::acquire(&pending, &per_ip, source);
+                    attempted.wait();
+                    release.wait();
+                    permit.is_some()
+                })
+            })
+            .collect();
+        start.wait();
+        attempted.wait();
+        assert_eq!(
+            pending.load(Ordering::Acquire),
+            MAX_PENDING_HANDSHAKES_PER_IP
+        );
+        release.wait();
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .filter(|accepted| *accepted)
+                .count(),
+            MAX_PENDING_HANDSHAKES_PER_IP
+        );
+        assert_eq!(pending.load(Ordering::Acquire), 0);
+        assert!(per_ip.lock().unwrap().is_empty());
     }
 
     #[test]
