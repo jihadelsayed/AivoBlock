@@ -42,6 +42,8 @@ jobs:
         run: python -m pytest ai-engine/tests
       - name: Validate research statistics helpers (stdlib only)
         run: python -m unittest discover -s scripts -p "test_analyze_*.py" -v
+      - name: Validate workload manifest (stdlib only)
+        run: python -m unittest discover -s scripts -p "test_workload_manifest.py" -v
 
   pytorch_onnx:
     name: PyTorch / ONNX off-chain research
@@ -249,6 +251,14 @@ jobs:
                          testnet/generated/bench-replicate-2.json \
                          testnet/generated/bench-replicate-3.json \
             --out testnet/generated/standalone-comparison.json
+      - name: Record exact QMLP benchmark workload manifest
+        run: |
+          python3 scripts/workload_manifest.py \
+            --benchmarks testnet/generated/bench-replicate-1.json \
+                         testnet/generated/bench-replicate-2.json \
+                         testnet/generated/bench-replicate-3.json \
+            --runner github-actions --revision "$GITHUB_SHA" \
+            --out testnet/generated/workload-manifest.json
       - name: Upload testnet reports and node logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -260,6 +270,7 @@ jobs:
             testnet/generated/bench-replicate-*.json
             testnet/generated/variability-summary.json
             testnet/generated/standalone-comparison.json
+            testnet/generated/workload-manifest.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
           if-no-files-found: warn
