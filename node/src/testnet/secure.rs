@@ -103,7 +103,8 @@ pub fn negotiate<S: Read + Write>(
     offer.extend_from_slice(&ephemeral_public);
     offer.extend_from_slice(&signature);
     send_frame(stream, &offer).map_err(|e| format!("send encrypted key exchange: {e}"))?;
-    let response = recv_frame(stream).map_err(|e| format!("receive encrypted key exchange: {e}"))?;
+    let response =
+        recv_frame(stream).map_err(|e| format!("receive encrypted key exchange: {e}"))?;
     if response.len() != EXCHANGE_BYTES {
         return Err("Incorrect encrypted key-exchange length".into());
     }
@@ -216,7 +217,10 @@ impl EncryptedChannel {
         last_sequence: &mut u64,
     ) -> io::Result<WireMessage> {
         let sequence = last_sequence.checked_add(1).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "Encrypted-frame sequence overflow")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Encrypted-frame sequence overflow",
+            )
         })?;
         let ciphertext = recv_frame(stream)?;
         let cipher = ChaCha20Poly1305::new_from_slice(&self.recv_key)
@@ -236,7 +240,9 @@ impl EncryptedChannel {
                     aad: &aad,
                 },
             )
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid encrypted peer frame"))?;
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid encrypted peer frame")
+            })?;
         let len = plaintext.len() as u64;
         let mut reader = Cursor::new(plaintext);
         let message = recv_authenticated_message(
@@ -275,14 +281,24 @@ mod tests {
         let bob = SigningKey::from_bytes(&[2; 32]);
         let session = [3u8; 32];
         let (mut left, mut right) = pair();
-        left.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
-        right.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+        left.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        right
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
         let a = alice.clone();
         let b = bob.clone();
         let server = thread::spawn(move || {
             negotiate(&mut right, 1, session, &b, a.verifying_key().to_bytes()).unwrap()
         });
-        let first = negotiate(&mut left, 1, session, &alice, bob.verifying_key().to_bytes()).unwrap();
+        let first = negotiate(
+            &mut left,
+            1,
+            session,
+            &alice,
+            bob.verifying_key().to_bytes(),
+        )
+        .unwrap();
         (first, server.join().unwrap(), alice, bob)
     }
 
@@ -302,19 +318,33 @@ mod tests {
         assert_ne!(alice_channel.send_key, alice_channel.recv_key);
 
         let mut wire = Vec::new();
-        alice_channel.send(&mut wire, &proposal(), &alice, 1).unwrap();
-        alice_channel.send(&mut wire, &proposal(), &alice, 2).unwrap();
+        alice_channel
+            .send(&mut wire, &proposal(), &alice, 1)
+            .unwrap();
+        alice_channel
+            .send(&mut wire, &proposal(), &alice, 2)
+            .unwrap();
         assert!(!wire.windows(8).any(|part| part == b"proposal"));
         let mut reader = Cursor::new(wire);
         let mut sequence = 0;
-        assert_eq!(bob_channel.recv(&mut reader, &mut sequence).unwrap(), proposal());
-        assert_eq!(bob_channel.recv(&mut reader, &mut sequence).unwrap(), proposal());
+        assert_eq!(
+            bob_channel.recv(&mut reader, &mut sequence).unwrap(),
+            proposal()
+        );
+        assert_eq!(
+            bob_channel.recv(&mut reader, &mut sequence).unwrap(),
+            proposal()
+        );
         assert_eq!(sequence, 2);
 
         let mut reverse = Vec::new();
-        bob_channel.send(&mut reverse, &proposal(), &bob, 1).unwrap();
+        bob_channel
+            .send(&mut reverse, &proposal(), &bob, 1)
+            .unwrap();
         assert_eq!(
-            alice_channel.recv(&mut Cursor::new(reverse), &mut 0).unwrap(),
+            alice_channel
+                .recv(&mut Cursor::new(reverse), &mut 0)
+                .unwrap(),
             proposal()
         );
     }
@@ -323,10 +353,14 @@ mod tests {
     fn encrypted_frames_reject_tampering_replay_and_wrong_keys() {
         let (alice_channel, bob_channel, alice, _) = channels();
         let mut frame = Vec::new();
-        alice_channel.send(&mut frame, &proposal(), &alice, 1).unwrap();
+        alice_channel
+            .send(&mut frame, &proposal(), &alice, 1)
+            .unwrap();
         let mut tampered = frame.clone();
         tampered[10] ^= 1;
-        assert!(bob_channel.recv(&mut Cursor::new(tampered), &mut 0).is_err());
+        assert!(bob_channel
+            .recv(&mut Cursor::new(tampered), &mut 0)
+            .is_err());
 
         let mut double = frame.clone();
         double.extend_from_slice(&frame);
@@ -354,12 +388,13 @@ mod tests {
         let bob = SigningKey::from_bytes(&[2; 32]);
         let wrong = SigningKey::from_bytes(&[9; 32]);
         let (mut left, mut right) = pair();
-        left.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
-        right.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+        left.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        right
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
         let alice_peer = alice.verifying_key().to_bytes();
-        let server = thread::spawn(move || {
-            negotiate(&mut right, 1, [3u8; 32], &bob, alice_peer)
-        });
+        let server = thread::spawn(move || negotiate(&mut right, 1, [3u8; 32], &bob, alice_peer));
         assert!(negotiate(
             &mut left,
             1,
