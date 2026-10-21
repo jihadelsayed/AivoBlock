@@ -10,7 +10,7 @@
 //! One connection per validator pair: the node with the smaller key dials.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -31,6 +31,9 @@ use crate::network::tcp::{configure_stream, recv_frame_bounded, send_frame, IO_T
 /// A live link dies when nothing (not even a heartbeat) arrives for this long.
 pub const PEER_READ_TIMEOUT: Duration = Duration::from_secs(15);
 const DIAL_INTERVAL: Duration = Duration::from_millis(500);
+/// Bound the entire challenge, signed hello and ephemeral-key exchange even
+/// when a peer trickles partial frame bytes below the per-read IO timeout.
+const PEER_HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
 /// Cap detached pre-authentication workers so idle/hostile sockets cannot
 /// consume unbounded threads. Authenticated links do not occupy these slots.
 const MAX_PENDING_INBOUND_HANDSHAKES: usize = 32;
@@ -195,6 +198,55 @@ impl SourceRateLimiter {
     }
 }
 
+/// TCP reader/writer with a single absolute handshake deadline. A socket
+/// read timeout is per blocking operation and can otherwise be repeatedly
+/// extended by a peer that sends only one byte at a time.
+struct DeadlineStream<'a> {
+    inner: &'a mut TcpStream,
+    deadline: Instant,
+}
+
+impl<'a> DeadlineStream<'a> {
+    fn new(inner: &'a mut TcpStream, timeout: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + timeout,
+        }
+    }
+
+    fn remaining(&self) -> io::Result<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Peer handshake deadline exceeded",
+            ));
+        }
+        Ok(remaining.min(IO_TIMEOUT))
+    }
+}
+
+impl Read for DeadlineStream<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let timeout = self.remaining()?;
+        self.inner.set_read_timeout(Some(timeout))?;
+        self.inner.read(buf)
+    }
+}
+
+impl Write for DeadlineStream<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let timeout = self.remaining()?;
+        self.inner.set_write_timeout(Some(timeout))?;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.remaining()?;
+        self.inner.flush()
+    }
+}
+
 #[derive(Debug)]
 struct SignedWriter {
     stream: TcpStream,
@@ -277,8 +329,8 @@ fn session_id(
 }
 
 /// Symmetric challenge-response. Returns peer identity and session ID.
-pub fn mutual_handshake(
-    stream: &mut TcpStream,
+pub fn mutual_handshake<S: Read + Write>(
+    stream: &mut S,
     chain_id: u32,
     local: &SigningKey,
     allowed: &BTreeSet<[u8; 32]>,
@@ -339,31 +391,28 @@ fn run_connection(
     if configure_stream(&stream).is_err() {
         return;
     }
-    let session = match mutual_handshake(
-        &mut stream,
-        transport.chain_id,
-        &transport.key,
-        &transport.allowed,
-        expected.as_ref(),
-    ) {
-        Ok(session) => session,
-        Err(reason) => {
-            let _ = stream.shutdown(Shutdown::Both);
-            let _ = transport
-                .events
-                .send(Event::HandshakeRejected { remote, reason });
-            return;
-        }
-    };
-    let peer = session.peer;
-    let channel = match negotiate(
-        &mut stream,
-        transport.chain_id,
-        session.session_id,
-        &transport.key,
-        peer,
-    ) {
-        Ok(channel) => channel,
+    // A single absolute budget covers challenge-response and signed X25519,
+    // including partial frame reads and writes.
+    let handshake = (|| {
+        let mut timed = DeadlineStream::new(&mut stream, PEER_HANDSHAKE_DEADLINE);
+        let session = mutual_handshake(
+            &mut timed,
+            transport.chain_id,
+            &transport.key,
+            &transport.allowed,
+            expected.as_ref(),
+        )?;
+        let channel = negotiate(
+            &mut timed,
+            transport.chain_id,
+            session.session_id,
+            &transport.key,
+            session.peer,
+        )?;
+        Ok::<_, String>((session.peer, channel))
+    })();
+    let (peer, channel) = match handshake {
+        Ok(result) => result,
         Err(reason) => {
             let _ = stream.shutdown(Shutdown::Both);
             let _ = transport
@@ -375,6 +424,11 @@ fn run_connection(
     // Once both authentication stages pass, free capacity for new peers.
     // Every early return above also releases its slot through Drop.
     drop(admission);
+    // A successful deadline-limited write may leave a tiny socket timeout.
+    // Restore normal link write timeouts before exchanging application frames.
+    if stream.set_write_timeout(Some(IO_TIMEOUT)).is_err() {
+        return;
+    }
     let Ok(writer) = stream.try_clone() else {
         return;
     };
@@ -732,6 +786,58 @@ mod tests {
         let later = now + INBOUND_ATTEMPT_WINDOW;
         assert!(limiter.allow(new_source, later));
         assert_eq!(limiter.sources.len(), 1);
+    }
+
+    #[test]
+    fn peer_handshake_deadline_does_not_reset_when_bytes_arrive() {
+        let (mut client, mut server) = pair();
+        let mut timed = DeadlineStream::new(&mut client, Duration::from_secs(3));
+        server.write_all(b"ab").unwrap();
+        let mut byte = [0u8; 1];
+        assert_eq!(timed.read(&mut byte).unwrap(), 1);
+        assert_eq!(byte, [b'a']);
+
+        // A successful partial read must not give the peer another timeout.
+        timed.deadline = Instant::now() - Duration::from_millis(1);
+        assert_eq!(timed.read(&mut byte).unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(timed.write(b"x").unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(timed.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn valid_peers_complete_both_handshake_stages_with_one_deadline() {
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let remote = SigningKey::from_bytes(&[2; 32]);
+        let allowed: BTreeSet<_> = [
+            local.verifying_key().to_bytes(),
+            remote.verifying_key().to_bytes(),
+        ]
+        .into_iter()
+        .collect();
+        let (mut client, mut server) = pair();
+        let allowed_remote = allowed.clone();
+        let server_thread = thread::spawn(move || {
+            let mut timed = DeadlineStream::new(&mut server, Duration::from_secs(3));
+            let session = mutual_handshake(&mut timed, 1, &remote, &allowed_remote, None).unwrap();
+            let channel = negotiate(&mut timed, 1, session.session_id, &remote, session.peer)
+                .unwrap();
+            (session.session_id, channel)
+        });
+        let mut timed = DeadlineStream::new(&mut client, Duration::from_secs(3));
+        let session = mutual_handshake(&mut timed, 1, &local, &allowed, None).unwrap();
+        let channel = negotiate(&mut timed, 1, session.session_id, &local, session.peer).unwrap();
+        let (remote_session, remote_channel) = server_thread.join().unwrap();
+        assert_eq!(session.session_id, remote_session);
+        let message = WireMessage::Status {
+            height: 1,
+            tip: "00".into(),
+        };
+        let mut encrypted = Vec::new();
+        channel.send(&mut encrypted, &message, &local, 1).unwrap();
+        let received = remote_channel
+            .recv(&mut io::Cursor::new(encrypted), &mut 0)
+            .unwrap();
+        assert_eq!(received, message);
     }
 
     #[test]
