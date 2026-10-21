@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -434,7 +434,7 @@ pub struct Transport {
     pub chain_id: u32,
     pub key: SigningKey,
     pub allowed: BTreeSet<[u8; 32]>,
-    pub events: Sender<Event>,
+    pub events: SyncSender<Event>,
     pub shutdown: Arc<AtomicBool>,
     pub connected: Arc<Mutex<BTreeSet<[u8; 32]>>>,
 }
