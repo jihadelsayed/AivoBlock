@@ -11,8 +11,8 @@ use serde_json::json;
 
 use super::cli::{build_task, partition_rows, qmlp_workload_with, workload, TaskSpec};
 use crate::ai_block_v3::{
-    build_block_v3, execute_block_v3, expected_result_v3, sign_claim_v3, verify_claim_v3,
-    AiTaskV3, ParentContext, V3Rules, MAX_FEATURES, MAX_PARTITIONS, MAX_ROWS,
+    build_block_v3, execute_block_v3, expected_result_v3, sign_claim_v3, verify_claim_v3, AiTaskV3,
+    ParentContext, V3Rules, MAX_FEATURES, MAX_PARTITIONS, MAX_ROWS,
 };
 use crate::ipc::haskell::HaskellValidatorClient;
 use crate::issuance::IssuancePolicyV1;

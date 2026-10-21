@@ -67,6 +67,32 @@ impl WireMessage {
         }
     }
 
+    /// Upper estimate of the encoded JSON size, used for outbound queue
+    /// budgets: every variable field is ASCII hex, plus a fixed envelope.
+    pub fn approx_bytes(&self) -> usize {
+        let fields = match self {
+            Self::Status { tip, .. } => tip.len(),
+            Self::Task { task } => task.len(),
+            Self::Claim {
+                task_id,
+                worker,
+                result,
+                signature,
+                ..
+            } => task_id.len() + worker.len() + result.len() + signature.len(),
+            Self::Proposal { block, .. } => block.len(),
+            Self::Vote {
+                block_id,
+                validator,
+                signature,
+                ..
+            } => block_id.len() + validator.len() + signature.len(),
+            Self::Commit { block, certificate } => block.len() + certificate.len(),
+            Self::GetBlocks { .. } => 0,
+        };
+        fields + 256
+    }
+
     pub fn claim(claim: &WorkClaimV3) -> Self {
         Self::Claim {
             task_id: hex(&claim.task_id),
@@ -138,7 +164,7 @@ fn signed_preimage(
 
 /// Send an authenticated frame: version:u8 | sequence:u64 | signature:64 | JSON.
 /// Sequence numbers must start at 1 and increase by exactly one per session.
-/// The calling link owns the counter while holding its writer mutex.
+/// The calling link's single writer thread owns the counter.
 pub fn send_authenticated_message<W: io::Write>(
     stream: &mut W,
     message: &WireMessage,

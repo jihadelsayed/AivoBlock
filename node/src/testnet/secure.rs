@@ -168,8 +168,8 @@ fn additional_data(
 }
 
 impl EncryptedChannel {
-    /// The caller holds the writer mutex and advances its counter only when
-    /// this function finishes successfully. Failed writes close the connection.
+    /// The link's single writer thread owns the counter and advances it only
+    /// when this function finishes successfully. Failed writes close the link.
     pub fn send<W: Write>(
         &self,
         stream: &mut W,

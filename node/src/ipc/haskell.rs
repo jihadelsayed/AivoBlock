@@ -7,9 +7,14 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
+use std::time::Duration;
 
-use super::{encode_frame, FrameError, MAX_IPC_PAYLOAD_BYTES};
+use super::{encode_frame, exchange_within, FrameError, MAX_IPC_PAYLOAD_BYTES};
+
+/// Wall-clock bound for one Haskell request, from spawn to the final byte.
+/// A settlement takes milliseconds; a hung core must not stall consensus.
+pub const DEFAULT_HASKELL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub enum HaskellIpcError {
@@ -20,6 +25,7 @@ pub enum HaskellIpcError {
     EmptyResponse,
     ResponseTooLarge,
     IncompleteResponse,
+    TimedOut,
 }
 
 impl From<std::io::Error> for HaskellIpcError {
@@ -34,14 +40,16 @@ impl From<FrameError> for HaskellIpcError {
     }
 }
 
-/// A request/response adapter; one child process per request.
+/// A request/response adapter; one child process per request, killed if it
+/// does not answer within the configured deadline.
 ///
 /// Only configure a trusted, locally installed executable. No shell is
 /// involved. For production, replace this with a persistent supervised
-/// worker, strict timeouts, and a versioned typed protocol.
+/// worker and a versioned typed protocol.
 #[derive(Debug, Clone)]
 pub struct HaskellValidatorClient {
     executable: PathBuf,
+    timeout: Duration,
 }
 
 impl HaskellValidatorClient {
@@ -52,7 +60,13 @@ impl HaskellValidatorClient {
         }
         Ok(Self {
             executable: executable.to_path_buf(),
+            timeout: DEFAULT_HASKELL_TIMEOUT,
         })
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// Call `aivoblock-core ipc-health` with one length-prefixed request.
@@ -70,46 +84,9 @@ impl HaskellValidatorClient {
             .stderr(Stdio::null())
             .spawn()?;
 
-        let result = (|| {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| HaskellIpcError::Io(std::io::Error::other("missing child stdin")))?;
-            stdin.write_all(&frame)?;
-            drop(stdin);
-
-            let mut stdout = child.stdout.take().ok_or_else(|| {
-                HaskellIpcError::Io(std::io::Error::other("missing child stdout"))
-            })?;
-            let mut header = [0u8; 4];
-            if let Err(error) = stdout.read_exact(&mut header) {
-                return if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                    Err(HaskellIpcError::IncompleteResponse)
-                } else {
-                    Err(HaskellIpcError::Io(error))
-                };
-            }
-            let length = u32::from_be_bytes(header) as usize;
-            if length == 0 {
-                return Err(HaskellIpcError::EmptyResponse);
-            }
-            if length > MAX_IPC_PAYLOAD_BYTES {
-                return Err(HaskellIpcError::ResponseTooLarge);
-            }
-            let mut response = vec![0u8; length];
-            if let Err(error) = stdout.read_exact(&mut response) {
-                return if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                    Err(HaskellIpcError::IncompleteResponse)
-                } else {
-                    Err(HaskellIpcError::Io(error))
-                };
-            }
-            let mut trailing = [0u8; 1];
-            if stdout.read(&mut trailing)? != 0 {
-                return Err(HaskellIpcError::Framing(FrameError::TrailingBytes));
-            }
-            Ok(response)
-        })();
+        let exchange = move |stdin, stdout| exchange_frame(&frame, stdin, stdout);
+        let exchanged = exchange_within(&mut child, self.timeout, exchange);
+        let result = exchanged.unwrap_or(Err(HaskellIpcError::TimedOut));
 
         if result.is_err() {
             let _ = child.kill();
@@ -123,6 +100,45 @@ impl HaskellValidatorClient {
         }
         Ok(response)
     }
+}
+
+/// Write one request frame, then read exactly one response frame and EOF.
+fn exchange_frame(
+    frame: &[u8],
+    mut stdin: ChildStdin,
+    mut stdout: ChildStdout,
+) -> Result<Vec<u8>, HaskellIpcError> {
+    stdin.write_all(frame)?;
+    drop(stdin);
+
+    let mut header = [0u8; 4];
+    if let Err(error) = stdout.read_exact(&mut header) {
+        return if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            Err(HaskellIpcError::IncompleteResponse)
+        } else {
+            Err(HaskellIpcError::Io(error))
+        };
+    }
+    let length = u32::from_be_bytes(header) as usize;
+    if length == 0 {
+        return Err(HaskellIpcError::EmptyResponse);
+    }
+    if length > MAX_IPC_PAYLOAD_BYTES {
+        return Err(HaskellIpcError::ResponseTooLarge);
+    }
+    let mut response = vec![0u8; length];
+    if let Err(error) = stdout.read_exact(&mut response) {
+        return if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            Err(HaskellIpcError::IncompleteResponse)
+        } else {
+            Err(HaskellIpcError::Io(error))
+        };
+    }
+    let mut trailing = [0u8; 1];
+    if stdout.read(&mut trailing)? != 0 {
+        return Err(HaskellIpcError::Framing(FrameError::TrailingBytes));
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
