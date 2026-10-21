@@ -12,6 +12,8 @@ def bench(run):
             "rows": rows,
             "partitions": partitions,
             "layers": "32 -> 64 -> 16",
+            "model_commitment": "ab" * 32,
+            "input_commitment": "cd" * 32,
             "standalone_qmlp_inference_us": 500.0 + rows + run,
             "full_block_verify_rust_mirror_us": 1000.0 + rows + 100 * partitions + run,
             "full_block_verify_haskell_persistent_us": 3000.0 + rows + 100 * partitions + run,
@@ -56,6 +58,19 @@ class StandaloneComparisonTests(unittest.TestCase):
         data = copy.deepcopy(self.replicates)
         data[1]["qmlp_v1"]["rows"] = 64
         with self.assertRaisesRegex(ValueError, "identical QMLP"):
+            analyze(data)
+
+    def test_reject_changed_model_or_input_with_identical_dimensions(self):
+        for field in ("model_commitment", "input_commitment"):
+            data = copy.deepcopy(self.replicates)
+            data[1]["qmlp_v1"][field] = "ff" * 32
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "identical QMLP"):
+                analyze(data)
+
+    def test_reject_invalid_commitment_encoding(self):
+        data = copy.deepcopy(self.replicates)
+        data[1]["qmlp_v1"]["model_commitment"] = "not-a-digest"
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
             analyze(data)
 
     def test_reject_duplicate_or_missing_sweeps(self):
