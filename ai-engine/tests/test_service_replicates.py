@@ -55,3 +55,32 @@ def test_reject_too_few_observations():
     with pytest.raises(ValueError, match="iterations"):
         run(None, iterations=29)
 \n
+
+def test_subprocess_replicates_end_to_end(tmp_path):
+    """Exercise actual separate processes, not only synthetic summaries."""
+    import json
+    from aivoblock_ai.qmlp import (
+        FIXTURE_ROWS, fixture_model, qmlp_input_commitment, execute_partition,
+    )
+    model = fixture_model()
+    rows = [list(row) for row in FIXTURE_ROWS]
+    _, result = execute_partition(model, FIXTURE_ROWS, 0, len(FIXTURE_ROWS))
+    fixture_path = tmp_path / "fixture.json"
+    fixture_path.write_text(json.dumps({
+        "model": model.to_json(),
+        "rows": rows,
+        "model_commitment": model.commitment().hex(),
+        "input_commitment": qmlp_input_commitment(model, FIXTURE_ROWS).hex(),
+        "result_commitment": result.hex(),
+    }))
+    summary = run(fixture_path, launches=3, iterations=30, batch=len(rows))
+    assert summary["warmups_per_launch"] == 5
+    assert summary["separate_process_launches"] == 3
+    assert summary["workload"]["result_commitment"] == result.hex()
+    assert set(summary["modes"]) == {
+        "trusted_result", "same_implementation_recomputation",
+    }
+    for mode in summary["modes"].values():
+        assert mode["count"] == 90
+        assert len(mode["per_launch_medians_ms"]) == 3
+        assert mode["min_ms"] > 0
