@@ -8,6 +8,7 @@ def report(mode, values):
     return {
         "mode": mode, "model_commitment": "aa", "input_commitment": "bb",
         "result_commitment": "cc", "rows": 4, "iterations": len(values),
+        "warmups": 5,
         "latency_ms": {"observations": values},
     }
 
@@ -53,3 +54,4 @@ def test_reject_too_few_runs():
 def test_reject_too_few_observations():
     with pytest.raises(ValueError, match="iterations"):
         run(None, iterations=29)
+\n
