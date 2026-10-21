@@ -722,12 +722,7 @@ mod tests {
         let mut limiter = SourceRateLimiter::default();
         let now = Instant::now();
         for n in 0..MAX_TRACKED_INBOUND_SOURCES {
-            let source = IpAddr::V4(Ipv4Addr::new(
-                192,
-                0,
-                (n / 256) as u8,
-                (n % 256) as u8,
-            ));
+            let source = IpAddr::V4(Ipv4Addr::new(192, 0, (n / 256) as u8, (n % 256) as u8));
             assert!(limiter.allow(source, now));
         }
         let new_source: IpAddr = "203.0.113.30".parse().unwrap();
