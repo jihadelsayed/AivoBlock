@@ -32,6 +32,13 @@ equal the key in the file. Names are cosmetic and unsigned.
   accepts the peer only if its key is a configured validator, is not its own,
   and (when dialing) equals the key configured for that address. Zero or
   reflected challenges are rejected.
+- Every inbound and outbound peer must complete **both** the challenge/hello
+  exchange and signed X25519 negotiation within a single **10-second absolute
+  deadline**. Each blocking socket read/write uses the smaller of the normal
+  three-second I/O timeout and remaining handshake time; partial frame bytes
+  cannot renew the total budget. Expired connections close and release inbound
+  admission capacity. Authenticated links return to their normal read/write
+  timeouts after negotiation.
 - One link per pair: the smaller key dials; reconnects every 0.5 s.
 - The TCP listener admits at most **32 concurrent inbound, unauthenticated
   handshakes**, with a further maximum of **8 pending handshakes per source IP**.
