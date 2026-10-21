@@ -338,6 +338,9 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
     #    off-chain by PyTorch, quantized, exported, and verified by Rust.
     #    Docker nodes use Python workers, Haskell settlement and BFT finality.
     before_qmlp = net.status("node-1")
+    # Client-visible latency includes signed submission, distributed AI work,
+    # BFT commit, and polling until every validator reports the finalized height.
+    qmlp_started = time.monotonic()
     if qmlp_file is None:
         task = net.submit("--workload", "qmlp", "--rows", "12")
     else:
@@ -359,7 +362,22 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
         net.step("pytorch_export", model_commitment=export["model_commitment"],
                  result_commitment=export["result_commitment"], task_id=task["task_id"])
     net.wait_height(5, nodes)
+    qmlp_observed_ms = (time.monotonic() - qmlp_started) * 1000
     final = net.verify(nodes)
+    check(final["height"] >= 5, "QMLP task finalized on all three validators")
+    net.step("qmlp_end_to_end_finality", height=5, workload="qmlp-v1",
+             measured_from="before_cli_submission",
+             measured_until="all_validators_observed_height",
+             observation_method="sequential_one_second_status_polling",
+             elapsed_ms=round(qmlp_observed_ms, 3), rows=task["rows"],
+             partitions=len(task["partitions"]), validators=len(nodes))
+    net.report["qmlp_end_to_end_finality"] = {
+        "height": 5, "elapsed_ms": round(qmlp_observed_ms, 3),
+        "rows": task["rows"], "partitions": len(task["partitions"]),
+        "validators": len(nodes), "polling_interval_s": 1,
+        "includes": ["cli_submission", "python_worker_execution", "bft_finalization",
+                     "status_polling_to_all_validators"],
+    }
     check(final["blocks"][4]["workload"] == "qmlp-v1", "height 5 settled QMLP-V1 inference work")
     if qmlp_file is not None:
         workers = [p["worker"] for p in task["partitions"]]
