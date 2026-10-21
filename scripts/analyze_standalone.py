@@ -23,12 +23,21 @@ def positive(value, label: str) -> float:
     return float(value)
 
 
+def sha256_commitment(value: object, label: str) -> str:
+    if (not isinstance(value, str) or len(value) != 64 or
+            any(char not in "0123456789abcdef" for char in value)):
+        raise ValueError(f"{label} must be a lowercase 64-digit SHA-256 hex commitment")
+    return value
+
+
 def analyze(benchmarks: list[dict]) -> dict:
     if len(benchmarks) < 3:
         raise ValueError("Require three independent process-level benchmark invocations")
     signatures = {
         (b["iterations"], b["qmlp_v1"]["rows"],
-         b["qmlp_v1"]["partitions"], b["qmlp_v1"]["layers"])
+         b["qmlp_v1"]["partitions"], b["qmlp_v1"]["layers"],
+         sha256_commitment(b["qmlp_v1"]["model_commitment"], "model"),
+         sha256_commitment(b["qmlp_v1"]["input_commitment"], "input"))
         for b in benchmarks
     }
     if len(signatures) != 1:
@@ -90,6 +99,8 @@ def analyze(benchmarks: list[dict]) -> dict:
             "rows": benchmarks[0]["qmlp_v1"]["rows"],
             "partitions": benchmarks[0]["qmlp_v1"]["partitions"],
             "layers": benchmarks[0]["qmlp_v1"]["layers"],
+            "model_commitment": benchmarks[0]["qmlp_v1"]["model_commitment"],
+            "input_commitment": benchmarks[0]["qmlp_v1"]["input_commitment"],
             "exclusions": [
                 "no full network transport, BFT finality or P2P latency in either timing",
                 "direct baseline is Rust integer CPU inference, not optimized GPU/ML serving",
