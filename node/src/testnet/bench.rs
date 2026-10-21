@@ -10,6 +10,7 @@ use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
 
 use super::cli::{build_task, partition_rows, qmlp_workload_with, workload, TaskSpec};
+use super::hex;
 use super::worker::WorkerBackend;
 use crate::ai_block_v3::{
     build_block_v3, execute_block_v3, expected_result_v3, sign_claim_v3, verify_claim_v3, AiTaskV3,
@@ -393,6 +394,8 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
         "rows_verified_per_second": rows.len() as f64 * 1e6 / linear.block_us,
         "qmlp_v1": {
             "rows": qmlp_rows.len(),
+            "model_commitment": hex(&qmlp_task.model_commitment),
+            "input_commitment": hex(&qmlp_task.input_commitment),
             "layers": "32 -> 64 -> 16",
             "integer_multiply_adds_per_row": 32 * 64 + 64 * 16,
             "partitions": qmlp_task.partitions.len(),
