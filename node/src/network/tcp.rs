@@ -87,7 +87,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn bounded_receive_rejects_oversize_header_without_reading_payload() {
         // Header advertises more than a fixed-size handshake permits.
