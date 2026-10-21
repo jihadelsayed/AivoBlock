@@ -45,6 +45,18 @@ def record(observations, mode):
         if row.get("status") != "success":
             raise ValueError(f"observation {index}: non-success request")
         identity = {f"{field}_commitment": digest_file(row[f"{field}_path"]) for field in FIELDS}
+        # Optional producer-declared artifact digests are checked against disk bytes.
+        # These are not independent attestation or canonical QMLP commitments.
+        declared_fields = tuple(f"artifact_{field}_sha256" for field in FIELDS)
+        declared_presence = [field in row for field in declared_fields]
+        if any(declared_presence) and not all(declared_presence):
+            raise ValueError(f"observation {index}: partial artifact digests")
+        if all(declared_presence):
+            for field in FIELDS:
+                expected = row[f"artifact_{field}_sha256"]
+                actual = identity[f"{field}_commitment"]
+                if not isinstance(expected, str) or expected != actual:
+                    raise ValueError(f"observation {index}: artifact {field} digest mismatch")
         # QMLP canonical protocol commitments and SHA-256 of serialized
         # artifact bytes are distinct identity namespaces. Preserve both,
         # but never silently substitute one for the other.
