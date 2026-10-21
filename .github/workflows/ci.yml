@@ -290,6 +290,25 @@ jobs:
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
+      - name: Real one-task QMLP repeated-collector pilot
+        run: |
+          python3 scripts/measure_chain_finality.py \
+            --skip-build --launches 1 --samples 1 --rows 12 \
+            --out testnet/generated/pilot-measurements
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          file = Path("testnet/generated/pilot-measurements/launch-000.json")
+          rows = json.loads(file.read_text())
+          assert len(rows) == 1
+          row = rows[0]
+          assert row["elapsed_ms"] > 0
+          assert row["end_ns"] > row["start_ns"]
+          assert row["finalized_height"] >= 1
+          assert row["task_id"] and row["block_id"]
+          assert row["workload"] == "qmlp-v1"
+          print("PASS: one actual finalized QMLP task measured")
+          PY
       - name: Validate and summarize measured research artifacts
         run: |
           python3 scripts/analyze_research_results.py \
@@ -337,6 +356,8 @@ jobs:
             testnet/generated/workload-manifest.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
+            testnet/generated/pilot-measurements/launch-000.json
+            testnet/generated/pilot-measurements/launch-000/three-node/report.json
           if-no-files-found: warn
 
   protobuf:
