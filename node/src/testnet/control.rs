@@ -336,9 +336,12 @@ mod tests {
                 ..
             })
         ));
+        // The only sender moved into the handler thread was dropped on join.
+        // Draining the original event must therefore leave a disconnected,
+        // empty queue, not necessarily TryRecvError::Empty.
         assert!(matches!(
             receiver.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
+            Err(mpsc::TryRecvError::Disconnected)
         ));
     }
 
