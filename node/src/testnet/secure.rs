@@ -399,7 +399,6 @@ mod tests {
         assert!(wrong.recv(&mut Cursor::new(frame), &mut 0).is_err());
     }
 
-
     #[test]
     fn encrypted_frame_size_counts_inner_prefix_and_aead_tag() {
         let (alice_channel, bob_channel, alice, _) = channels();
