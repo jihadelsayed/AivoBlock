@@ -26,7 +26,10 @@ def analyze(bench: dict, research: dict, three: dict, four: dict) -> dict:
         raise ValueError("Blockchain model commitment differs from training artifact")
     if sum(paid[0]["worker_gains"]) != paid[0]["tokens_paid"] or paid[0]["height"] != 5:
         raise ValueError("Trained-model reward audit disagrees with worker balances")
-    if three["final"]["height"] != 5 or four["final"]["height"] < 5:
+    # The four-validator fault test optionally inserts a height to avoid
+    # crashing node-1, which holds the sole testnet task-authority key.
+    # Its legitimate final height is therefore 4 or 5 (not always 5).
+    if three["final"]["height"] != 5 or four["final"]["height"] not in (4, 5):
         raise ValueError("Expected testnet block heights were not finalized")
 
     linear_once = bench["full_block_verify_haskell_cross_checked_us"]
