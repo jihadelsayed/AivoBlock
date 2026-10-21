@@ -217,10 +217,13 @@ pub struct AuthenticatedFrameLimiter {
 
 impl AuthenticatedFrameLimiter {
     fn allow(&mut self, peer: [u8; 32], now: Instant) -> bool {
-        let window = self.windows.entry(peer).or_insert(AuthenticatedFrameWindow {
-            started: now,
-            accepted: 0,
-        });
+        let window = self
+            .windows
+            .entry(peer)
+            .or_insert(AuthenticatedFrameWindow {
+                started: now,
+                accepted: 0,
+            });
         if now.duration_since(window.started) >= AUTHENTICATED_FRAME_WINDOW {
             window.started = now;
             window.accepted = 0;
