@@ -209,6 +209,14 @@ jobs:
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
+      - name: Validate and summarize measured research artifacts
+        run: |
+          python3 scripts/analyze_research_results.py \
+            --bench testnet/generated/bench.json \
+            --research research-out/report.json \
+            --three testnet/generated/three-node/report.json \
+            --four testnet/generated/four-validator/report.json \
+            --out testnet/generated/research-summary.json
       - name: Upload testnet reports and node logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -216,6 +224,7 @@ jobs:
           name: testnet-reports
           path: |
             testnet/generated/bench.json
+            testnet/generated/research-summary.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
           if-no-files-found: warn
