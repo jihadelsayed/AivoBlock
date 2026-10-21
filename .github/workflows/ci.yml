@@ -61,7 +61,7 @@ jobs:
             sleep $((attempt * 5))
           done
       - name: Build
-        run: cabal build all
+        run: bash ../scripts/ci-cabal-build.sh all
       - name: Test
         run: cabal test all --test-show-details=direct
 
@@ -122,7 +122,7 @@ jobs:
             if [ "$attempt" -eq 4 ]; then exit 1; fi
             sleep $((attempt * 5))
           done
-          cabal build exe:aivoblock-core
+          bash ../scripts/ci-cabal-build.sh exe:aivoblock-core
           echo "AIVOBLOCK_HASKELL_EXECUTABLE=$(cabal list-bin exe:aivoblock-core)" >> "$GITHUB_ENV"
       - name: Run Rust ↔ Haskell health, JSON and malformed-frame tests
         working-directory: node
