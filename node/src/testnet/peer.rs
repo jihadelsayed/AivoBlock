@@ -44,7 +44,7 @@ struct HandshakePermit(Arc<AtomicUsize>);
 impl HandshakePermit {
     fn acquire(active: &Arc<AtomicUsize>) -> Option<Self> {
         active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_PENDING_INBOUND_HANDSHAKES).then_some(count + 1)
             })
             .ok()?;
@@ -438,7 +438,8 @@ mod tests {
         assert_eq!(
             handles
                 .into_iter()
-                .filter(|thread| thread.join().unwrap())
+                .map(|thread| thread.join().unwrap())
+                .filter(|accepted| *accepted)
                 .count(),
             MAX_PENDING_INBOUND_HANDSHAKES
         );
