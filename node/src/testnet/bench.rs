@@ -10,6 +10,7 @@ use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
 
 use super::cli::{build_task, partition_rows, qmlp_workload_with, workload, TaskSpec};
+use super::hex;
 use super::worker::WorkerBackend;
 use crate::ai_block_v3::{
     build_block_v3, execute_block_v3, expected_result_v3, sign_claim_v3, verify_claim_v3, AiTaskV3,
@@ -63,6 +64,9 @@ fn certificate_bench(validators: usize, iterations: u32) -> Result<f64, String> 
 
 struct BlockTimings {
     block_bytes: usize,
+    /// Direct integer QMLP inference on the same rows, with no signatures,
+    /// block decoding, ledger settlement, BFT voting or network transport.
+    standalone_qmlp_us: Option<f64>,
     worker_us: f64,
     claim_us: f64,
     block_us: f64,
@@ -70,6 +74,34 @@ struct BlockTimings {
     haskell_us: Option<f64>,
     /// One persistent `ipc-serve` process, after a warm-up request.
     haskell_persistent_us: Option<f64>,
+}
+
+/// A conventional, non-blockchain control: execute the committed integer
+/// QMLP model directly on *all* input rows in one process, sequentially.
+///
+/// Uses the same input/model as the verified block benchmark. Includes the
+/// public QMLP logits API's model/input validation and per-row allocations,
+/// but excludes cryptography, commitment building, ledger, IPC, quorum,
+/// scheduling, network transport and finality. It is not an optimized ML
+/// serving system or a measurement of distributed worker throughput.
+fn standalone_qmlp_us(task: &AiTaskV3, iterations: u32) -> Result<Option<f64>, String> {
+    let Some(model) = &task.qmlp else {
+        return Ok(None);
+    };
+    if iterations == 0 || task.rows.is_empty() {
+        return Err("Standalone baseline requires rows and positive iterations".into());
+    }
+    // Warm the same path that will be timed, without including setup.
+    for row in &task.rows {
+        std::hint::black_box(model.logits(std::hint::black_box(row))?);
+    }
+    let started = Instant::now();
+    for _ in 0..iterations {
+        for row in &task.rows {
+            std::hint::black_box(model.logits(std::hint::black_box(row))?);
+        }
+    }
+    Ok(Some(per_op_us(started, iterations)))
 }
 
 /// Honest claims for every partition (Rust reference), then claim and
@@ -82,6 +114,7 @@ fn time_block(
     parent: &ParentContext<'_>,
     iterations: u32,
 ) -> Result<BlockTimings, String> {
+    let standalone_qmlp_us = standalone_qmlp_us(task, iterations)?;
     let started = Instant::now();
     let mut claims = Vec::new();
     for (index, partition) in task.partitions.iter().enumerate() {
@@ -130,6 +163,7 @@ fn time_block(
     };
     Ok(BlockTimings {
         block_bytes: built.bytes.len(),
+        standalone_qmlp_us,
         worker_us,
         claim_us,
         block_us,
@@ -144,6 +178,8 @@ fn timings_json(timings: &BlockTimings, rows: usize, partitions: usize) -> Value
         "rows": rows,
         "partitions": partitions,
         "block_bytes": timings.block_bytes,
+        "standalone_qmlp_inference_us": timings.standalone_qmlp_us,
+        "block_verify_over_standalone_inference": timings.standalone_qmlp_us.map(|us| timings.block_us / us),
         "worker_compute_and_sign_us_per_partition": timings.worker_us,
         "worker_compute_and_sign_us_all_partitions": worker_total_us,
         "claim_verify_us": timings.claim_us,
@@ -358,10 +394,14 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
         "rows_verified_per_second": rows.len() as f64 * 1e6 / linear.block_us,
         "qmlp_v1": {
             "rows": qmlp_rows.len(),
+            "model_commitment": hex(&qmlp_task.model_commitment),
+            "input_commitment": hex(&qmlp_task.input_commitment),
             "layers": "32 -> 64 -> 16",
             "integer_multiply_adds_per_row": 32 * 64 + 64 * 16,
             "partitions": qmlp_task.partitions.len(),
             "block_bytes": qmlp.block_bytes,
+            "standalone_qmlp_inference_us": qmlp.standalone_qmlp_us,
+            "block_verify_over_standalone_inference": qmlp.standalone_qmlp_us.map(|us| qmlp.block_us / us),
             "worker_compute_and_sign_us_per_partition": qmlp.worker_us,
             "claim_verify_us": qmlp.claim_us,
             "full_block_verify_rust_mirror_us": qmlp.block_us,
@@ -389,4 +429,35 @@ pub fn bench_command(args: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod standalone_baseline_tests {
+    use super::*;
+
+    #[test]
+    fn standalone_qmlp_uses_the_exact_task_inputs_and_rejects_malformed_rows() {
+        let authority = SigningKey::from_bytes(&[17; 32]);
+        let worker = SigningKey::from_bytes(&[100; 32]);
+        let workers = [worker.verifying_key().to_bytes()];
+        let (model, rows) = qmlp_workload_with(16, (8, 16, 4), 7);
+        let mut task = build_task(
+            TaskSpec {
+                sequence: 1,
+                deadline_height: 10,
+                fee_budget: 64,
+                weights: &[],
+                rows: &rows,
+                qmlp: Some(model),
+                partitions: partition_rows(rows.len(), &workers),
+            },
+            &authority,
+        )
+        .unwrap();
+
+        assert!(standalone_qmlp_us(&task, 3).unwrap().unwrap() > 0.0);
+        assert!(standalone_qmlp_us(&task, 0).is_err());
+        task.rows[0].pop();
+        assert!(standalone_qmlp_us(&task, 3).is_err());
+    }
 }
