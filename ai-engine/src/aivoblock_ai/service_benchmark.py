@@ -106,7 +106,7 @@ def main() -> None:
                      warmups=args.warmups, launch_id=args.launch_id)
     if args.observations_out:
         args.observations_out.parent.mkdir(parents=True, exist_ok=True)
-        args.observations_out.write_text("".join(json.dumps(row, sort_keys=True) + "\\n"
+        args.observations_out.write_text("".join(json.dumps(row, sort_keys=True) + "\n"
                                             for row in report["request_observations"]))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
