@@ -31,6 +31,8 @@ def aggregate(reports: list[dict], *, launches: int, iterations: int) -> dict:
         run_medians = []
         for r in subset:
             values = r.get("latency_ms", {}).get("observations")
+            if r.get("warmups") != 5:
+                raise ValueError("expected five warmups")
             if r.get("iterations") != iterations or not isinstance(values, list) or len(values) != iterations:
                 raise ValueError("missing or mismatched observations")
             if any(isinstance(v, bool) or not isinstance(v, (int, float))
@@ -55,6 +57,7 @@ def aggregate(reports: list[dict], *, launches: int, iterations: int) -> dict:
         "scope": "local synchronous in-process QMLP service-core latency only",
         "separate_process_launches": launches,
         "iterations_per_launch": iterations,
+        "warmups_per_launch": 5,
         "workload": dict(zip(("model_commitment", "input_commitment",
                              "result_commitment", "rows"), next(iter(identities)))),
         "modes": output,
@@ -77,7 +80,8 @@ def run(fixture: Path, *, launches: int = 3, iterations: int = 30,
                 out = Path(tempdir) / f"{int(mode)}-{launch}.json"
                 cmd = [sys.executable, "-m", "aivoblock_ai.service_benchmark",
                        "--fixture", str(fixture.resolve()), "--out", str(out),
-                       "--iterations", str(iterations), "--batch", str(batch)]
+                       "--iterations", str(iterations), "--batch", str(batch),
+                       "--warmups", "5"]
                 if mode:
                     cmd.append("--verify")
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
