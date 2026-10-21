@@ -68,12 +68,14 @@ equal the key in the file. Names are cosmetic and unsigned.
   TCP backpressure to the authenticated peer reader before it can accept more
   complete frames. This bounds queued event *count*, not CPU cost or the
   individual message size; it does not replace network-wide flood protection.
-- Each authenticated validator link accepts at most **128 fully verified
-  encrypted frames per one-second fixed window**. The 129th verified frame
-  within the window closes that link before admitting further work to the node
-  event queue. A new window resets the count; independent peer links have
-  independent budgets. This limits excessive valid-message bursts but is not
-  global per-validator, per-IP, or network-level DDoS protection.
+- Each configured validator identity is permitted at most **128 fully
+  verified encrypted frames per one-second fixed window**, shared across its
+  authenticated TCP links and reconnects. The 129th verified frame closes
+  the offending connection before admitting more work to the node event queue.
+  Reconnecting or opening another link does not reset the budget; a new time
+  window does. Independent configured validators have independent budgets.
+  Only authenticated configured identities enter this map, so its size is
+  bounded by the validator set. This is not a network-wide DDoS defense.
 - Messages are JSON envelopes (`status`, `task`, `claim`, `proposal`, `vote`,
   `commit`, `get_blocks`) carrying hex of canonical binary encodings.
 - For each handshake, both nodes compute a shared SHA-256 session ID over a
