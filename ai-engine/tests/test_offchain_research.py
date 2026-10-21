@@ -28,6 +28,21 @@ def test_lcg_matches_its_specified_first_outputs() -> None:
         assert rng.below(1 << 31) == (state >> 33) % (1 << 31)
 
 
+
+def test_pytorch_initialization_seed_is_explicit_and_reproducible() -> None:
+    torch = pytest.importorskip("torch")
+    from aivoblock_ai import torch_qmlp
+
+    rows, labels = digits.make_dataset(100, 5)
+    def weights(seed: int):
+        model = torch_qmlp.train_float_mlp(rows, labels, epochs=2, seed=seed)
+        return [p.detach().clone() for p in model.parameters()]
+
+    first, again, different = weights(11), weights(11), weights(17)
+    assert all(torch.equal(a, b) for a, b in zip(first, again))
+    assert any(not torch.equal(a, b) for a, b in zip(first, different))
+
+
 @pytest.fixture(scope="module")
 def experiment():
     pytest.importorskip("torch")
