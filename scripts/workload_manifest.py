@@ -44,7 +44,7 @@ def make_manifest(benchmarks: list[dict], *, runner: str, revision: str,
         if not isinstance(layer, str) or not _LAYERS.fullmatch(layer):
             raise ValueError(f"Invalid QMLP layer dimensions in invocation {index}")
         layer_sizes = tuple(int(n) for n in layer.split(" -> "))
-        if layer_sizes[0] > 32 or any(n > 256 for n in layer_sizes):
+        if layer_sizes[0] > 32 or layer_sizes[1] > 64 or layer_sizes[2] > 16:
             raise ValueError("QMLP layer dimensions exceed supported benchmark bounds")
         if "integer_multiply_adds_per_row" in q:
             expected_macs = layer_sizes[0] * layer_sizes[1] + layer_sizes[1] * layer_sizes[2]
