@@ -70,6 +70,16 @@ def last_json(text: str) -> dict:
     raise Failure(f"no JSON in output: {text[-2000:]}")
 
 
+def observed_finality_timing(start_ns: int, end_ns: int) -> dict:
+    """Record a single real client-observed interval from one monotonic clock."""
+    if (type(start_ns) is not int or type(end_ns) is not int
+            or start_ns < 0 or end_ns <= start_ns):
+        raise ValueError("invalid monotonic finality interval")
+    return {"start_ns": start_ns, "end_ns": end_ns,
+            "elapsed_ms": (end_ns - start_ns) / 1_000_000,
+            "clock": "time.perf_counter_ns"}
+
+
 def summarize(samples: list[int]) -> dict:
     """Order statistics of measured samples (nearest-rank percentiles)."""
     if not samples:
@@ -356,7 +366,7 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
 
     # Client-visible latency includes signed CLI submission, distributed AI
     # work, BFT finalization, and polling of every validator.
-    qmlp_started = time.monotonic()
+    qmlp_started_ns = time.perf_counter_ns()
     if qmlp_file is None:
         task = net.submit("--workload", "qmlp", "--rows", "12")
     else:
@@ -366,17 +376,20 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
         net.step("pytorch_export", model_commitment=export["model_commitment"],
                  result_commitment=export["result_commitment"], task_id=task["task_id"])
     net.wait_height(5, nodes)
-    qmlp_observed_ms = (time.monotonic() - qmlp_started) * 1000
+    qmlp_finished_ns = time.perf_counter_ns()
+    qmlp_timing = observed_finality_timing(qmlp_started_ns, qmlp_finished_ns)
+    qmlp_observed_ms = qmlp_timing["elapsed_ms"]
     final = net.verify(nodes)
     check(final["height"] >= 5, "QMLP task finalized on all three validators")
     net.step("qmlp_end_to_end_finality", height=5, workload="qmlp-v1",
              measured_from="before_cli_submission",
              measured_until="all_validators_observed_height",
              observation_method="sequential_one_second_status_polling",
-             elapsed_ms=round(qmlp_observed_ms, 3), rows=task["rows"],
+             **qmlp_timing,
+             rows=task["rows"],
              partitions=len(task["partitions"]), validators=len(nodes))
     net.report["qmlp_end_to_end_finality"] = {
-        "height": 5, "elapsed_ms": round(qmlp_observed_ms, 3),
+        "height": 5, **qmlp_timing,
         "rows": task["rows"], "partitions": len(task["partitions"]),
         "validators": len(nodes), "polling_interval_s": 1,
         "includes": ["cli_submission", "python_worker_execution", "bft_finalization",
