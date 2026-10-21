@@ -49,7 +49,10 @@ equal the key in the file. Names are cosmetic and unsigned.
   handshakes**, with a further maximum of **8 pending handshakes per source IP**.
   Extra connections are closed before allocating a worker thread. Both admission
   slots are released on authentication failure or after the signed X25519
-  exchange completes. IPv4-mapped IPv6 sources share the IPv4 address's limit;
+  exchange completes. Failed-handshake diagnostics are best effort: if the
+  bounded node event queue is full, the rejection event is discarded rather
+  than blocking the unauthenticated worker and retaining admission capacity.
+  IPv4-mapped IPv6 sources share the IPv4 address's limit;
   unused IP entries are removed. Outbound dialing and established encrypted
   validator links are not counted. This protects capacity for other sources
   but is **not a full DDoS defense**. Validators
