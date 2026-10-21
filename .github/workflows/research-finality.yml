@@ -46,12 +46,20 @@ jobs:
           assert len(all_ids) == 90
           print("PASS: 90 real raw QMLP finality observations from 3 testnet launches")
           PY
+      - name: Generate evidence provenance manifest
+        run: |
+          python scripts/finality_evidence_manifest.py \
+            --directory testnet/generated/measurements \
+            --revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --out testnet/generated/measurements/manifest.json
       - name: Upload raw measurement evidence (no generated private keys)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qmlp-real-finality-evidence-${{ github.run_id }}
           path: |
+            testnet/generated/measurements/manifest.json
             testnet/generated/measurements/launch-???.json
             testnet/generated/measurements/launch-???/three-node/report.json
           if-no-files-found: warn
