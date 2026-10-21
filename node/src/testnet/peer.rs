@@ -25,8 +25,8 @@ use super::node::Event;
 use super::random_bytes32;
 use super::secure::{negotiate, EncryptedChannel};
 use super::wire::WireMessage;
-use crate::network::handshake::{sign_hello, verify_hello};
-use crate::network::tcp::{configure_stream, recv_frame, send_frame, IO_TIMEOUT};
+use crate::network::handshake::{sign_hello, verify_hello, HELLO_BYTES};
+use crate::network::tcp::{configure_stream, recv_frame_bounded, send_frame, IO_TIMEOUT};
 
 /// A live link dies when nothing (not even a heartbeat) arrives for this long.
 pub const PEER_READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -125,7 +125,7 @@ pub fn mutual_handshake(
 ) -> Result<AuthenticatedSession, String> {
     let challenge = random_bytes32();
     send_frame(stream, &challenge).map_err(|e| format!("send challenge: {e}"))?;
-    let theirs = recv_frame(stream).map_err(|e| format!("receive challenge: {e}"))?;
+    let theirs = recv_frame_bounded(stream, 32).map_err(|e| format!("receive challenge: {e}"))?;
     let theirs: [u8; 32] = theirs
         .as_slice()
         .try_into()
@@ -135,7 +135,8 @@ pub fn mutual_handshake(
     }
     send_frame(stream, &sign_hello(chain_id, local, &theirs))
         .map_err(|e| format!("send hello: {e}"))?;
-    let hello = recv_frame(stream).map_err(|e| format!("receive hello: {e}"))?;
+    let hello = recv_frame_bounded(stream, HELLO_BYTES)
+        .map_err(|e| format!("receive hello: {e}"))?;
     let verified = verify_hello(&hello, chain_id, &challenge)?;
     let own = local.verifying_key().to_bytes();
     if verified.public_key == own {
