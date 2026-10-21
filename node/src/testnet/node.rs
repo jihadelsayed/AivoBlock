@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 use super::chain::{rules, Chain, StartupReport, VoteLock};
 use super::config::{NetworkConfig, NodeKeys, CHAIN_ID};
 use super::control::{spawn_control_server, ControlRequest};
-use super::peer::{spawn_dialer, spawn_listener, PeerLink, Transport};
+use super::peer::{spawn_dialer, spawn_listener, AuthenticatedFrameLimiter, PeerLink, Transport};
 use super::wire::{decode_block_hex, decode_claim, WireMessage};
 use super::worker::WorkerBackend;
 use super::{hex, unhex, unhex_array};
@@ -240,6 +240,7 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
         events: events.clone(),
         shutdown: Arc::clone(&shutdown),
         connected: Arc::clone(&connected),
+        frame_limiter: Arc::new(Mutex::new(AuthenticatedFrameLimiter::default())),
     });
     let targets = config
         .validators
