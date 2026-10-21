@@ -12,7 +12,9 @@ def fixture():
         for launch in range(3):
             for i in range(30):
                 row = {"launch_id": f"launch-{launch}", "request_id": f"{mode}-{launch}-{i}",
-                       "elapsed_ms": 1.5, "status": "success"}
+                       "elapsed_ms": 1.5, "status": "success",
+                       "model_commitment": digest, "input_commitment": "b" * 64,
+                       "result_commitment": "c" * 64}
                 if mode == "chain_observed_finality":
                     row["finalized_height"] = 1 + launch * 30 + i
                 rows.append(row)
@@ -35,6 +37,18 @@ class ValidateServiceChainTests(unittest.TestCase):
         b = fixture()
         b["scenarios"]["chain_observed_finality"]["model_commitment"] = "d" * 64
         with self.assertRaises(ValueError):
+            validate(b)
+
+    def test_rejects_missing_request_input_commitment(self):
+        b = fixture()
+        del b["scenarios"]["chain_observed_finality"]["samples"][3]["input_commitment"]
+        with self.assertRaisesRegex(ValueError, "missing or mismatched input_commitment"):
+            validate(b)
+
+    def test_rejects_mismatched_request_result_commitment(self):
+        b = fixture()
+        b["scenarios"]["service_direct"]["samples"][17]["result_commitment"] = "d" * 64
+        with self.assertRaisesRegex(ValueError, "missing or mismatched result_commitment"):
             validate(b)
 
     def test_rejects_too_few_samples(self):

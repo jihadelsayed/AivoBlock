@@ -45,6 +45,10 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
             ms = s.get("elapsed_ms")
             if not isinstance(launch, str) or not launch or not isinstance(rid, str) or not rid:
                 raise ValueError(f"{mode}: launch_id/request_id required")
+            for field, expected in zip(FIELDS, ref):
+                supplied = s.get(field)
+                if supplied != expected:
+                    raise ValueError(f"{mode}: request {rid} missing or mismatched {field}")
             if rid in request_ids:
                 raise ValueError(f"{mode}: duplicate request ID: {rid}")
             request_ids.add(rid)

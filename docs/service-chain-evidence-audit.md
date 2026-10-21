@@ -46,7 +46,9 @@ The JSON bundle must have `scenarios` keys `service_direct`,
 `service_recomputed`, and `chain_observed_finality`. Each scenario has
 `model_commitment`, `input_commitment`, `result_commitment` (64 lowercase
 hex digits) and `samples`: an array of objects containing `launch_id`,
-`request_id`, `elapsed_ms`, `status: "success"`; chain samples also
+`request_id`, `elapsed_ms`, `status: "success"`, and their own
+`model_commitment`, `input_commitment`, and `result_commitment` fields,
+which must match the scenario commitment values; chain samples also
 require a unique positive `finalized_height`. Identity must match across
 scenarios, with at least three launches and 30 positive finite measured
 samples per launch. Duplicated request IDs, missing heights, failures and
@@ -56,3 +58,13 @@ This normalized schema does not assert that separately acquired PR #71/#72
 artifacts are comparable, nor does it verify the source artifacts' signature
 or per-request cryptographic proof. A producer linking actual measured data
 to these exact commitments is still required.
+
+## PR #74 — Request-level provenance gate
+
+The validator now rejects a benchmark sample unless **that sample** carries
+all three expected commitments. A scenario-level declaration alone cannot
+stand in for evidence of what a particular request executed. This is a schema
+and consistency check, **not** independent cryptographic attestation: a future
+measurement producer must derive these commitments from actual model bytes,
+canonical input bytes, and result bytes, and retain raw per-request evidence.
+The matched end-to-end request-boundary benchmark remains future work.
