@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -48,6 +48,10 @@ const MAX_TRACKED_INBOUND_SOURCES: usize = 256;
 /// event queue with valid-but-excessive signed/encrypted frames.
 const MAX_AUTHENTICATED_FRAMES_PER_WINDOW: usize = 128;
 const AUTHENTICATED_FRAME_WINDOW: Duration = Duration::from_secs(1);
+/// Outbound frames and bytes queued per link before a slow peer is dropped.
+/// Large enough for one bounded sync response plus ordinary gossip.
+const MAX_QUEUED_FRAMES_PER_PEER: usize = 1024;
+const MAX_QUEUED_BYTES_PER_PEER: usize = 32 * 1024 * 1024;
 
 static NEXT_LINK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -340,60 +344,118 @@ impl Write for DeadlineStream<'_> {
     }
 }
 
+/// Bytes of not-yet-written frames for one link, and a socket handle that
+/// can shut the link down from any thread.
 #[derive(Debug)]
-struct SignedWriter {
-    stream: TcpStream,
-    next_sequence: u64,
+struct Outbox {
+    queued_bytes: AtomicUsize,
+    socket: TcpStream,
 }
 
+impl Outbox {
+    /// Reserve queue capacity for one frame; false if the budget is spent.
+    fn reserve(&self, bytes: usize) -> bool {
+        let mut queued = self.queued_bytes.load(Ordering::Acquire);
+        loop {
+            let Some(next) = queued.checked_add(bytes) else {
+                return false;
+            };
+            if next > MAX_QUEUED_BYTES_PER_PEER {
+                return false;
+            }
+            match self.queued_bytes.compare_exchange_weak(
+                queued,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => queued = observed,
+            }
+        }
+    }
+
+    fn release(&self, bytes: usize) {
+        self.queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
+    }
+}
+
+/// Cheap handle used by the consensus event loop. `send` only enqueues: a
+/// dedicated writer thread performs the encrypted, deadline-bounded socket
+/// writes, so a slow or stalled peer can never block the event loop.
 #[derive(Debug, Clone)]
 pub struct PeerLink {
     pub key: [u8; 32],
     pub id: u64,
     pub outbound: bool,
     pub remote: String,
-    writer: Arc<Mutex<SignedWriter>>,
-    local_key: SigningKey,
-    channel: EncryptedChannel,
+    queue: SyncSender<(WireMessage, usize)>,
+    outbox: Arc<Outbox>,
 }
 
 impl PeerLink {
+    /// Queue one frame without blocking. A peer that lets its outbound queue
+    /// fill (by frame count or bytes) is disconnected; it can reconnect and
+    /// resynchronize, but it cannot stall consensus for everyone else.
     pub fn send(&self, message: &WireMessage) -> io::Result<()> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| io::Error::other("peer writer lock poisoned"))?;
-        let sequence = writer.next_sequence;
-        let next = sequence
-            .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Peer sequence overflow"))?;
-        // Keep one fixed budget across every socket write in this encrypted
-        // frame, then restore the normal per-operation timeout for the link.
-        // Any send or restore error closes the stream before sequence reuse.
-        let sent = self.channel.send(
-            &mut DeadlineStream::outgoing_frame(&mut writer.stream),
-            message,
-            &self.local_key,
-            sequence,
-        );
-        let result = sent.and_then(|()| writer.stream.set_write_timeout(Some(IO_TIMEOUT)));
-        match result {
-            Ok(()) => {
-                writer.next_sequence = next;
-                Ok(())
-            }
+        let bytes = message.approx_bytes();
+        if !self.outbox.reserve(bytes) {
+            self.close();
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Peer outbound byte budget exhausted; disconnecting slow peer",
+            ));
+        }
+        match self.queue.try_send((message.clone(), bytes)) {
+            Ok(()) => Ok(()),
             Err(error) => {
-                let _ = writer.stream.shutdown(Shutdown::Both);
-                Err(error)
+                self.outbox.release(bytes);
+                if matches!(error, TrySendError::Full(_)) {
+                    self.close();
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Peer outbound queue is full or closed",
+                ))
             }
         }
     }
 
     pub fn close(&self) {
-        if let Ok(writer) = self.writer.lock() {
-            let _ = writer.stream.shutdown(Shutdown::Both);
+        let _ = self.outbox.socket.shutdown(Shutdown::Both);
+    }
+}
+
+/// Drain one link's outbound queue. Sequence numbers start at 1 and advance
+/// only after a complete frame is written; any write error, deadline expiry
+/// or sequence exhaustion closes the socket, so a sequence is never reused.
+/// Exits when the link fails or every `PeerLink` handle has been dropped.
+fn run_writer(
+    mut stream: TcpStream,
+    queue: Receiver<(WireMessage, usize)>,
+    outbox: Arc<Outbox>,
+    channel: EncryptedChannel,
+    local_key: SigningKey,
+) {
+    let mut sequence = 1u64;
+    for (message, bytes) in queue {
+        // Keep one fixed budget across every socket write in this encrypted
+        // frame, then restore the normal per-operation timeout for the link.
+        let sent = channel.send(
+            &mut DeadlineStream::outgoing_frame(&mut stream),
+            &message,
+            &local_key,
+            sequence,
+        );
+        outbox.release(bytes);
+        let restored = sent.and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)));
+        let next = sequence.checked_add(1);
+        match (restored, next) {
+            (Ok(()), Some(next)) => sequence = next,
+            _ => break,
         }
     }
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 #[derive(Debug)]
@@ -541,30 +603,35 @@ fn run_connection(
     if stream.set_write_timeout(Some(IO_TIMEOUT)).is_err() {
         return;
     }
-    let Ok(writer) = stream.try_clone() else {
+    let (Ok(writer), Ok(socket)) = (stream.try_clone(), stream.try_clone()) else {
         return;
     };
     if stream.set_read_timeout(Some(PEER_READ_TIMEOUT)).is_err() {
         return;
     }
+    let (queue, outgoing) = mpsc::sync_channel(MAX_QUEUED_FRAMES_PER_PEER);
+    let outbox = Arc::new(Outbox {
+        queued_bytes: AtomicUsize::new(0),
+        socket,
+    });
     let link = PeerLink {
         key: peer,
         id: NEXT_LINK_ID.fetch_add(1, Ordering::Relaxed),
         outbound,
         remote,
-        writer: Arc::new(Mutex::new(SignedWriter {
-            stream: writer,
-            next_sequence: 1,
-        })),
-        local_key: transport.key.clone(),
-        channel: channel.clone(),
+        queue,
+        outbox: Arc::clone(&outbox),
     };
+    let writer_channel = channel.clone();
+    let writer_key = transport.key.clone();
+    thread::spawn(move || run_writer(writer, outgoing, outbox, writer_channel, writer_key));
     let link_id = link.id;
     if transport
         .events
         .send(Event::PeerUp(Box::new(link.clone())))
         .is_err()
     {
+        link.close();
         return;
     }
     let mut last_sequence = 0;
@@ -802,6 +869,106 @@ mod tests {
             }
             _ => panic!("expected malformed-message diagnostic"),
         }
+    }
+
+    #[test]
+    fn stalled_peer_fills_its_own_queue_without_blocking_the_sender() {
+        let (client, mut server) = pair();
+        let (queue, outgoing) = mpsc::sync_channel(2);
+        let link = PeerLink {
+            key: [1; 32],
+            id: 1,
+            outbound: true,
+            remote: "test".into(),
+            queue,
+            outbox: Arc::new(Outbox {
+                queued_bytes: AtomicUsize::new(0),
+                socket: client,
+            }),
+        };
+        let message = WireMessage::GetBlocks { from_height: 1 };
+        // No writer drains the queue (a stalled peer); sends never block.
+        let started = Instant::now();
+        assert!(link.send(&message).is_ok());
+        assert!(link.send(&message).is_ok());
+        assert!(link.send(&message).is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Overflow closes the link instead of waiting for the slow reader,
+        // and a refused frame does not leak its byte reservation.
+        let mut byte = [0u8; 1];
+        assert_eq!(server.read(&mut byte).unwrap(), 0);
+        assert_eq!(
+            link.outbox.queued_bytes.load(Ordering::Acquire),
+            2 * message.approx_bytes()
+        );
+        drop(outgoing);
+    }
+
+    #[test]
+    fn outbound_byte_budget_is_reserved_and_released_exactly() {
+        let (client, _server) = pair();
+        let outbox = Outbox {
+            queued_bytes: AtomicUsize::new(0),
+            socket: client,
+        };
+        assert!(outbox.reserve(MAX_QUEUED_BYTES_PER_PEER - 10));
+        assert!(!outbox.reserve(11));
+        assert!(outbox.reserve(10));
+        assert!(!outbox.reserve(1));
+        assert!(!outbox.reserve(usize::MAX));
+        outbox.release(MAX_QUEUED_BYTES_PER_PEER);
+        assert_eq!(outbox.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn writer_thread_sends_queued_frames_in_order_and_stops_with_the_link() {
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let remote = SigningKey::from_bytes(&[2; 32]);
+        let allowed: BTreeSet<_> = [
+            local.verifying_key().to_bytes(),
+            remote.verifying_key().to_bytes(),
+        ]
+        .into_iter()
+        .collect();
+        let (mut client, mut server) = pair();
+        let allowed_remote = allowed.clone();
+        let server_thread = thread::spawn(move || {
+            let session = mutual_handshake(&mut server, 1, &remote, &allowed_remote, None).unwrap();
+            let channel =
+                negotiate(&mut server, 1, session.session_id, &remote, session.peer).unwrap();
+            (server, channel)
+        });
+        let session = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap();
+        let channel = negotiate(&mut client, 1, session.session_id, &local, session.peer).unwrap();
+        let (mut server, remote_channel) = server_thread.join().unwrap();
+        let (queue, outgoing) = mpsc::sync_channel(8);
+        let outbox = Arc::new(Outbox {
+            queued_bytes: AtomicUsize::new(0),
+            socket: client.try_clone().unwrap(),
+        });
+        let link = PeerLink {
+            key: session.peer,
+            id: 7,
+            outbound: true,
+            remote: "test".into(),
+            queue,
+            outbox: Arc::clone(&outbox),
+        };
+        let writer = thread::spawn(move || run_writer(client, outgoing, outbox, channel, local));
+        for from_height in 1..=3 {
+            link.send(&WireMessage::GetBlocks { from_height }).unwrap();
+        }
+        let mut last = 0;
+        for from_height in 1..=3 {
+            let received = remote_channel.recv(&mut server, &mut last).unwrap();
+            assert_eq!(received, WireMessage::GetBlocks { from_height });
+        }
+        assert_eq!(last, 3);
+        // Dropping every handle ends the writer thread and closes the socket.
+        drop(link);
+        writer.join().unwrap();
+        let mut byte = [0u8; 1];
+        assert_eq!(server.read(&mut byte).unwrap(), 0);
     }
 
     #[test]
