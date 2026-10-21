@@ -22,7 +22,11 @@ equal the key in the file. Names are cosmetic and unsigned.
 
 ## Transport
 
-- TCP with the bounded 4-byte length framing (`network::tcp`, max 4 MiB).
+- TCP with bounded 4-byte length framing (`network::tcp`, max 4 MiB for
+  encrypted application records). **Before authentication**, each challenge is
+  capped at 32 bytes, each signed hello at 136 bytes, and the signed X25519
+  offer at 96 bytes. Oversized frame headers are rejected before allocating
+  or reading the advertised body, limiting memory abuse during handshakes.
 - Mutual challenge-response: each side sends a fresh 32-byte challenge, answers
   the peer's challenge with the signed `AIVOBLOCK-PEER-HELLO-V1` message, and
   accepts the peer only if its key is a configured validator, is not its own,
