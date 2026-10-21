@@ -27,7 +27,7 @@ const AEAD_DOMAIN: &[u8] = b"AIVOBLOCK-ENCRYPTED-FRAME-V1\0";
 const EXCHANGE_BYTES: usize = 32 + 64;
 const AEAD_NONCE_BYTES: usize = 12;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EncryptedChannel {
     send_key: [u8; 32],
     recv_key: [u8; 32],
@@ -35,6 +35,17 @@ pub struct EncryptedChannel {
     session_id: [u8; 32],
     local: [u8; 32],
     peer: [u8; 32],
+}
+
+impl std::fmt::Debug for EncryptedChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptedChannel")
+            .field("chain_id", &self.chain_id)
+            .field("session_id", &"redacted")
+            .field("send_key", &"redacted")
+            .field("recv_key", &"redacted")
+            .finish()
+    }
 }
 
 fn exchange_preimage(
@@ -176,7 +187,8 @@ impl EncryptedChannel {
             &self.session_id,
             sequence,
         )?;
-        let cipher = ChaCha20Poly1305::new((&self.send_key).into());
+        let cipher = ChaCha20Poly1305::new_from_slice(&self.send_key)
+            .expect("fixed 32-byte ChaCha20-Poly1305 key");
         let aad = additional_data(
             self.chain_id,
             &self.session_id,
@@ -207,7 +219,8 @@ impl EncryptedChannel {
             io::Error::new(io::ErrorKind::InvalidData, "Encrypted-frame sequence overflow")
         })?;
         let ciphertext = recv_frame(stream)?;
-        let cipher = ChaCha20Poly1305::new((&self.recv_key).into());
+        let cipher = ChaCha20Poly1305::new_from_slice(&self.recv_key)
+            .expect("fixed 32-byte ChaCha20-Poly1305 key");
         let aad = additional_data(
             self.chain_id,
             &self.session_id,
