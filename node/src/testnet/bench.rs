@@ -147,7 +147,8 @@ fn python_partition_us(task: &AiTaskV3, iterations: u32) -> Result<Option<f64>, 
     let Some(script) = std::env::var_os("AIVOBLOCK_PYTHON_WORKER").filter(|v| !v.is_empty()) else {
         return Ok(None);
     };
-    let python = std::env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE").unwrap_or_else(|| "python3".into());
+    let python =
+        std::env::var_os("AIVOBLOCK_PYTHON_EXECUTABLE").unwrap_or_else(|| "python3".into());
     let client = PythonWorkerClient::new(python, script).map_err(|e| format!("{e:?}"))?;
     let backend = WorkerBackend::Python(client);
     let worker = task.partitions[0].worker;
