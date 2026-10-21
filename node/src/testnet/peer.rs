@@ -86,7 +86,9 @@ fn canonical_source_ip(ip: IpAddr) -> IpAddr {
 impl SourcePermit {
     fn acquire(counts: &Arc<Mutex<BTreeMap<IpAddr, usize>>>, ip: IpAddr) -> Option<Self> {
         let ip = canonical_source_ip(ip);
-        let mut locked = counts.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut locked = counts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let count = locked.entry(ip).or_default();
         if *count >= MAX_PENDING_HANDSHAKES_PER_IP {
             return None;
