@@ -228,7 +228,11 @@ fn run_connection(
         channel: channel.clone(),
     };
     let link_id = link.id;
-    if transport.events.send(Event::PeerUp(Box::new(link.clone()))).is_err() {
+    if transport
+        .events
+        .send(Event::PeerUp(Box::new(link.clone())))
+        .is_err()
+    {
         return;
     }
     let mut last_sequence = 0;
