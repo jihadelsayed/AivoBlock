@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -51,6 +51,9 @@ use crate::validator_certificate::{
     verify_precommit_v1, QuorumCertificateV1, SignedPrecommitV1,
 };
 
+/// Bound the shared event backlog so authenticated peers cannot make memory
+/// grow indefinitely when event producers outrun consensus processing.
+const MAX_PENDING_NODE_EVENTS: usize = 128;
 const MAX_PENDING_TASKS: usize = 256;
 const MAX_ORPHAN_CLAIMS: usize = 256;
 const MAX_FUTURE_COMMITS: usize = 128;
@@ -137,6 +140,12 @@ pub struct Counters {
     pub worker_failures: u64,
 }
 
+/// All peer, control, and worker threads share this bounded queue. A full
+/// queue blocks senders rather than retaining unlimited unprocessed frames.
+fn node_event_channel() -> (SyncSender<Event>, Receiver<Event>) {
+    mpsc::sync_channel(MAX_PENDING_NODE_EVENTS)
+}
+
 pub struct NodeOptions {
     pub name: String,
     pub config: Arc<NetworkConfig>,
@@ -198,7 +207,7 @@ pub fn start_node(options: NodeOptions) -> Result<NodeHandle, String> {
     let chain_dir = data_dir.join("chain");
     std::fs::create_dir_all(&chain_dir).map_err(|e| format!("{}: {e}", chain_dir.display()))?;
     let (chain, startup) = Chain::open(&chain_dir, &config, &engine)?;
-    let (events, receiver) = mpsc::channel();
+    let (events, receiver) = node_event_channel();
     let shutdown = Arc::new(AtomicBool::new(false));
     let connected = Arc::new(Mutex::new(BTreeSet::new()));
     let transport = Arc::new(Transport {
@@ -284,7 +293,7 @@ struct Node {
     startup: StartupReport,
     engine: SettlementEngine,
     worker: WorkerBackend,
-    events: Sender<Event>,
+    events: SyncSender<Event>,
     connected: Arc<Mutex<BTreeSet<[u8; 32]>>>,
     peers: BTreeMap<[u8; 32], PeerLink>,
     peer_heights: BTreeMap<[u8; 32], u64>,
@@ -1267,5 +1276,38 @@ impl Node {
             "uptime_ms": self.started.elapsed().as_millis() as u64,
             "recent_events": self.log,
         })
+    }
+}
+
+#[cfg(test)]
+mod event_queue_tests {
+    use super::*;
+
+    #[test]
+    fn shared_node_event_queue_rejects_overflow_and_reclaims_capacity() {
+        let (sender, receiver) = node_event_channel();
+        let event = || Event::HandshakeRejected {
+            remote: "192.0.2.1:12345".into(),
+            reason: "rejected".into(),
+        };
+
+        for _ in 0..MAX_PENDING_NODE_EVENTS {
+            assert!(sender.try_send(event()).is_ok());
+        }
+        assert!(matches!(
+            sender.try_send(event()),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Event::HandshakeRejected { .. })
+        ));
+        assert!(sender.try_send(event()).is_ok());
+        drop(receiver);
+        assert!(matches!(
+            sender.try_send(event()),
+            Err(mpsc::TrySendError::Disconnected(_))
+        ));
     }
 }

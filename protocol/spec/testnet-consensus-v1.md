@@ -62,6 +62,12 @@ equal the key in the file. Names are cosmetic and unsigned.
   rejected while all tracked entries are fresh. This is a best-effort source
   rate limiter, **not** a network-wide flood defense; validators behind one NAT
   share a rate budget, and many-source floods can still deny service.
+- The node dispatches peer, operator-control and AI-worker events through a
+  shared **128-event bounded channel** rather than an unbounded queue. When the
+  consumer falls behind, producers must wait for queue capacity, which applies
+  TCP backpressure to the authenticated peer reader before it can accept more
+  complete frames. This bounds queued event *count*, not CPU cost or the
+  individual message size; it does not replace network-wide flood protection.
 - Messages are JSON envelopes (`status`, `task`, `claim`, `proposal`, `vote`,
   `commit`, `get_blocks`) carrying hex of canonical binary encodings.
 - For each handshake, both nodes compute a shared SHA-256 session ID over a

@@ -6,7 +6,7 @@
 use std::io;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -29,7 +29,7 @@ pub enum ControlRequest {
     GetBlock { height: u64 },
 }
 
-fn serve_one(mut stream: TcpStream, events: &Sender<Event>) -> io::Result<()> {
+fn serve_one(mut stream: TcpStream, events: &SyncSender<Event>) -> io::Result<()> {
     configure_stream(&stream)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
@@ -53,7 +53,7 @@ fn serve_one(mut stream: TcpStream, events: &Sender<Event>) -> io::Result<()> {
 
 pub fn spawn_control_server(
     listener: TcpListener,
-    events: Sender<Event>,
+    events: SyncSender<Event>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
