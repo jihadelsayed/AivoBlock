@@ -229,19 +229,32 @@ impl Drop for OutboundAttemptPermit {
     }
 }
 
-/// TCP reader/writer with a single absolute handshake deadline. A socket
-/// read timeout is per blocking operation and can otherwise be repeatedly
-/// extended by a peer that sends only one byte at a time.
+/// TCP reader/writer with one absolute I/O deadline. Per-operation socket
+/// timeouts otherwise let peers extend an incomplete handshake or encrypted
+/// application frame indefinitely by trickling partial bytes.
 struct DeadlineStream<'a> {
     inner: &'a mut TcpStream,
     deadline: Instant,
+    operation_timeout: Duration,
 }
 
 impl<'a> DeadlineStream<'a> {
+    /// Share one overall ten-second deadline across both handshake stages.
     fn new(inner: &'a mut TcpStream, timeout: Duration) -> Self {
         Self {
             inner,
             deadline: Instant::now() + timeout,
+            operation_timeout: IO_TIMEOUT,
+        }
+    }
+
+    /// Refresh the idle budget for each *complete* encrypted application frame,
+    /// not after each partial header or payload read.
+    fn live_frame(inner: &'a mut TcpStream) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + PEER_READ_TIMEOUT,
+            operation_timeout: PEER_READ_TIMEOUT,
         }
     }
 
@@ -250,10 +263,10 @@ impl<'a> DeadlineStream<'a> {
         if remaining.is_zero() {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "Peer handshake deadline exceeded",
+                "Peer I/O deadline exceeded",
             ));
         }
-        Ok(remaining.min(IO_TIMEOUT))
+        Ok(remaining.min(self.operation_timeout))
     }
 }
 
@@ -488,7 +501,14 @@ fn run_connection(
     }
     let mut last_sequence = 0;
     while !transport.shutdown.load(Ordering::Relaxed) {
-        match channel.recv(&mut stream, &mut last_sequence) {
+        // A partially received encrypted frame cannot keep this worker alive
+        // indefinitely: the header and payload share one fixed time budget.
+        // A *complete* verified frame renews the idle deadline for the next.
+        let incoming = channel.recv(
+            &mut DeadlineStream::live_frame(&mut stream),
+            &mut last_sequence,
+        );
+        match incoming {
             Ok(message) => {
                 let inbound = Event::Inbound {
                     peer,
@@ -884,6 +904,48 @@ mod tests {
             1
         );
         assert!(dialing.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn encrypted_frame_deadline_does_not_reset_on_partial_payload_bytes() {
+        let (mut client, mut server) = pair();
+        let mut timed = DeadlineStream::live_frame(&mut client);
+        assert_eq!(timed.operation_timeout, PEER_READ_TIMEOUT);
+
+        // A peer sends a valid length header and one payload byte, then stalls.
+        server.write_all(&8u32.to_be_bytes()).unwrap();
+        server.write_all(b"a").unwrap();
+        let mut header = [0u8; 4];
+        timed.read_exact(&mut header).unwrap();
+        assert_eq!(header, 8u32.to_be_bytes());
+        let mut one = [0u8; 1];
+        timed.read_exact(&mut one).unwrap();
+        assert_eq!(one, [b'a']);
+
+        // Even if the rest is available, an expired frame cannot be completed.
+        timed.deadline = Instant::now() - Duration::from_millis(1);
+        server.write_all(b"bcdefgh").unwrap();
+        let mut remaining = [0u8; 7];
+        assert_eq!(
+            timed.read_exact(&mut remaining).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn encrypted_frame_deadline_refreshes_after_each_completed_frame() {
+        let (mut client, mut server) = pair();
+        send_frame(&mut server, b"first").unwrap();
+        send_frame(&mut server, b"second").unwrap();
+
+        let mut first = DeadlineStream::live_frame(&mut client);
+        assert_eq!(recv_frame_bounded(&mut first, 32).unwrap(), b"first");
+        // A successful frame should be able to reset the deadline without
+        // carrying forward its previous read budget.
+        first.deadline = Instant::now() - Duration::from_millis(1);
+        drop(first);
+        let mut next = DeadlineStream::live_frame(&mut client);
+        assert_eq!(recv_frame_bounded(&mut next, 32).unwrap(), b"second");
     }
 
     #[test]
