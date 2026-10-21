@@ -350,6 +350,49 @@ mod tests {
         (mine, other.join().unwrap())
     }
 
+
+    #[test]
+    fn oversized_challenge_is_rejected_before_its_body_is_read() {
+        use std::io::Write;
+
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let allowed: BTreeSet<_> = [SigningKey::from_bytes(&[2; 32])
+            .verifying_key()
+            .to_bytes()]
+        .into_iter()
+        .collect();
+        let (mut client, mut server) = pair();
+        server.write_all(&33u32.to_be_bytes()).unwrap();
+        let err = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap_err();
+        assert!(err.contains("receive challenge"));
+    }
+
+    #[test]
+    fn oversized_hello_is_rejected_before_its_body_is_read() {
+        use std::io::Write;
+
+        let local = SigningKey::from_bytes(&[1; 32]);
+        let remote = SigningKey::from_bytes(&[2; 32]);
+        let allowed: BTreeSet<_> = [remote.verifying_key().to_bytes()].into_iter().collect();
+        let (mut client, mut server) = pair();
+        let peer_thread = thread::spawn(move || {
+            // Respond with a legal challenge, read the local signed hello,
+            // then advertise an oversized peer hello without sending its body.
+            assert_eq!(recv_frame_bounded(&mut server, 32).unwrap().len(), 32);
+            send_frame(&mut server, &[8u8; 32]).unwrap();
+            assert_eq!(
+                recv_frame_bounded(&mut server, HELLO_BYTES).unwrap().len(),
+                HELLO_BYTES
+            );
+            server
+                .write_all(&((HELLO_BYTES + 1) as u32).to_be_bytes())
+                .unwrap();
+        });
+        let err = mutual_handshake(&mut client, 1, &local, &allowed, None).unwrap_err();
+        assert!(err.contains("receive hello"));
+        peer_thread.join().unwrap();
+    }
+
     #[test]
     fn configured_validators_authenticate_each_other() {
         let a = SigningKey::from_bytes(&[1; 32]);
