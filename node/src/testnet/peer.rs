@@ -248,6 +248,17 @@ impl<'a> DeadlineStream<'a> {
         }
     }
 
+    /// Cap an entire outgoing encrypted frame (header and ciphertext) by one
+    /// absolute deadline. A slow reader cannot renew this by accepting a few
+    /// more bytes before every per-write socket timeout.
+    fn outgoing_frame(inner: &'a mut TcpStream) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + PEER_READ_TIMEOUT,
+            operation_timeout: IO_TIMEOUT,
+        }
+    }
+
     /// Refresh the idle budget for each *complete* encrypted application frame,
     /// not after each partial header or payload read.
     fn live_frame(inner: &'a mut TcpStream) -> Self {
@@ -318,10 +329,17 @@ impl PeerLink {
         let next = sequence
             .checked_add(1)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Peer sequence overflow"))?;
-        match self
-            .channel
-            .send(&mut writer.stream, message, &self.local_key, sequence)
-        {
+        // Keep one fixed budget across every socket write in this encrypted
+        // frame, then restore the normal per-operation timeout for the link.
+        // Any send or restore error closes the stream before sequence reuse.
+        let sent = self.channel.send(
+            &mut DeadlineStream::outgoing_frame(&mut writer.stream),
+            message,
+            &self.local_key,
+            sequence,
+        );
+        let result = sent.and_then(|()| writer.stream.set_write_timeout(Some(IO_TIMEOUT)));
+        match result {
             Ok(()) => {
                 writer.next_sequence = next;
                 Ok(())
@@ -951,6 +969,33 @@ mod tests {
         }
         let mut next = DeadlineStream::live_frame(&mut client);
         assert_eq!(recv_frame_bounded(&mut next, 32).unwrap(), b"second");
+    }
+
+    #[test]
+    fn outgoing_frame_deadline_does_not_reset_after_partial_writes() {
+        let (mut client, mut server) = pair();
+        let mut timed = DeadlineStream::outgoing_frame(&mut client);
+        assert!(timed.remaining().unwrap() <= IO_TIMEOUT);
+        timed.write_all(b"one").unwrap();
+        let mut got = [0u8; 3];
+        server.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"one");
+
+        // Partial socket progress must not extend the original frame budget.
+        timed.deadline = Instant::now() - Duration::from_millis(1);
+        assert_eq!(
+            timed.write(b"two").unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(timed.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
+        drop(timed);
+
+        // A new complete frame gets an independent fresh deadline.
+        let mut next = DeadlineStream::outgoing_frame(&mut client);
+        next.write_all(b"ok").unwrap();
+        let mut got = [0u8; 2];
+        server.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"ok");
     }
 
     #[test]
