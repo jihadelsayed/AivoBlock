@@ -9,6 +9,7 @@
 pub mod handshake;
 pub mod p2p;
 pub mod tcp;
+pub mod tcp_auth;
 
 /// Identifies the wire protocol spoken by compatible nodes.
 /// Increment when making incompatible network-message changes.
