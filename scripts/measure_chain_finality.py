@@ -19,6 +19,7 @@ def measure_launch(net, *, samples, rows):
     nodes = net.nodes()
     net.up()
     measurements = []
+    launch_id = net.out.parent.name
     for index in range(samples):
         before = net.status("node-1")["height"]
         start = time.perf_counter_ns()
@@ -35,7 +36,7 @@ def measure_launch(net, *, samples, rows):
         if block is None or block["workload"] != "qmlp-v1":
             raise ValueError("QMLP task not included in observed finalized block")
         measurements.append({
-            "launch_id": net.out.name, "request_id": f"{net.out.name}-{index}",
+            "launch_id": launch_id, "request_id": f"{launch_id}-{index}",
             "task_id": task["task_id"], "finalized_height": target,
             "block_id": block["block_id"], "workload": "qmlp-v1",
             "rows": task["rows"], "validators": len(nodes),
