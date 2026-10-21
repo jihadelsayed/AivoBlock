@@ -85,8 +85,13 @@ equal the key in the file. Names are cosmetic and unsigned.
   Each complete encrypted frame (header plus ciphertext) must arrive within
   one **15-second absolute deadline**; partial reads cannot renew the budget.
   After a complete authenticated frame, a new 15-second deadline starts for the
-  next frame. A stalled or incomplete frame closes the connection, matching the
-  existing 15-second peer inactivity policy.
+  next frame. Each outbound encrypted frame (header plus ciphertext) also has
+  one **15-second absolute send deadline**; all socket writes use the smaller of
+  the normal 3-second per-write limit and the remaining total time. Partial
+  writes cannot renew the deadline. A send failure closes the connection without
+  reusing its sequence number; successful sends restore normal socket timeouts.
+  A stalled or incomplete frame closes the connection, matching the existing
+  15-second peer inactivity policy.
   The inner plaintext is the signed peer frame
   `version:u8=1 || sequence:u64_be || Ed25519-signature:64 || JSON`
   prefixed by its own 4-byte size. The nonce is `00000000 || sequence:u64_be`
