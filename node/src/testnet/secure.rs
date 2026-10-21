@@ -108,9 +108,8 @@ pub fn negotiate<S: Read + Write>(
     offer.extend_from_slice(&ephemeral_public);
     offer.extend_from_slice(&signature);
     send_frame(stream, &offer).map_err(|e| format!("send encrypted key exchange: {e}"))?;
-    let response =
-        recv_frame_bounded(stream, EXCHANGE_BYTES)
-            .map_err(|e| format!("receive encrypted key exchange: {e}"))?;
+    let response = recv_frame_bounded(stream, EXCHANGE_BYTES)
+        .map_err(|e| format!("receive encrypted key exchange: {e}"))?;
     if response.len() != EXCHANGE_BYTES {
         return Err("Incorrect encrypted key-exchange length".into());
     }
@@ -522,7 +521,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(last, 0);
     }
-
 
     #[test]
     fn key_exchange_rejects_oversized_offer_before_reading_payload() {
