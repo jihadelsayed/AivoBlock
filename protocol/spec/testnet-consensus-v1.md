@@ -46,8 +46,10 @@ equal the key in the file. Names are cosmetic and unsigned.
   as direction-specific HKDF info. This is an ephemeral session: reconnects
   exchange fresh keys and cannot reuse ciphertext from older sessions.
 - After key exchange, each peer message is an outer bounded TCP frame of
-  ChaCha20-Poly1305 ciphertext (16-byte authentication tag). The inner
-  plaintext is the signed peer frame
+  ChaCha20-Poly1305 ciphertext (16-byte authentication tag). The ciphertext,
+  **including its tag**, must fit within the 4 MiB outer-frame limit. The
+  sender rejects oversized messages before writing any outer-frame bytes.
+  The inner plaintext is the signed peer frame
   `version:u8=1 || sequence:u64_be || Ed25519-signature:64 || JSON`
   prefixed by its own 4-byte size. The nonce is `00000000 || sequence:u64_be`
   (sequence begins at 1); AEAD associated data includes a domain tag,
@@ -56,7 +58,9 @@ equal the key in the file. Names are cosmetic and unsigned.
 - Inner frame signatures cover the domain tag, chain ID, session ID, sender and
   recipient, sequence, length, and exact JSON payload. A receiver accepts only
   the immediate next sequence; failed decryption, signatures, replay, skipped
-  sequence, malformed frame or unsupported version terminate the link.
+  sequence, malformed frame or unsupported version terminate the link. The
+  replay counter advances only after the entire decrypted inner frame has
+  been validated, including checks for trailing data.
 - The encrypted validator transport hides P2P payload bytes against passive
   network observers. An on-path adversary can still see network endpoints,
   drop, delay or reset traffic. The local control API, endpoint compromise,

@@ -20,12 +20,17 @@ use x25519_dalek::{x25519, X25519_BASEPOINT_BYTES};
 use super::random_bytes32;
 use super::wire::{recv_authenticated_message, send_authenticated_message, WireMessage};
 use crate::network::tcp::{recv_frame, send_frame};
+use crate::network::MAX_MESSAGE_BYTES;
 
 const EXCHANGE_DOMAIN: &[u8] = b"AIVOBLOCK-ENCRYPTED-HANDSHAKE-V1\0";
 const KEY_DOMAIN: &[u8] = b"AIVOBLOCK-DIRECTIONAL-AEAD-V1\0";
 const AEAD_DOMAIN: &[u8] = b"AIVOBLOCK-ENCRYPTED-FRAME-V1\0";
 const EXCHANGE_BYTES: usize = 32 + 64;
 const AEAD_NONCE_BYTES: usize = 12;
+const AEAD_TAG_BYTES: usize = 16;
+/// The outer 4-byte length prefix does not count against the frame limit,
+/// but the AEAD tag does. The signed inner frame includes its own prefix.
+const MAX_SIGNED_FRAME_BYTES: usize = MAX_MESSAGE_BYTES - AEAD_TAG_BYTES;
 
 #[derive(Clone)]
 pub struct EncryptedChannel {
@@ -188,6 +193,14 @@ impl EncryptedChannel {
             &self.session_id,
             sequence,
         )?;
+        // Reject frames that would become oversized *after* AEAD adds its tag.
+        // No ciphertext, nor partial outer frame, is written on this error.
+        if signed_frame.len() > MAX_SIGNED_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Encrypted peer frame exceeds transport limit",
+            ));
+        }
         let cipher = ChaCha20Poly1305::new_from_slice(&self.send_key)
             .expect("fixed 32-byte ChaCha20-Poly1305 key");
         let aad = additional_data(
@@ -245,13 +258,16 @@ impl EncryptedChannel {
             })?;
         let len = plaintext.len() as u64;
         let mut reader = Cursor::new(plaintext);
+        // Commit the replay counter only after the *entire* decrypted
+        // envelope passes validation, including the no-trailing-data rule.
+        let mut verified_sequence = *last_sequence;
         let message = recv_authenticated_message(
             &mut reader,
             &self.peer,
             &self.local,
             self.chain_id,
             &self.session_id,
-            last_sequence,
+            &mut verified_sequence,
         )?;
         if reader.position() != len {
             return Err(io::Error::new(
@@ -259,6 +275,7 @@ impl EncryptedChannel {
                 "Unexpected trailing encrypted-frame data",
             ));
         }
+        *last_sequence = verified_sequence;
         Ok(message)
     }
 }
@@ -380,6 +397,129 @@ mod tests {
         wrong = bob_channel.clone();
         wrong.peer = [9u8; 32];
         assert!(wrong.recv(&mut Cursor::new(frame), &mut 0).is_err());
+    }
+
+    #[test]
+    fn encrypted_frame_size_counts_inner_prefix_and_aead_tag() {
+        let (alice_channel, bob_channel, alice, _) = channels();
+        // JSON escapes do not expand the ASCII 'a' block field.
+        let envelope = serde_json::to_vec(&WireMessage::Proposal {
+            height: 3,
+            round: 1,
+            block: String::new(),
+        })
+        .unwrap()
+        .len();
+        let inner_prefix = 4 + 1 + 8 + 64;
+        let max_block = MAX_MESSAGE_BYTES - AEAD_TAG_BYTES - inner_prefix - envelope;
+        let fits = WireMessage::Proposal {
+            height: 3,
+            round: 1,
+            block: "a".repeat(max_block),
+        };
+        let mut wire = Vec::new();
+        alice_channel.send(&mut wire, &fits, &alice, 1).unwrap();
+        assert_eq!(wire.len(), 4 + MAX_MESSAGE_BYTES);
+        let mut last = 0;
+        assert_eq!(
+            bob_channel.recv(&mut Cursor::new(wire), &mut last).unwrap(),
+            fits
+        );
+        assert_eq!(last, 1);
+
+        let too_large = WireMessage::Proposal {
+            height: 3,
+            round: 1,
+            block: "a".repeat(max_block + 1),
+        };
+        let mut rejected = Vec::new();
+        let err = alice_channel
+            .send(&mut rejected, &too_large, &alice, 2)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn encrypted_transport_rejects_plaintext_truncation_and_sequence_exhaustion() {
+        let (alice_channel, bob_channel, alice, _) = channels();
+        let mut plaintext = Vec::new();
+        send_authenticated_message(
+            &mut plaintext,
+            &proposal(),
+            &alice,
+            &bob_channel.local,
+            alice_channel.chain_id,
+            &alice_channel.session_id,
+            1,
+        )
+        .unwrap();
+        let mut sequence = 0;
+        assert!(bob_channel
+            .recv(&mut Cursor::new(plaintext), &mut sequence)
+            .is_err());
+        assert_eq!(sequence, 0);
+
+        let mut encrypted = Vec::new();
+        alice_channel
+            .send(&mut encrypted, &proposal(), &alice, 1)
+            .unwrap();
+        for n in [0, 1, 4, encrypted.len() - 1] {
+            let mut last = 0;
+            assert!(bob_channel
+                .recv(&mut Cursor::new(&encrypted[..n]), &mut last)
+                .is_err());
+            assert_eq!(last, 0);
+        }
+        let mut max_sequence = u64::MAX;
+        assert!(bob_channel
+            .recv(&mut Cursor::new(encrypted), &mut max_sequence)
+            .is_err());
+        assert_eq!(max_sequence, u64::MAX);
+    }
+
+    #[test]
+    fn malformed_authenticated_plaintext_does_not_advance_replay_counter() {
+        let (alice_channel, bob_channel, alice, _) = channels();
+        let mut signed = Vec::new();
+        send_authenticated_message(
+            &mut signed,
+            &proposal(),
+            &alice,
+            &bob_channel.local,
+            alice_channel.chain_id,
+            &alice_channel.session_id,
+            1,
+        )
+        .unwrap();
+        // Construct an otherwise valid AEAD record containing a signed frame
+        // followed by garbage. The peer must reject it without state changes.
+        signed.extend_from_slice(b"extra");
+        let aad = additional_data(
+            alice_channel.chain_id,
+            &alice_channel.session_id,
+            &alice_channel.local,
+            &alice_channel.peer,
+            1,
+        );
+        let cipher = ChaCha20Poly1305::new_from_slice(&alice_channel.send_key).unwrap();
+        let encrypted = cipher
+            .encrypt(
+                &nonce(1),
+                Payload {
+                    msg: &signed,
+                    aad: &aad,
+                },
+            )
+            .unwrap();
+        let mut wire = Vec::new();
+        send_frame(&mut wire, &encrypted).unwrap();
+        let mut last = 0;
+        let err = bob_channel
+            .recv(&mut Cursor::new(wire), &mut last)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(last, 0);
     }
 
     #[test]
