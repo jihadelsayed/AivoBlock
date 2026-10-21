@@ -938,12 +938,14 @@ mod tests {
         send_frame(&mut server, b"first").unwrap();
         send_frame(&mut server, b"second").unwrap();
 
-        let mut first = DeadlineStream::live_frame(&mut client);
-        assert_eq!(recv_frame_bounded(&mut first, 32).unwrap(), b"first");
-        // A successful frame should be able to reset the deadline without
-        // carrying forward its previous read budget.
-        first.deadline = Instant::now() - Duration::from_millis(1);
-        drop(first);
+        {
+            let mut first = DeadlineStream::live_frame(&mut client);
+            assert_eq!(recv_frame_bounded(&mut first, 32).unwrap(), b"first");
+            // A successful frame should be able to reset the deadline without
+            // carrying forward its previous read budget.
+            first.deadline = Instant::now() - Duration::from_millis(1);
+            assert_eq!(first.remaining().unwrap_err().kind(), io::ErrorKind::TimedOut);
+        }
         let mut next = DeadlineStream::live_frame(&mut client);
         assert_eq!(recv_frame_bounded(&mut next, 32).unwrap(), b"second");
     }
