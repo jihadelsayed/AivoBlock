@@ -330,7 +330,10 @@ mod tests {
         a: SigningKey,
         b: SigningKey,
         allowed: BTreeSet<[u8; 32]>,
-    ) -> (Result<AuthenticatedSession, String>, Result<AuthenticatedSession, String>) {
+    ) -> (
+        Result<AuthenticatedSession, String>,
+        Result<AuthenticatedSession, String>,
+    ) {
         let (mut left, mut right) = pair();
         let allowed_b = allowed.clone();
         let other = thread::spawn(move || mutual_handshake(&mut right, 1, &b, &allowed_b, None));
