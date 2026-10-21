@@ -105,6 +105,14 @@ equal the key in the file. Names are cosmetic and unsigned.
   window does. Independent configured validators have independent budgets.
   Only authenticated configured identities enter this map, so its size is
   bounded by the validator set. This is not a network-wide DDoS defense.
+- The consensus event loop **never writes to a socket**. Each authenticated
+  link has its own writer thread draining a bounded outbound queue (1024
+  frames, 32 MiB of estimated frame bytes); the writer owns the frame sequence
+  counter and keeps the absolute per-frame write deadline. Queueing never
+  blocks: a peer whose queue fills (it stopped reading) is disconnected and may
+  reconnect and resynchronize. This removes the cycle in which two nodes'
+  event loops block on each other's full socket buffers while their readers
+  block on full event queues.
 - Messages are JSON envelopes (`status`, `task`, `claim`, `proposal`, `vote`,
   `commit`, `get_blocks`) carrying hex of canonical binary encodings.
 - For each handshake, both nodes compute a shared SHA-256 session ID over a
@@ -223,7 +231,11 @@ equal the key in the file. Names are cosmetic and unsigned.
   rounds, re-proposals are byte-identical, and honest validators precommit
   one block per height.
 - Sync: peers advertise `(height, tip)` every second; a node behind sends
-  `get_blocks(from)` and receives up to 64 certified commits per request.
+  `get_blocks(from)` and receives up to 64 certified commits per request,
+  cut off after 8 MiB of hex. Requests go to each peer at most every 750 ms,
+  rotating among peers that claim to be ahead (least recently asked first), so
+  a peer advertising a false height cannot starve sync from honest peers. A
+  node serves each peer at most once per 250 ms.
   Commits for future heights are buffered and applied in order.
 
 ## Safety and liveness
