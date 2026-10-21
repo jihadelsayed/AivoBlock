@@ -1,0 +1,58 @@
+name: Research QMLP observed finality (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Docker prerequisites
+        run: |
+          docker --version
+          docker compose version
+      - name: Measure three fresh testnets, thirty real QMLP tasks per launch
+        run: |
+          python scripts/measure_chain_finality.py \
+            --launches 3 --samples 30 --rows 12 \
+            --out testnet/generated/measurements
+      - name: Verify raw observation counts and launch identities
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("testnet/generated/measurements")
+          files = sorted(base.glob("launch-???.json"))
+          assert len(files) == 3, f"expected 3 launches, found {len(files)}"
+          all_ids = set()
+          for path in files:
+              data = json.loads(path.read_text())
+              assert len(data) == 30, f"{path}: expected 30 observations"
+              assert len({x["launch_id"] for x in data}) == 1
+              for row in data:
+                  assert row["elapsed_ms"] > 0
+                  assert row["finalized_height"] >= 1
+                  assert row["workload"] == "qmlp-v1"
+                  assert row["request_id"] not in all_ids
+                  all_ids.add(row["request_id"])
+          assert len(all_ids) == 90
+          print("PASS: 90 real raw QMLP finality observations from 3 testnet launches")
+          PY
+      - name: Upload raw measurement evidence (no generated private keys)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qmlp-real-finality-evidence-${{ github.run_id }}
+          path: |
+            testnet/generated/measurements/launch-???.json
+            testnet/generated/measurements/launch-???/three-node/report.json
+          if-no-files-found: warn
+          retention-days: 30
