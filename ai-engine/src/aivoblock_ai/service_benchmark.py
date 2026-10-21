@@ -89,6 +89,7 @@ def measure(payload: dict, *, iterations: int = 20, batch: int = 64,
             digests[f"artifact_{name}_sha256"] = hashlib.sha256(encoded).hexdigest()
         for request in request_observations:
             request.update(paths)
+            request.update(digests)
         # Artifact byte hashes must not be confused with protocol commitments.
     report = {
         "schema_version": 1,
