@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "Please cite this research software release and its underlying evidence artifact. The manuscript is not yet an accepted or submitted preprint."
+type: software
+title: "AivoBlock: Research Prototype for Verifiable Partitioned AI Work on a Permissioned Blockchain"
+authors:
+  - family-names: ElSayed
+    given-names: Sayed Jihad
+repository-code: "https://github.com/jihadelsayed/AivoBlock"
+url: "https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype"
+version: "0.1.0-research-prototype"
+date-released: 2026-10-22
+keywords:
+  - blockchain
+  - artificial intelligence
+  - useful work
+  - verifiable computation
+  - deterministic inference
+  - research prototype
