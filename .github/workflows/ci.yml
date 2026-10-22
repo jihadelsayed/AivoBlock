@@ -371,6 +371,11 @@ jobs:
             --chain testnet/generated/trained-qmlp-chain \
             --service testnet/generated/service-baseline/summary.json \
             --out testnet/generated/trained-qmlp-identity.json
+      - name: Audit real task-to-finality evidence linkage
+        run: |
+          python3 scripts/audit_chain_evidence.py \
+            --chain testnet/generated/trained-qmlp-chain \
+            --out testnet/generated/chain-evidence-audit.json
       - name: Validate and summarize measured research artifacts
         run: |
           python3 scripts/analyze_research_results.py \
@@ -430,6 +435,7 @@ jobs:
             testnet/generated/trained-qmlp-chain/launch-???.json
             testnet/generated/trained-qmlp-chain/launch-???/three-node/report.json
             testnet/generated/trained-qmlp-identity.json
+            testnet/generated/chain-evidence-audit.json
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
