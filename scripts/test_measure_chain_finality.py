@@ -31,18 +31,25 @@ class StubNet:
 class RepeatedFinalityTests(unittest.TestCase):
     def test_measure_two_real_boundary_samples(self):
         n = StubNet()
-        with patch("measure_chain_finality.time.perf_counter_ns", side_effect=[10, 1000010, 20, 2000020]):
+        with patch("measure_chain_finality.time.perf_counter_ns", side_effect=[10, 400010, 1000010, 20, 600020, 2000020]):
             rows = measure_launch(n, samples=2, rows=12)
         self.assertEqual(len(rows), 2)
         self.assertEqual([x["finalized_height"] for x in rows], [1, 2])
         self.assertEqual([x["request_id"] for x in rows], ["launch-001-0", "launch-001-1"])
         self.assertEqual([x["elapsed_ms"] for x in rows], [1.0, 2.0])
+        self.assertEqual([x["timing_phases"]["cli_submission_ms"] for x in rows], [0.4, 0.6])
+        self.assertEqual([x["timing_phases"]["post_submission_to_observed_finality_ms"] for x in rows], [0.6, 1.4])
+        for item in rows:
+            self.assertEqual(item["timing_phases"]["total_ms"], item["elapsed_ms"])
+            self.assertEqual(item["timing_phases"]["clock"], item["clock"])
+            self.assertIsNone(item["timing_phases"]["ai_execution_only_ms"])
+            self.assertIsNone(item["timing_phases"]["consensus_only_ms"])
         self.assertEqual(n.saved, 2)
         self.assertEqual(n.last_interval, 1.0)
 
     def test_configurable_poll_interval(self):
         n = StubNet()
-        with patch("measure_chain_finality.time.perf_counter_ns", side_effect=[10, 1000010]):
+        with patch("measure_chain_finality.time.perf_counter_ns", side_effect=[10, 250010, 1000010]):
             rows = measure_launch(n, samples=1, rows=12, polling_interval_s=0.1)
         self.assertEqual(n.last_interval, 0.1)
         self.assertEqual(rows[0]["polling_interval_s"], 0.1)
