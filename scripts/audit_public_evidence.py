@@ -71,7 +71,9 @@ def check_stats(actual: list[float], claimed: dict, context: str) -> dict:
     return computed
 
 
-def audit(path: Path, expected_run_id: str | None = None) -> dict:
+def audit(path: Path, expected_run_id: str | None = None,
+          expected_source_head: str | None = None,
+          expected_checkout_sha: str | None = None) -> dict:
     with zipfile.ZipFile(path) as archive:
         members = archive.namelist()
         require(len(set(members)) == len(members), "duplicate archive member")
@@ -90,6 +92,12 @@ def audit(path: Path, expected_run_id: str | None = None) -> dict:
             value = manifest.get(field)
             require(isinstance(value, str) and len(value) == 40 and
                     set(value) <= HEX, f"invalid {field}")
+        if expected_source_head is not None:
+            require(manifest["source_head_sha"] == expected_source_head,
+                    "source head differs from the CI checkout event")
+        if expected_checkout_sha is not None:
+            require(manifest["tested_checkout_sha"] == expected_checkout_sha,
+                    "checkout SHA differs from the independent runner")
         entries = manifest.get("entries")
         require(isinstance(entries, list) and entries, "missing manifest entries")
         expected = {"manifest.json", "REPRODUCE.md"}
@@ -291,9 +299,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--archive", required=True, type=Path)
     p.add_argument("--expected-run-id")
+    p.add_argument("--expected-source-head")
+    p.add_argument("--expected-checkout-sha")
     p.add_argument("--out", type=Path)
     args = p.parse_args()
-    report = audit(args.archive, args.expected_run_id)
+    report = audit(args.archive, args.expected_run_id,
+                   args.expected_source_head, args.expected_checkout_sha)
     serialized = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
