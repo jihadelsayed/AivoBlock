@@ -290,24 +290,27 @@ jobs:
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
-      - name: Real one-task QMLP repeated-collector pilot
+      - name: Real three-task QMLP repeated-collector pilot
         run: |
           python3 scripts/measure_chain_finality.py \
-            --skip-build --launches 1 --samples 1 --rows 12 \
+            --skip-build --launches 1 --samples 3 --rows 12 \
             --out testnet/generated/pilot-measurements
           python3 - <<'PY'
           import json
           from pathlib import Path
           file = Path("testnet/generated/pilot-measurements/launch-000.json")
           rows = json.loads(file.read_text())
-          assert len(rows) == 1
-          row = rows[0]
-          assert row["elapsed_ms"] > 0
-          assert row["end_ns"] > row["start_ns"]
-          assert row["finalized_height"] >= 1
-          assert row["task_id"] and row["block_id"]
-          assert row["workload"] == "qmlp-v1"
-          print("PASS: one actual finalized QMLP task measured")
+          assert len(rows) == 3
+          assert len({r["request_id"] for r in rows}) == 3
+          assert len({r["finalized_height"] for r in rows}) == 3
+          assert len({r["block_id"] for r in rows}) == 3
+          for row in rows:
+              assert row["elapsed_ms"] > 0
+              assert row["end_ns"] > row["start_ns"]
+              assert row["finalized_height"] >= 1
+              assert row["task_id"] and row["block_id"]
+              assert row["workload"] == "qmlp-v1"
+          print("PASS: three actual finalized QMLP tasks measured")
           PY
       - name: Validate and summarize measured research artifacts
         run: |
