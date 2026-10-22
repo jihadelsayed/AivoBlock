@@ -78,6 +78,11 @@ def make_tex(source: str, meta: dict) -> str:
                                 r"\usepackage{xurl}"+"\n"+r"\usepackage{lmodern}",1)
     rewritten=re.sub(r"(?<![\\{])https?://[^\s{}\\]+",
                      lambda m: r"\url{" + m.group(0) + "}", rewritten)
+    # Long commit hashes are otherwise unbreakable inside \texttt and
+    # can extend beyond the text block. \path preserves the exact value,
+    # while xurl supplies safe breaks inside a long alphanumeric string.
+    rewritten=re.sub(r"\\texttt\{([0-9a-f]{40})\}",
+                     lambda m: r"\path{" + m.group(1) + "}", rewritten)
     # Any external include would require dependent files in the ZIP. Fail
     # rather than produce a paper with missing data/figures/references.
     require(re.search(r"\\(?:input|include|includegraphics|bibliography|addbibresource|lstinputlisting)\b",
