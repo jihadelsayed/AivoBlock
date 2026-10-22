@@ -66,6 +66,10 @@ jobs:
         run: python -m unittest discover -s scripts -p "test_package_research_evidence.py" -v
       - name: Validate independent archive reanalysis (synthetic fixtures only)
         run: python -m unittest discover -s scripts -p "test_audit_public_evidence.py" -v
+      - name: Check research prerelease disclosures and licensing (stdlib only)
+        run: |
+          python -m unittest discover -s scripts -p "test_check_release_readiness.py" -v
+          python scripts/check_release_readiness.py
       - name: Validate workload manifest (stdlib only)
         run: python -m unittest discover -s scripts -p "test_workload_manifest.py" -v
 
@@ -508,6 +512,66 @@ jobs:
           path: independent-output/audit.json
           if-no-files-found: error
           retention-days: 90
+  release:
+    name: Publish evidence-backed prototype prerelease (main only)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [format, python, pytorch_onnx, haskell, rust, cross_language, testnet_e2e, evidence_reanalysis, protobuf]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download this-run validated evidence ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: research-evidence-bundle
+          path: release-assets
+      - name: Download this-run independent audit report
+        uses: actions/download-artifact@v4
+        with:
+          name: independent-evidence-audit
+          path: release-assets
+      - name: Verify evidence, external checksum and reserved-rights release claims
+        run: |
+          set -euo pipefail
+          python3 scripts/check_release_readiness.py --out release-assets/release-readiness.json
+          python3 scripts/package_research_evidence.py verify \
+            release-assets/aivoblock-research-evidence.zip
+          python3 scripts/audit_public_evidence.py \
+            --archive release-assets/aivoblock-research-evidence.zip \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-source-head "$GITHUB_SHA" \
+            --expected-checkout-sha "$GITHUB_SHA" \
+            --out release-assets/independent-audit-recomputed.json
+          cmp release-assets/independent-audit-recomputed.json release-assets/audit.json
+          mv release-assets/audit.json release-assets/independent-audit.json
+          (cd release-assets && sha256sum \
+            aivoblock-research-evidence.zip independent-audit.json \
+            release-readiness.json > SHA256SUMS.txt)
+      - name: Publish immutable-source research prototype prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=v0.1.0-research-prototype
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace its recorded evidence."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AivoBlock v0.1.0 — Research Prototype" \
+            --notes-file docs/releases/v0.1.0-research-prototype.md \
+            --prerelease \
+            --latest=false \
+            release-assets/aivoblock-research-evidence.zip \
+            release-assets/independent-audit.json \
+            release-assets/release-readiness.json \
+            release-assets/SHA256SUMS.txt
   protobuf:
     name: Protocol schemas
     runs-on: ubuntu-24.04
