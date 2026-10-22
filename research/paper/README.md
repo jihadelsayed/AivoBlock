@@ -19,9 +19,13 @@ python3 scripts/check_manuscript_evidence.py \
 
 GitHub Actions also runs this check and `scripts/check_literature_review.py` with independent regression tests in the **Research paper figures against published v0.1.0 data** job. It validates numeric table cells, release revision, archive checksum and essential research limitations. It is a **mechanical consistency check**, not validation of novelty, formal security, economic viability or scientific conclusions.
 
+## Typeset PDF and author-facing submission guide
+
+The [author approval and archive submission guide](SUBMISSION.md) describes arXiv eligibility, possible endorsement, separate software and paper licenses, the disclosure of substantial AI-writing assistance, data DOI archival, and the required explicit human publication sign-off. The publication metadata is tracked in [`submission-metadata.json`](submission-metadata.json); **all publication approvals remain pending**. The GitHub CI `preprint` job builds a PDF/LaTeX review bundle and never submits it to arXiv, Zenodo, or another archive.
+
 ## Remaining before public preprint
 
 - Milestone #110: completed a **targeted, non-systematic** [primary-source related-work review](related-work-review.md), including AI training mining, permissionless useful-work schemes and close 2026 inference proposals. This does not certify novelty, freedom to operate or security.
-- Milestone #111: review title/author and affiliation approval, resolve software/paper reuse rights and preprint venue, generate a final typeset version, archive data permanently with a DOI where appropriate, and submit only after the author chooses an archive.
+- Milestone #111: prepare a typeset preprint candidate and publication metadata, then obtain author approval of authorship, affiliation, substantial AI-use disclosure, IP/license rights, and venue. Actual public submission and DOI archival **cannot be claimed** until an author has completed the venue's process and a public record is verified.
 
 The prototype GitHub release is public but currently **all rights reserved**. Publishing the paper and licensing code are separate decisions.
