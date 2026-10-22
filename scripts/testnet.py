@@ -263,9 +263,10 @@ class Testnet:
         self.step("task", task=task)
         return task
 
-    def wait_height(self, height: int, nodes: list[str], timeout: float = 180) -> None:
+    def wait_height(self, height: int, nodes: list[str], timeout: float = 180,
+                    interval: float = 1.0) -> None:
         self.wait(f"height {height} finalized on {nodes}", timeout,
-                  lambda: all(self.status(n)["height"] >= height for n in nodes))
+                  lambda: all(self.status(n)["height"] >= height for n in nodes), interval=interval)
 
     def verify(self, nodes: list[str]) -> dict:
         statuses = {n: self.status(n) for n in nodes}
