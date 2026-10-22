@@ -9,14 +9,14 @@ result, or independent confirmation of broad blockchain/AI performance claims.
 ## Contents and provenance
 
 The artifact **research-evidence-bundle** contains
-\`aivoblock-research-evidence.zip\` with:
+`aivoblock-research-evidence.zip` with:
 
-- \`manifest.json\`: SHA-256 digest and byte count for every packaged file,
+- `manifest.json`: SHA-256 digest and byte count for every packaged file,
   source-head commit, **actual CI checkout** commit, CI run ID, and limitations.
-- \`REPRODUCE.md\`: command-line verification and analysis instructions.
-- \`evidence/research-out/\`: the trained digits QMLP-V1 export, main research
+- `REPRODUCE.md`: command-line verification and analysis instructions.
+- `evidence/research-out/`: the trained digits QMLP-V1 export, main research
   report, and the three independent dataset/model seed reports.
-- \`evidence/testnet/generated/\`: verifier and research summaries, three
+- `evidence/testnet/generated/`: verifier and research summaries, three
   benchmark invocations, workload manifest, separate phase summaries for
   seeded/fast-poll/trained runs, CPU service observations, the exact service
   model/input/result artifact bytes, all 270 raw chain observations, launch
@@ -39,17 +39,17 @@ manifest itself must be obtained from a trusted GitHub Actions run.
 
 Install [GitHub CLI](https://cli.github.com/) and Python 3.11+. From a clone
 of this repository, download a **successful** GitHub CI run that executed the
-Docker testnet job and produced \`research-evidence-bundle\`:
+Docker testnet job and produced `research-evidence-bundle`:
 
-\`\`\`bash
+```bash
 gh run download RUN_ID -R jihadelsayed/AivoBlock \
   -n research-evidence-bundle -D publication
 python3 scripts/package_research_evidence.py verify \
   publication/aivoblock-research-evidence.zip
 unzip publication/aivoblock-research-evidence.zip -d publication/unpacked
-\`\`\`
+```
 
-The ZIP includes \`REPRODUCE.md\` with the exact source and checkout hashes.
+The ZIP includes `REPRODUCE.md` with the exact source and checkout hashes.
 Use a released or explicitly chosen successful main-branch run for the final
 citation rather than describing a PR's temporary merge SHA as a permanent
 release. Artifacts expire under repository retention settings, so the final
@@ -58,7 +58,7 @@ research-data repository (later publication milestone).
 
 ## Recalculate the descriptive chain observations
 
-\`\`\`bash
+```bash
 python3 scripts/summarize_chain_phases.py \
   --directory publication/unpacked/evidence/testnet/generated/trained-qmlp-chain \
   --out publication/trained-qmlp-summary.json
@@ -68,7 +68,7 @@ python3 scripts/summarize_chain_phases.py \
 python3 scripts/summarize_chain_phases.py \
   --directory publication/unpacked/evidence/testnet/generated/fast-poll-measurements \
   --out publication/seeded-100ms-summary.json
-\`\`\`
+```
 
 These calculations require **no Docker** and do not invent timing results.
 To **rerun** the experiment (not merely reanalyze prior measurements),
@@ -76,6 +76,36 @@ check out the recorded source SHA, ensure Docker + Compose v2 and
 Python 3.11+ are installed, then follow the [private testnet guide](testnet.md)
 and CI workflow. Running the full workflow is substantially more expensive
 and can produce different times on different machines or under contention.
+
+## Independent reanalysis on a separate runner
+
+After the Docker producer job succeeds, GitHub Actions starts the
+`Independent research evidence reanalysis (fresh runner)` job. This job
+downloads **the uploaded ZIP** using `actions/download-artifact@v4` and runs
+`scripts/audit_public_evidence.py` **without importing** the producer package
+or the original summary analyzer. It recomputes all raw per-launch and pooled
+descriptive statistics (3 × 30 records for each of three chain scenarios),
+rechecks the 90 CPU service observations, verifies SHA-256 bytes and finalized
+model/input/result commitments, and fails on manipulated timing results.
+
+It verifies that the ZIP records the same GitHub workflow run, tested
+checkout and source-head SHA as the current CI event. Its output is the
+`independent-evidence-audit` artifact containing `audit.json`.
+
+To rerun this **data reanalysis** after downloading the evidence ZIP:
+
+```bash
+python3 scripts/audit_public_evidence.py \
+  --archive publication/aivoblock-research-evidence.zip \
+  --out publication/independent-audit.json
+```
+
+This checks whether a *different implementation, in a different CI job*,
+obtains the same conclusions from the saved data. It is **not** an
+independently rerun 270-task blockchain experiment, a hardware-separated
+performance replication, an external lab verification, or peer review.
+An external researcher should separately rebuild/rerun and publish their
+run identifiers, raw data, hardware specifications and deviations.
 
 ## Scientific limitations
 
