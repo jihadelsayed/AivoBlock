@@ -517,6 +517,50 @@ jobs:
           path: research/paper/aivoblock-manuscript.md
           if-no-files-found: error
           retention-days: 90
+  preprint:
+    name: Review-only preprint PDF/TeX package (no public submission)
+    needs: [manuscript]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assert explicit non-submission and author approval gates
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_preprint_package.py' -v
+          python3 scripts/check_preprint_package.py
+      - name: Build typeset PDF, LaTeX, sources, and SHA-256 manifest
+        run: bash scripts/build_preprint.sh
+      - name: Inspect PDF text, page count, and source metadata
+        run: |
+          python3 -m pip install 'pypdf>=5,<7'
+          python3 - <<'PY'
+          from pathlib import Path
+          from pypdf import PdfReader
+          import json
+          base=Path('research/paper/build')
+          pdf=base/'aivoblock-preprint.pdf'
+          assert pdf.read_bytes().startswith(b'%PDF-'), 'not PDF'
+          reader=PdfReader(str(pdf))
+          assert 6 <= len(reader.pages) <= 100, 'implausible paper pagination'
+          body='\n'.join((p.extract_text() or '') for p in reader.pages)
+          for marker in ('AivoBlock','730.760','References','Generative AI assistance'):
+              assert marker.lower() in body.lower(), f'PDF missing marker {marker}'
+          readiness=json.loads((base/'submission-readiness.json').read_text())
+          assert readiness['publicly_submitted'] is False
+          assert readiness['approval_count']==0
+          print(f'PASS: {len(reader.pages)} readable PDF pages; author approvals pending')
+          PY
+      - name: Upload offline review-only preprint candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: aivoblock-preprint-candidate
+          path: research/paper/build/
+          if-no-files-found: error
+          retention-days: 90
   evidence_reanalysis:
     name: Independent research evidence reanalysis (fresh runner)
     needs: [testnet_e2e]

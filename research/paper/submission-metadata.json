@@ -1,0 +1,48 @@
+{
+  "schema": "aivoblock-preprint-candidate-v1",
+  "title": "AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work",
+  "version": "preprint-candidate-0.3",
+  "prepared_on": "2026-10-22",
+  "creators": [
+    {
+      "name": "Sayed Jihad ElSayed",
+      "affiliation": null,
+      "orcid": null,
+      "confirmed_by_author": false
+    }
+  ],
+  "proposed_subjects": [
+    "Computer Science - Distributed, Parallel, and Cluster Computing (cs.DC)",
+    "Computer Science - Cryptography and Security (cs.CR)"
+  ],
+  "keywords": [
+    "permissioned blockchain",
+    "proof of useful work",
+    "verifiable AI inference",
+    "deterministic quantization",
+    "reproducible experiments"
+  ],
+  "manuscript_path": "research/paper/aivoblock-manuscript.md",
+  "evidence_release": "https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype",
+  "evidence_commit": "ade6ff42737d972658e9c309f9a2d8cffbfb988c",
+  "evidence_run_id": "39740779280",
+  "existing_paper_doi": null,
+  "preprint_doi": null,
+  "arxiv_id": null,
+  "requested_archive": "arxiv_candidacy_review",
+  "publicly_submitted": false,
+  "approval": {
+    "author_identity_and_order": false,
+    "affiliation_and_orcid": false,
+    "all_coauthor_and_contributor_permissions": false,
+    "rights_to_distribute": false,
+    "manuscript_content_and_citations": false,
+    "ai_assistance_disclosure": false,
+    "funding_and_conflicts": false,
+    "preprint_license": false,
+    "arxiv_account_and_category_eligibility": false,
+    "explicit_publish_authorization": false
+  },
+  "ai_assistance_note": "OpenAI ChatGPT assisted in manuscript text drafting/editing, code development and research-evidence checking. Human author must substantially review, verify and approve all content. This is not independently verified scholarship solely because CI passes.",
+  "intended_status": "NOT SUBMITTED; PREPRINT RELEASE REQUIRES EXPLICIT AUTHOR APPROVAL"
+}

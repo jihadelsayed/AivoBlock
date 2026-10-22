@@ -195,6 +195,18 @@ A stronger follow-up should (i) run independent geographically/hardware-separate
 
 AivoBlock v0.1.0 demonstrates a **working permissioned prototype** integrating trained-and-quantized AI tasks, partitioned worker execution, independent integer verification, quorum-based finalization, and deterministic reward settlement. The published evidence documents repeatable local execution and client-observed timings with an independently verified analysis pipeline. In the trained QMLP condition, 90 finalized tasks had a **730.760 ms** median client-observed request-to-finality time under 100 ms polling, while a separately timed CPU-only service measured **1.880 ms** median under a narrower boundary. Neither number implies PoW-equivalent network security or a meaningful service-versus-chain performance ratio. The contribution is a bounded, reproducible implementation and characterization of its limits, providing a platform for rigorously comparing useful-work verification designs in subsequent research.
 
+## Author disclosures and research integrity
+
+**Generative AI assistance (subject to author review):** OpenAI ChatGPT (GPT-6) substantially assisted with manuscript drafting and editing, related-work organization, programming, and development of evidence-checking scripts. Such assistance is not independent scientific validation. The named human author must read and substantively review this manuscript, check each source and result, make all required corrections, determine contributor credit, and accept responsibility for the submitted work. ChatGPT is not listed as an author.
+
+**Authorship and affiliation:** The author name shown on this draft reflects the AivoBlock project record; final legal name formatting, institutional affiliation, contact information, ORCID, acknowledgement of contributors and any potential coauthors must be explicitly approved before submission.
+
+**Funding and competing interests:** Funding, sponsor roles and competing-interest declarations have **not yet been confirmed by the author**. No assertion of “no conflicts” or “no external funding” is made at this stage.
+
+**Ethics and data:** Experiments use synthetic model inputs and private testnet data; the paper makes no claims involving recruited human subjects. Evidence, code, raw archived measurements and integrity digests are linked below. This does not substitute for determining whether any university or sponsor disclosure policy applies.
+
+**Software versus paper rights:** The published prototype source has an all-rights-reserved notice. A manuscript-distribution license, including any arXiv license or separate license for research data, must be selected by the person(s) with relevant rights before posting.
+
 ## Artifact availability and reproducibility
 
 - **Tagged release:** https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype
