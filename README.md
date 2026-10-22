@@ -97,6 +97,7 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 - [Measured research results (21 Oct 2026)](docs/research-results-2026-10-21.md) — benchmark evidence, quantized-model accuracy, Haskell IPC overhead, scaling limitations and reproduction commands.
 - [Repeated-seed research methodology](docs/research-replicates.md) — multiple independent data/training seeds, repeated verifier measurements and statistical limitations.
 - [Public research reproducibility package](docs/research-reproducibility-package.md) — curated experimental evidence, SHA-256 integrity checks, exact CI revision and commands for independently inspecting the data.
+- [Research prototype release](docs/releases/v0.1.0-research-prototype.md) — scope, scientific limitations, release evidence and verification steps.
 - [Standalone AI versus blockchain verifier](docs/standalone-comparison.md) — controlled integer inference baseline, matched tasks, validation overhead and explicit comparison limits.
 - [AI workloads](docs/ai-workloads.md) — which AI computations are consensus-verifiable (integer linear, QMLP-V1) and the off-chain PyTorch → QMLP-V1 → ONNX path.
 - [Architecture](docs/architecture.md) — components, node responsibilities, and trust boundaries.
@@ -126,10 +127,10 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 - Do not use this prototype to protect real funds or deploy a public mainnet.
 - Build, test and testnet results are produced by CI; see the testnet guide for the latest verified run.
 
-## License
-MIT
-See [LICENSE](LICENSE). The repository currently carries an all-rights-reserved notice; no open-source license has been selected.
+## Licensing and use
 
-
-
-.\scripts\setup.ps1
+**Source-available research prototype; all rights reserved at this time.**
+The repository is public for inspection and research discussion, but the current
+[LICENSE](LICENSE) does **not** grant an open-source license or permission to
+redistribute/modify the code. An open-source license may be chosen separately
+by the rights holders. Third-party dependencies retain their own licenses.
