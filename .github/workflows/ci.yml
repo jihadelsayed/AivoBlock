@@ -324,6 +324,18 @@ jobs:
           assert len(launch_ids) == 3 and len(all_requests) == 90
           print("PASS: ninety real finalized QMLP tasks across three fresh testnets")
           PY
+      - name: Measure QMLP with shorter finality observation polling
+        run: |
+          python3 scripts/measure_chain_finality.py \
+            --skip-build --launches 3 --samples 30 --rows 12 \
+            --polling-interval-s 0.1 \
+            --out testnet/generated/fast-poll-measurements
+      - name: Compare 1.0s and 0.1s QMLP polling observations
+        run: |
+          python3 scripts/compare_polling_cadence.py \
+            --slow testnet/generated/pilot-measurements \
+            --fast testnet/generated/fast-poll-measurements \
+            --out testnet/generated/polling-comparison.json
       - name: Validate and summarize measured research artifacts
         run: |
           python3 scripts/analyze_research_results.py \
@@ -373,6 +385,9 @@ jobs:
             testnet/generated/*/compose.log
             testnet/generated/pilot-measurements/launch-???.json
             testnet/generated/pilot-measurements/launch-???/three-node/report.json
+            testnet/generated/fast-poll-measurements/launch-???.json
+            testnet/generated/fast-poll-measurements/launch-???/three-node/report.json
+            testnet/generated/polling-comparison.json
           if-no-files-found: warn
 
   protobuf:
