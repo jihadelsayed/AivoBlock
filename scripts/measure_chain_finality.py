@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Measure repeated real QMLP testnet submissions; no synthetic observations.
 
-Each launch generates fresh private-testnet keys and storage. CLI submission,
-consensus, and polling all validators are included in the timed boundary.
+Each launch generates fresh private-testnet keys and storage. Record the real
+CLI-submission and post-submission-to-observed-finality intervals separately;
+the latter includes worker execution, network/consensus, and status polling.
+These are client observation phases, not isolated consensus or AI runtimes.
 Output is raw evidence, NOT a matched three-scenario benchmark fragment.
 """
 import argparse
@@ -10,7 +12,7 @@ import json
 import time
 from pathlib import Path
 
-from testnet import Testnet, observed_finality_timing, run, ROOT, IMAGE
+from testnet import Testnet, observed_finality_timing, submission_observation_timing, run, ROOT, IMAGE
 
 
 def measure_launch(net, *, samples, rows, polling_interval_s=1.0, qmlp_export=None):
@@ -32,13 +34,16 @@ def measure_launch(net, *, samples, rows, polling_interval_s=1.0, qmlp_export=No
         start = time.perf_counter_ns()
         task = (net.submit("--qmlp-file", "/tmp/measurement.qmlp.json") if qmlp_export is not None
                 else net.submit("--workload", "qmlp", "--rows", str(rows)))
+        submitted_ns = time.perf_counter_ns()
         if qmlp_export is not None and task["rows"] != rows:
             raise ValueError("submitted QMLP row count mismatches trained export")
         target = int(task["sequence"])
         if target <= before:
             raise ValueError("submitted task did not advance target height")
         net.wait_height(target, nodes, interval=polling_interval_s)
-        timing = observed_finality_timing(start, time.perf_counter_ns())
+        observed_ns = time.perf_counter_ns()
+        timing = observed_finality_timing(start, observed_ns)
+        phases = submission_observation_timing(start, submitted_ns, observed_ns)
         status = net.verify(nodes)
         if status["height"] < target:
             raise ValueError("target height not observed")
@@ -63,6 +68,7 @@ def measure_launch(net, *, samples, rows, polling_interval_s=1.0, qmlp_export=No
             **({"finalized_block_evidence_path": str(evidence_path.relative_to(net.out.parent.parent))} if qmlp_export is not None else {}),
             "rows": task["rows"], "validators": len(nodes),
             "observation_boundary": "before_cli_submission_to_all_validator_height_poll",
+            "timing_phases": phases,
             "polling_interval_s": polling_interval_s,
             "fixture_source": "trained_qmlp_export" if qmlp_export is not None else "seeded_node_fixture",
             **({key: export[key] for key in ("model_commitment", "result_commitment")}
