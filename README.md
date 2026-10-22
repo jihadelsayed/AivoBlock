@@ -98,6 +98,7 @@ This runs the three-node end-to-end demonstration and the four-validator fault-t
 - [Repeated-seed research methodology](docs/research-replicates.md) — multiple independent data/training seeds, repeated verifier measurements and statistical limitations.
 - [Public research reproducibility package](docs/research-reproducibility-package.md) — curated experimental evidence, SHA-256 integrity checks, exact CI revision and commands for independently inspecting the data.
 - [Research prototype release](docs/releases/v0.1.0-research-prototype.md) — scope, scientific limitations, release evidence and verification steps.
+- [Scientific research-paper manuscript (draft)](research/paper/aivoblock-manuscript.md) — experiment-grounded methods, architecture, tables, limitations and provisional citations; not yet peer reviewed.
 - [Standalone AI versus blockchain verifier](docs/standalone-comparison.md) — controlled integer inference baseline, matched tasks, validation overhead and explicit comparison limits.
 - [AI workloads](docs/ai-workloads.md) — which AI computations are consensus-verifiable (integer linear, QMLP-V1) and the off-chain PyTorch → QMLP-V1 → ONNX path.
 - [Architecture](docs/architecture.md) — components, node responsibilities, and trust boundaries.
