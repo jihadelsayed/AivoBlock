@@ -17,6 +17,7 @@ TEX_EXAMPLE=(
     "Generative AI assistance\n"+
     r"\href{https://github.com/jihadelsayed/AivoBlock}{AivoBlock repo}"+"\n"+
     "https://github.com/jihadelsayed/AivoBlock/releases/download/v0.1.0-research-prototype/SHA256SUMS.txt\n"+
+    r"\texttt{ade6ff42737d972658e9c309f9a2d8cffbfb988c}"+"\n"+
     "ade6ff42737d972658e9c309f9a2d8cffbfb988c\n"+
     "AivoBlock experimental verification and additional evidence. "*250+"\n"+
     r"\end{document}"+"\n"
@@ -37,6 +38,7 @@ class ArxivCandidateTests(unittest.TestCase):
         self.assertIn("not been submitted to arXiv",ready)
         self.assertIn("Generative AI assistance",ready)
         self.assertIn(r"\usepackage{xurl}",ready)
+        self.assertIn(r"\path{ade6ff42737d972658e9c309f9a2d8cffbfb988c}",ready)
         self.assertIn(r"\url{https://github.com/jihadelsayed/AivoBlock/releases/",ready)
         self.assertIn(r"\href{https://github.com/jihadelsayed/AivoBlock}{AivoBlock repo}",ready)
 
