@@ -73,6 +73,13 @@ def audit(paper, archive):
         require(model.get(title) == [f"{val:.1f}%"], "model accuracy differs: " + title)
     require(model.get("Integer ONNX vs QMLP-V1 reference mismatches") ==
             [str(base["onnx_integer"]["mismatched_rows"]) + "/500"], "ONNX data differ")
+    expected_seeds = ", ".join(f"{value:.1f}%" for value in
+                               variation["accuracy_percent"]["float"]["observations"])
+    require(expected_seeds in paper and "(seeds 11, 17 and 23, respectively)" in paper,
+            "paper mismatches float-model seed replication order")
+    require(variation["accuracy_percent"]["qmlp"]["observations"] == [96.0, 96.0, 96.0]
+            and "quantized accuracies **96.0%** in each run" in paper,
+            "paper mismatches quantized-model replication")
 
     verifiers = rows_in_section(paper, "4.2 ")
     candidates = {
