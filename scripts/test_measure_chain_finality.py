@@ -17,8 +17,9 @@ class StubNet:
         return {"height": self.height}
     def submit(self, *args):
         return {"sequence": self.height + 1, "task_id": f"task-{self.height + 1}", "rows": 12}
-    def wait_height(self, target, nodes):
+    def wait_height(self, target, nodes, interval=1.0):
         self.height = target
+        self.last_interval = interval
     def verify(self, nodes):
         return {"height": self.height, "blocks": [
             {"height": h, "workload": "qmlp-v1", "block_id": f"block-{h}"}
@@ -37,6 +38,18 @@ class RepeatedFinalityTests(unittest.TestCase):
         self.assertEqual([x["request_id"] for x in rows], ["launch-001-0", "launch-001-1"])
         self.assertEqual([x["elapsed_ms"] for x in rows], [1.0, 2.0])
         self.assertEqual(n.saved, 2)
+        self.assertEqual(n.last_interval, 1.0)
+
+    def test_configurable_poll_interval(self):
+        n = StubNet()
+        with patch("measure_chain_finality.time.perf_counter_ns", side_effect=[10, 1000010]):
+            rows = measure_launch(n, samples=1, rows=12, polling_interval_s=0.1)
+        self.assertEqual(n.last_interval, 0.1)
+        self.assertEqual(rows[0]["polling_interval_s"], 0.1)
+
+    def test_invalid_poll_interval(self):
+        with self.assertRaises(ValueError):
+            measure_launch(StubNet(), samples=1, rows=12, polling_interval_s=0)
 
     def test_reject_invalid_sample_count(self):
         with self.assertRaises(ValueError):

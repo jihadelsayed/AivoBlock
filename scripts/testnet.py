@@ -196,7 +196,7 @@ class Testnet:
     def status(self, node: str) -> dict:
         return self.client(node, "status")
 
-    def wait(self, what: str, timeout: float, predicate) -> None:
+    def wait(self, what: str, timeout: float, predicate, interval: float = 1.0) -> None:
         started = time.time()
         last_error = None
         while time.time() - started < timeout:
@@ -206,7 +206,7 @@ class Testnet:
                     return
             except Failure as error:
                 last_error = error
-            time.sleep(1)
+            time.sleep(interval)
         raise Failure(f"timed out after {timeout}s waiting for {what}; last error: {last_error}")
 
     # --- lifecycle -------------------------------------------------------
@@ -263,9 +263,10 @@ class Testnet:
         self.step("task", task=task)
         return task
 
-    def wait_height(self, height: int, nodes: list[str], timeout: float = 180) -> None:
+    def wait_height(self, height: int, nodes: list[str], timeout: float = 180,
+                    interval: float = 1.0) -> None:
         self.wait(f"height {height} finalized on {nodes}", timeout,
-                  lambda: all(self.status(n)["height"] >= height for n in nodes))
+                  lambda: all(self.status(n)["height"] >= height for n in nodes), interval=interval)
 
     def verify(self, nodes: list[str]) -> dict:
         statuses = {n: self.status(n) for n in nodes}

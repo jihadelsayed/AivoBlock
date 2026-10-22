@@ -13,9 +13,11 @@ from pathlib import Path
 from testnet import Testnet, observed_finality_timing, run, ROOT, IMAGE
 
 
-def measure_launch(net, *, samples, rows):
+def measure_launch(net, *, samples, rows, polling_interval_s=1.0):
     if samples < 1 or rows < 1:
         raise ValueError("samples and rows must be positive")
+    if not isinstance(polling_interval_s, (int, float)) or isinstance(polling_interval_s, bool) or not (0 < polling_interval_s <= 10):
+        raise ValueError("polling interval must be between 0 and 10 seconds")
     nodes = net.nodes()
     net.up()
     measurements = []
@@ -27,7 +29,7 @@ def measure_launch(net, *, samples, rows):
         target = int(task["sequence"])
         if target <= before:
             raise ValueError("submitted task did not advance target height")
-        net.wait_height(target, nodes)
+        net.wait_height(target, nodes, interval=polling_interval_s)
         timing = observed_finality_timing(start, time.perf_counter_ns())
         status = net.verify(nodes)
         if status["height"] < target:
@@ -41,7 +43,7 @@ def measure_launch(net, *, samples, rows):
             "block_id": block["block_id"], "workload": "qmlp-v1",
             "rows": task["rows"], "validators": len(nodes),
             "observation_boundary": "before_cli_submission_to_all_validator_height_poll",
-            "polling_interval_s": 1, **timing,
+            "polling_interval_s": polling_interval_s, **timing,
         })
         net.report["measurements"] = measurements
         net.save_report()
@@ -53,6 +55,7 @@ def main():
     ap.add_argument("--launches", type=int, default=3)
     ap.add_argument("--samples", type=int, default=30)
     ap.add_argument("--rows", type=int, default=12)
+    ap.add_argument("--polling-interval-s", type=float, default=1.0)
     ap.add_argument("--skip-build", action="store_true")
     ap.add_argument("--out", type=Path, default=ROOT / "testnet" / "generated" / "measurements")
     args = ap.parse_args()
@@ -68,7 +71,8 @@ def main():
         net = Testnet("three-node", out / f"launch-{launch:03d}")
         try:
             net.init()
-            observations = measure_launch(net, samples=args.samples, rows=args.rows)
+            observations = measure_launch(net, samples=args.samples, rows=args.rows,
+                                          polling_interval_s=args.polling_interval_s)
             net.report["result"] = "PASS"
         except Exception as exc:
             net.report["result"] = f"FAIL: {type(exc).__name__}: {exc}"
