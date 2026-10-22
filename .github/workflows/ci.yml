@@ -376,6 +376,9 @@ jobs:
           python3 scripts/audit_chain_evidence.py \
             --chain testnet/generated/trained-qmlp-chain \
             --out testnet/generated/chain-evidence-audit.json
+      - name: Inspect finalized QMLP commitments
+        run: |
+          python3 scripts/inspect_finalized_commitments.py --root testnet/generated/trained-qmlp-chain --out testnet/generated/finalized-commitment-presence.json
       - name: Validate and summarize measured research artifacts
         run: |
           python3 scripts/analyze_research_results.py \
@@ -436,6 +439,7 @@ jobs:
             testnet/generated/trained-qmlp-chain/launch-???/three-node/report.json
             testnet/generated/trained-qmlp-identity.json
             testnet/generated/chain-evidence-audit.json
+            testnet/generated/finalized-commitment-presence.json
             testnet/generated/trained-qmlp-chain/launch-???/three-node/finalized-block-evidence/*.json
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
