@@ -45,10 +45,22 @@ def measure_launch(net, *, samples, rows, polling_interval_s=1.0, qmlp_export=No
         block = next((b for b in status["blocks"] if b["height"] == target), None)
         if block is None or block["workload"] != "qmlp-v1":
             raise ValueError("QMLP task not included in observed finalized block")
+        # Persist the actual finalized block evidence, distinct from submitted export metadata.
+        if qmlp_export is not None:
+            for node in nodes:
+                node_status = net.status(node)
+                peer_block = next((b for b in node_status["blocks"] if b["height"] == target), None)
+                if peer_block != block:
+                    raise ValueError("validator finalized block content disagrees")
+            evidence_dir = net.out / "finalized-block-evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            evidence_path = evidence_dir / f"{index:03d}.json"
+            evidence_path.write_text(json.dumps(block, sort_keys=True, indent=2) + "\\n")
         measurements.append({
             "launch_id": launch_id, "request_id": f"{launch_id}-{index}",
             "task_id": task["task_id"], "finalized_height": target,
             "block_id": block["block_id"], "workload": "qmlp-v1",
+            **({"finalized_block_evidence_path": str(evidence_path.relative_to(net.out.parent.parent))} if qmlp_export is not None else {}),
             "rows": task["rows"], "validators": len(nodes),
             "observation_boundary": "before_cli_submission_to_all_validator_height_poll",
             "polling_interval_s": polling_interval_s,
