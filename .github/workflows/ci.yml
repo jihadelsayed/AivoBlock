@@ -436,6 +436,7 @@ jobs:
             testnet/generated/trained-qmlp-chain/launch-???/three-node/report.json
             testnet/generated/trained-qmlp-identity.json
             testnet/generated/chain-evidence-audit.json
+            testnet/generated/trained-qmlp-chain/launch-???/three-node/finalized-block-evidence/*.json
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
