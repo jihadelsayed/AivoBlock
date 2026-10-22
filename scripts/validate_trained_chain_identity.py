@@ -28,7 +28,7 @@ def validate(chain_dir, service):
             if row.get("result_commitment") != canonical["result_commitment"]:
                 raise ValueError("result commitment mismatch")
             # Evidence path is relative to the parent of the chain experiment root.
-            evidence = chain_dir.parent / row["finalized_block_evidence_path"]
+            evidence = chain_dir / row["finalized_block_evidence_path"]
             block = json.loads(evidence.read_text())
             if block.get("block_id") != row["block_id"] or block.get("task_id") != row["task_id"]:
                 raise ValueError("finalized block identity mismatch")
