@@ -358,6 +358,19 @@ jobs:
             --slow testnet/generated/pilot-measurements \
             --fast testnet/generated/fast-poll-measurements \
             --out testnet/generated/polling-comparison.json
+      - name: Observe 90 trained-QMLP chain tasks with the same export as CPU baseline
+        run: |
+          python3 scripts/measure_chain_finality.py \
+            --skip-build --launches 3 --samples 30 --rows 12 \
+            --polling-interval-s 0.1 \
+            --qmlp-file research-out/digits.qmlp.json \
+            --out testnet/generated/trained-qmlp-chain
+      - name: Validate trained model and result commitment identity across CPU and chain
+        run: |
+          python3 scripts/validate_trained_chain_identity.py \
+            --chain testnet/generated/trained-qmlp-chain \
+            --service testnet/generated/service-baseline/summary.json \
+            --out testnet/generated/trained-qmlp-identity.json
       - name: Validate and summarize measured research artifacts
         run: |
           python3 scripts/analyze_research_results.py \
@@ -414,6 +427,9 @@ jobs:
             testnet/generated/service-baseline/report-*.json
             testnet/generated/service-baseline/summary.json
             testnet/generated/service-baseline/service-fixture.json
+            testnet/generated/trained-qmlp-chain/launch-???.json
+            testnet/generated/trained-qmlp-chain/launch-???/three-node/report.json
+            testnet/generated/trained-qmlp-identity.json
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
