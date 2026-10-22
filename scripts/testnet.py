@@ -196,7 +196,7 @@ class Testnet:
     def status(self, node: str) -> dict:
         return self.client(node, "status")
 
-    def wait(self, what: str, timeout: float, predicate) -> None:
+    def wait(self, what: str, timeout: float, predicate, interval: float = 1.0) -> None:
         started = time.time()
         last_error = None
         while time.time() - started < timeout:
@@ -206,7 +206,7 @@ class Testnet:
                     return
             except Failure as error:
                 last_error = error
-            time.sleep(1)
+            time.sleep(interval)
         raise Failure(f"timed out after {timeout}s waiting for {what}; last error: {last_error}")
 
     # --- lifecycle -------------------------------------------------------
