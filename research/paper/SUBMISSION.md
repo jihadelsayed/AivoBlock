@@ -31,6 +31,23 @@ Each item is deliberately **false/pending** in `submission-metadata.json` until 
 7. Confirm the selected archive, category and submitter account/endorsement eligibility; personally accept the archive's irreversible distribution and submittal terms.
 8. Provide **explicit approval** to publish this particular reviewed version. Without it, keep all submission gates false. This workflow deliberately has no publish action or archive credentials.
 
+## arXiv source-only upload candidate (additional preflight)
+
+The author-review bundle is **not** itself an arXiv upload: it includes a generated PDF, Markdown, internal JSON metadata and CI checksums. arXiv prefers the **TeX source only**, and typically rejects uploading a PDF already compiled from TeX. Source guidance: https://info.arxiv.org/help/submit_tex.html and https://info.arxiv.org/help/submit/index.html.
+
+The CI artifact now also includes **`arxiv-upload-source.zip`**, which contains exactly one self-contained source file, `main.tex` — **no compiled PDF**, research data ZIP, author-approval metadata or extraneous log files. The source-only build converts the Pandoc-generated H1 to a conventional `\\title`, `\\author` and `\\maketitle` while preserving the body and release-grounded numeric tables. It includes the existing substantial AI-assistance disclosure. Because the candidate contains no figures, external `\\input` files or separate BibTeX sources, no additional files are required for this current snapshot.
+
+GitHub CI **extracts that ZIP into a clean directory and compiles the sole `main.tex` using XeLaTeX**, then checks the generated PDF for the author name, disclosure, and main numerical result. This establishes an independent *technical source-build preflight*, not acceptance on arXiv's own TeX Live environment. arXiv offers XeLaTeX as a supported processor as of late 2025; at the submission screen select `xelatex` if arXiv does not infer it. **Review arXiv's own rebuilt PDF before publishing.** See https://info.arxiv.org/help/faq/texlive.html.
+
+To verify the upload bundle locally:
+
+```bash
+python3 scripts/package_arxiv_source.py verify path/to/arxiv-upload-source.zip
+unzip -l path/to/arxiv-upload-source.zip
+```
+
+Only upload the `arxiv-upload-source.zip` **after** a human author has reviewed the text, verified authorship/affiliation and third-party rights, chosen the paper distribution license, and authorized submission. The source candidate remains a draft with its name/metadata unconfirmed and must not be treated as a public preprint or an assigned identifier.
+
 ## arXiv preparation (candidate, not submission)
 
 Primary source: [arXiv submission guidelines](https://info.arxiv.org/help/submit/index.html), [TeX source guidance](https://info.arxiv.org/help/submit_tex.html), [endorsement](https://info.arxiv.org/help/endorsement.html) and [licenses](https://info.arxiv.org/help/license/index.html).
