@@ -69,6 +69,15 @@ def make_tex(source: str, meta: dict) -> str:
     rewritten=rewritten.replace(r"\date{}",r"\date{22 October 2026}",1)
     rewritten=rewritten.replace(r"\begin{document}",
                                 r"\begin{document}"+"\n"+r"\maketitle"+"\n",1)
+    # Pandoc's source keeps some research-data URLs as plain text rather
+    # than link commands. Wrap only *bare* URLs (never href{target}) so TeX
+    # can break them across lines. xurl also breaks long hyphenated paths.
+    require(r"\usepackage{lmodern}" in rewritten,
+            "Pandoc LaTeX preamble changed; inspect URL package placement")
+    rewritten=rewritten.replace(r"\usepackage{lmodern}",
+                                r"\usepackage{xurl}"+"\n"+r"\usepackage{lmodern}",1)
+    rewritten=re.sub(r"(?<![\\{])https?://[^\s{}\\]+",
+                     lambda m: r"\url{" + m.group(0) + "}", rewritten)
     # Any external include would require dependent files in the ZIP. Fail
     # rather than produce a paper with missing data/figures/references.
     require(re.search(r"\\(?:input|include|includegraphics|bibliography|addbibresource|lstinputlisting)\b",
