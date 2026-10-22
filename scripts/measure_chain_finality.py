@@ -29,10 +29,7 @@ def measure_launch(net, *, samples, rows, polling_interval_s=1.0):
         target = int(task["sequence"])
         if target <= before:
             raise ValueError("submitted task did not advance target height")
-        # Explicit bounded polling cadence, included in the observation boundary.
-        net.wait(f"height {target} finalized on {nodes}", 180,
-                 lambda: all(net.status(n)["height"] >= target for n in nodes),
-                 interval=polling_interval_s)
+        net.wait_height(target, nodes, interval=polling_interval_s)
         timing = observed_finality_timing(start, time.perf_counter_ns())
         status = net.verify(nodes)
         if status["height"] < target:
