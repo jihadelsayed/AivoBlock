@@ -93,9 +93,15 @@ fn summary(executed: &ExecutedBlockV3, certificate: &QuorumCertificateV1) -> Blo
             .as_ref()
             .map(|_| hex(&executed.block.task.input_commitment)),
         result_commitment: executed.block.task.qmlp.as_ref().map(|model| {
-            hex(&qmlp_result_commitment_v1(model, &executed.block.task.rows,
-                WorkRange { start: 0, count: executed.block.task.rows.len() as u64 })
-                .expect("already-validated finalized QMLP task must have a valid complete result"))
+            hex(&qmlp_result_commitment_v1(
+                model,
+                &executed.block.task.rows,
+                WorkRange {
+                    start: 0,
+                    count: executed.block.task.rows.len() as u64,
+                },
+            )
+            .expect("already-validated finalized QMLP task must have a valid complete result"))
         }),
         claim_result_commitments: executed.block.task.qmlp.as_ref().map(|_| {
             executed
