@@ -13,6 +13,8 @@ use crate::ai_block_v3::{
 };
 use crate::genesis_checkpoint::initialize_signed_genesis;
 use crate::issuance::ledger_supply;
+use crate::mining::scheduler::WorkRange;
+use crate::qmlp::qmlp_result_commitment_v1;
 use crate::settlement_v3::SettlementEngine;
 use crate::storage::ledger_state::LedgerState;
 use crate::storage::rocksdb::{FinalizedBlockWrite, FinalizedRecord, SettlementBatch};
@@ -33,6 +35,8 @@ pub struct BlockSummary {
     pub input_commitment: Option<String>,
     /// Per-partition verified work-claim commitments, not a whole-batch result digest.
     pub claim_result_commitments: Option<Vec<String>>,
+    /// Independently recomputed whole-batch result from the finalized task bytes.
+    pub result_commitment: Option<String>,
     /// `integer-linear-v1` or `qmlp-v1`; both are recomputed by validators.
     pub workload: &'static str,
     pub fee_budget: u64,
@@ -88,6 +92,11 @@ fn summary(executed: &ExecutedBlockV3, certificate: &QuorumCertificateV1) -> Blo
             .qmlp
             .as_ref()
             .map(|_| hex(&executed.block.task.input_commitment)),
+        result_commitment: executed.block.task.qmlp.as_ref().map(|model| {
+            hex(&qmlp_result_commitment_v1(model, &executed.block.task.rows,
+                WorkRange { start: 0, count: executed.block.task.rows.len() as u64 })
+                .expect("already-validated finalized QMLP task must have a valid complete result"))
+        }),
         claim_result_commitments: executed.block.task.qmlp.as_ref().map(|_| {
             executed
                 .block
