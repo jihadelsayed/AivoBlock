@@ -64,6 +64,8 @@ jobs:
         run: python -m unittest discover -s scripts -p "test_summarize_chain_phases.py" -v
       - name: Validate public evidence archive (synthetic fixtures only)
         run: python -m unittest discover -s scripts -p "test_package_research_evidence.py" -v
+      - name: Validate independent archive reanalysis (synthetic fixtures only)
+        run: python -m unittest discover -s scripts -p "test_audit_public_evidence.py" -v
       - name: Validate workload manifest (stdlib only)
         run: python -m unittest discover -s scripts -p "test_workload_manifest.py" -v
 
@@ -477,6 +479,35 @@ jobs:
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
+  evidence_reanalysis:
+    name: Independent research evidence reanalysis (fresh runner)
+    needs: [testnet_e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download completed research evidence bundle from the producer job
+        uses: actions/download-artifact@v4
+        with:
+          name: research-evidence-bundle
+          path: independent-input
+      - name: Independently recompute archived timing and commitment claims
+        run: |
+          python3 scripts/audit_public_evidence.py \
+            --archive independent-input/aivoblock-research-evidence.zip \
+            --expected-run-id "$GITHUB_RUN_ID" \
+            --expected-source-head "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --expected-checkout-sha "$(git rev-parse HEAD)" \
+            --out independent-output/audit.json
+      - name: Upload independent descriptive audit (not external replication)
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-evidence-audit
+          path: independent-output/audit.json
+          if-no-files-found: error
+          retention-days: 90
   protobuf:
     name: Protocol schemas
     runs-on: ubuntu-24.04
