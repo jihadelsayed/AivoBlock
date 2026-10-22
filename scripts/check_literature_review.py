@@ -29,7 +29,7 @@ REQUIRED_PHRASES = (
     "not a production",
     "not a systematic literature review",
     "not an independent rerun",
-    "not a speedup or overhead ratio",
+    "must not be interpreted as a speedup or overhead ratio",
     "no inference tickets",
     "not peer reviewed",
     "22 October 2026",
