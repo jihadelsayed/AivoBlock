@@ -55,7 +55,7 @@ def measure_launch(net, *, samples, rows, polling_interval_s=1.0, qmlp_export=No
             evidence_dir = net.out / "finalized-block-evidence"
             evidence_dir.mkdir(parents=True, exist_ok=True)
             evidence_path = evidence_dir / f"{index:03d}.json"
-            evidence_path.write_text(json.dumps(block, sort_keys=True, indent=2) + "\\n")
+            evidence_path.write_text(json.dumps(block, sort_keys=True, indent=2) + "\n")
         measurements.append({
             "launch_id": launch_id, "request_id": f"{launch_id}-{index}",
             "task_id": task["task_id"], "finalized_height": target,
