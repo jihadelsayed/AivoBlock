@@ -60,6 +60,8 @@ jobs:
         run: python -m unittest discover -s scripts -p "test_measure_chain_finality.py" -v
       - name: Validate research evidence provenance manifest
         run: python -m unittest discover -s scripts -p "test_finality_evidence_manifest.py" -v
+      - name: Validate descriptive QMLP phase summaries (synthetic fixtures only)
+        run: python -m unittest discover -s scripts -p "test_summarize_chain_phases.py" -v
       - name: Validate workload manifest (stdlib only)
         run: python -m unittest discover -s scripts -p "test_workload_manifest.py" -v
 
@@ -376,6 +378,17 @@ jobs:
           python3 scripts/audit_chain_evidence.py \
             --chain testnet/generated/trained-qmlp-chain \
             --out testnet/generated/chain-evidence-audit.json
+      - name: Validate and summarize measured QMLP client phases (separate scenarios)
+        run: |
+          python3 scripts/summarize_chain_phases.py \
+            --directory testnet/generated/pilot-measurements \
+            --out testnet/generated/phase-summary-1s-seeded.json
+          python3 scripts/summarize_chain_phases.py \
+            --directory testnet/generated/fast-poll-measurements \
+            --out testnet/generated/phase-summary-100ms-seeded.json
+          python3 scripts/summarize_chain_phases.py \
+            --directory testnet/generated/trained-qmlp-chain \
+            --out testnet/generated/phase-summary-100ms-trained.json
       - name: Inspect finalized QMLP commitments
         run: |
           python3 scripts/inspect_finalized_commitments.py --root testnet/generated/trained-qmlp-chain --out testnet/generated/finalized-commitment-presence.json
@@ -431,6 +444,7 @@ jobs:
             testnet/generated/fast-poll-measurements/launch-???.json
             testnet/generated/fast-poll-measurements/launch-???/three-node/report.json
             testnet/generated/polling-comparison.json
+            testnet/generated/phase-summary-*.json
             testnet/generated/service-baseline/launch-*.jsonl
             testnet/generated/service-baseline/report-*.json
             testnet/generated/service-baseline/summary.json
