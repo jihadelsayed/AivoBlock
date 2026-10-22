@@ -55,7 +55,7 @@ class ArxivCandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             tex=root/"paper.tex"
-            tex.write_text(TEX_EXAMPLE*2)
+            tex.write_text(TEX_EXAMPLE)
             out=root/"upload.zip"
             first=create(tex,METADATA,out)
             original=out.read_bytes()
