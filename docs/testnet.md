@@ -5,9 +5,11 @@ other, distribute a deterministic AI task across workers, independently
 recompute every submitted result, finalize blocks by validator quorum, pay
 native Sayed Token rewards and recover their finalized history after restart.
 
-> **Private research testnet only.** Generated keys are test keys, the
-> transport is unencrypted, and the validator set is permissioned. Do not
-> deploy publicly or attach real value to balances.
+> **Private research testnet only.** Generated keys are test keys and the
+> validator set is permissioned. Validator-to-validator frames are encrypted
+> and authenticated, but this is not a production security audit and does not
+> secure the local operator API or compromised endpoints. Do not deploy
+> publicly or attach real value to balances.
 
 ## What is (and is not) proven
 
