@@ -34,6 +34,8 @@ def validate(chain_dir, service):
                 raise ValueError("finalized block identity mismatch")
             if block.get("model_commitment") != canonical["model_commitment"] or block.get("input_commitment") != canonical["input_commitment"]:
                 raise ValueError("finalized QMLP model/input commitment mismatch")
+            if block.get("result_commitment") != canonical["result_commitment"]:
+                raise ValueError("recomputed finalized full-batch result mismatch")
             claims = block.get("claim_result_commitments")
             if not isinstance(claims, list) or not claims or any(not isinstance(c, str) or len(c) != 64 for c in claims):
                 raise ValueError("missing finalized verified partition claims")
@@ -51,7 +53,7 @@ def validate(chain_dir, service):
         "chain_samples": 90, "service_samples": 90,
         "shared_export_model_commitment": canonical["model_commitment"],
         "shared_export_result_commitment": canonical["result_commitment"],
-        "identity_level": "finalized task model/input commitments plus verified per-partition claims",
+        "identity_level": "finalized model/input, verified partition claims and recomputed whole-batch result",
         "not_verified": ["whole-batch result commitment equivalence",
                          "equivalent latency measurement boundary", "causal overhead"],
         "comparison_ready": False,
