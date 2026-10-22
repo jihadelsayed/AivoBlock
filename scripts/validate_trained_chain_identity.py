@@ -27,6 +27,16 @@ def validate(chain_dir, service):
                 raise ValueError("model commitment mismatch")
             if row.get("result_commitment") != canonical["result_commitment"]:
                 raise ValueError("result commitment mismatch")
+            # Evidence path is relative to the parent of the chain experiment root.
+            evidence = chain_dir / row["finalized_block_evidence_path"]
+            block = json.loads(evidence.read_text())
+            if block.get("block_id") != row["block_id"] or block.get("task_id") != row["task_id"]:
+                raise ValueError("finalized block identity mismatch")
+            if block.get("model_commitment") != canonical["model_commitment"] or block.get("input_commitment") != canonical["input_commitment"]:
+                raise ValueError("finalized QMLP model/input commitment mismatch")
+            claims = block.get("claim_result_commitments")
+            if not isinstance(claims, list) or not claims or any(not isinstance(c, str) or len(c) != 64 for c in claims):
+                raise ValueError("missing finalized verified partition claims")
             if row.get("rows") != 12 or row.get("polling_interval_s") != 0.1:
                 raise ValueError("workload configuration differs")
             if row["request_id"] in seen_requests or row["finalized_height"] in heights:
@@ -41,8 +51,8 @@ def validate(chain_dir, service):
         "chain_samples": 90, "service_samples": 90,
         "shared_export_model_commitment": canonical["model_commitment"],
         "shared_export_result_commitment": canonical["result_commitment"],
-        "identity_level": "shared export provenance, not independently verified on-chain commitment",
-        "not_verified": ["chain-side input commitment", "chain-side executed result attestation",
+        "identity_level": "finalized task model/input commitments plus verified per-partition claims",
+        "not_verified": ["whole-batch result commitment equivalence",
                          "equivalent latency measurement boundary", "causal overhead"],
         "comparison_ready": False,
     }

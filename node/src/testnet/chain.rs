@@ -28,6 +28,11 @@ pub struct BlockSummary {
     pub height: u64,
     pub block_id: String,
     pub task_id: String,
+    /// Commitments taken from the finalized, validator-recomputed task.
+    pub model_commitment: Option<String>,
+    pub input_commitment: Option<String>,
+    /// Per-partition verified work-claim commitments, not a whole-batch result digest.
+    pub claim_result_commitments: Option<Vec<String>>,
     /// `integer-linear-v1` or `qmlp-v1`; both are recomputed by validators.
     pub workload: &'static str,
     pub fee_budget: u64,
@@ -71,6 +76,26 @@ fn summary(executed: &ExecutedBlockV3, certificate: &QuorumCertificateV1) -> Blo
         height: header.height,
         block_id: hex(&executed.id),
         task_id: hex(&executed.block.task.task_id),
+        model_commitment: executed
+            .block
+            .task
+            .qmlp
+            .as_ref()
+            .map(|_| hex(&executed.block.task.model_commitment)),
+        input_commitment: executed
+            .block
+            .task
+            .qmlp
+            .as_ref()
+            .map(|_| hex(&executed.block.task.input_commitment)),
+        claim_result_commitments: executed.block.task.qmlp.as_ref().map(|_| {
+            executed
+                .block
+                .claims
+                .iter()
+                .map(|claim| hex(&claim.result_commitment))
+                .collect()
+        }),
         workload: match executed.block.task.qmlp {
             Some(_) => "qmlp-v1",
             None => "integer-linear-v1",
