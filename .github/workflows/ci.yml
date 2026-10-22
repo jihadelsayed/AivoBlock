@@ -276,6 +276,28 @@ jobs:
           path: research-out
       - name: Verify research export exists
         run: test -s research-out/digits.qmlp.json
+      - name: Collect actual QMLP CPU service baseline (3 launches, 30 executions each)
+        env:
+          PYTHONPATH: ai-engine/src
+        run: |
+          mkdir -p testnet/generated/service-baseline
+          python3 -m aivoblock_ai.service_fixture \
+            --qmlp-file research-out/digits.qmlp.json \
+            --out testnet/generated/service-baseline/service-fixture.json
+          for launch in 0 1 2; do
+            python3 -m aivoblock_ai.service_benchmark \
+              --fixture testnet/generated/service-baseline/service-fixture.json \
+              --iterations 30 --warmups 2 \
+              --launch-id "service-launch-$launch" \
+              --observations-out "testnet/generated/service-baseline/launch-$launch.jsonl" \
+              --artifacts-dir "testnet/generated/service-baseline/launch-$launch-artifacts" \
+              --out "testnet/generated/service-baseline/report-$launch.json"
+          done
+      - name: Verify actual CPU service observations and consistent QMLP identity
+        run: |
+          python3 scripts/validate_service_observations.py \
+            --directory testnet/generated/service-baseline \
+            --out testnet/generated/service-baseline/summary.json
       - name: Verifier, settlement and scaling benchmarks (release build)
         run: |
           mkdir -p testnet/generated
@@ -388,6 +410,11 @@ jobs:
             testnet/generated/fast-poll-measurements/launch-???.json
             testnet/generated/fast-poll-measurements/launch-???/three-node/report.json
             testnet/generated/polling-comparison.json
+            testnet/generated/service-baseline/launch-*.jsonl
+            testnet/generated/service-baseline/report-*.json
+            testnet/generated/service-baseline/summary.json
+            testnet/generated/service-baseline/service-fixture.json
+            testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
   protobuf:
