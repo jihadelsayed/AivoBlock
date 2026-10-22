@@ -493,6 +493,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Audit verified prior-work citations and scope boundaries
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_literature_review.py' -v
+          python3 scripts/check_literature_review.py
       - name: Download published tagged research archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
