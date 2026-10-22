@@ -1,12 +1,12 @@
 # AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work
 
-**Manuscript version:** 0.1, 22 October 2026 — working research-paper draft, **not** submitted or peer reviewed.  
+**Manuscript version:** 0.2, 22 October 2026 — working research-paper draft after targeted primary-source literature review, **not** submitted or peer reviewed.  
 **Author:** Sayed Jihad ElSayed (AivoBlock project); contributions and code history remain attributable to repository contributors.  
 **Artifact release:** [AivoBlock v0.1.0 research prototype](https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype).  
 **Evidence source:** GitHub Actions run [39740779280](https://github.com/jihadelsayed/AivoBlock/actions/runs/39740779280), commit `ade6ff42737d972658e9c309f9a2d8cffbfb988c`.  
 **Keywords:** verifiable computation; useful AI work; permissioned blockchain; deterministic quantization; Byzantine fault tolerance; reproducible experimental systems.
 
-> **Evidence policy.** All numeric experimental results in this draft refer to the above fixed **published release**, not an earlier measurement or future rerun. Values are descriptive. The manuscript does **not** establish a novel proof-of-work security mechanism, efficient proof of arbitrary AI computation, token economic viability, or production performance. Literature coverage and formal novelty claims require the separate #110 review.
+> **Evidence policy.** All numeric experimental results in this draft refer to the above fixed **published release**, not an earlier measurement or future rerun. Values are descriptive. The manuscript does **not** establish a novel proof-of-work security mechanism, efficient proof of arbitrary AI computation, token economic viability, or production performance. Section 1.1 now compares selected earlier work; this is **not an exhaustive review, legal patent search or originality certification**.
 
 ## Abstract
 
@@ -14,7 +14,7 @@ Useful machine-learning computation is an appealing alternative to hash-puzzle e
 
 ## 1. Introduction
 
-Hash-based proof of work (PoW) consumes computation to make a ledger history costly to replace [1]. Proposals to reuse blockchain-related computation for externally useful machine learning are not new: Coin.AI [3] and the AI useful-work proposal by Lihu et al. [4] predate AivoBlock. A practical research question is narrower than whether AI can *replace* PoW generally: **can a small, explicitly verifiable AI task be assigned to workers, authenticated, checked independently, finalized, and rewarded without relying on agreement about nondeterministic floating-point output?**
+Hash-based proof of work (PoW) consumes computation to make a ledger history costly to replace [1]. Proposals to reuse blockchain-related computation for externally useful machine learning are not new: the peer-reviewed Coin.AI proposal [3] and Lihu et al. [4] predate AivoBlock. Recent research specifically considers **inference**-based mining, including an August 2026 working paper [11] and an October 19, 2026 preprint [12]. A practical research question is narrower than whether AI can *replace* PoW generally: **can a small, explicitly verifiable AI task be assigned to workers, authenticated, checked independently, finalized, and rewarded without relying on agreement about nondeterministic floating-point output?**
 
 AivoBlock is designed as a prototype and experimental instrument, not a deployed public network. It separates the worker's claimed computation from validators' verification and from quorum-based ledger agreement. In its current implementation the compute is genuinely executed as a deterministic integer-model task, yet validation is **full recomputation**, not cheaper cryptographic proof. The permissioned validator membership and fixed authority also mean that this task execution does not provide permissionless Sybil resistance or PoW-style difficulty.
 
@@ -25,7 +25,27 @@ This paper asks four research questions:
 - **RQ3 (cost):** What computation and verification costs occur for fixed QMLP workloads and how do partition count and persistent settlement IPC affect measured microbenchmark latency?
 - **RQ4 (observability):** What do repeated, *client-observed* blockchain finality timings show under explicitly bounded polling conditions, and which stronger causal or performance claims are unsupported?
 
-**Contributions are limited to:** (i) a working cross-language, permissioned AI-work chain implementation; (ii) a deterministic QMLP task-to-finality pipeline; (iii) published testnet and CPU observation data with integrity and commitment checks; and (iv) independent *reanalysis* of the archived measurements on a separate CI runner. Novelty compared with earlier AI/PoUW systems and formal security claims are reserved for further analysis.
+**Contributions are limited to:** (i) a working cross-language, permissioned AI-work chain implementation; (ii) a deterministic QMLP task-to-finality pipeline; (iii) published testnet and CPU observation data with integrity and commitment checks; and (iv) independent *reanalysis* of the archived measurements on a separate CI runner. These are **artifact-specific, testable contributions**, not claims that the ingredients, their combination, or the broad category were first invented here.
+
+### 1.1 Related work, closest alternatives, and originality boundaries
+
+Prior work establishes that **AI-based mining and verifiable AI inference are not new ideas**. The distinction relevant to this manuscript is the *implemented, limited experiment*: a fixed-validator committee finalizes small, deterministic integer inference tasks and test-ledger rewards, with separately archived raw observations and an independent data-analysis job. AivoBlock does **not** replace permissionless proof of work; it uses authority-configured validators and quorum voting.
+
+| Prior work | Previously investigated mechanism | Relationship and critical difference |
+| --- | --- | --- |
+| Coin.AI, peer-reviewed journal article (2019) [3] | Deep-learning **training** as mining, model-quality validation and incentives | Establishes earlier AI-mining idea; AivoBlock executes **post-training deterministic inference**, not network-secured model training |
+| Lihu et al., arXiv preprint (2020) [4] | Client-supplied ML training tasks, verification and contributor rewards | Establishes earlier task-and-payment approach; AivoBlock has a fixed authority and row-partitioned inference with full validator recomputation |
+| Ofelimos, CRYPTO 2022 [6] | Combinatorial optimization as PoUW with a formal security analysis | Different useful task and permissionless security objective; AivoBlock provides neither an equivalent PoUW election nor a formal security reduction |
+| Zhao et al., arXiv (2024) [7] | Training-based proof-of-learning with incentive-security and cost/difficulty analysis | AivoBlock does not verify honest SGD training, claim incentive security or calibrate public difficulty |
+| Komargodski and Weinstein, arXiv (2025) [8] | Useful matrix multiplication with a cryptographic PoUW construction | AivoBlock uses full inference recomputation rather than an efficiently certified matrix-work proof |
+| SEDRA Proof of Useful Inference, **exploratory working paper** (August 2026) [11] | Deterministic inference, attestation and inference-as-mining-ticket architecture | Close idea-level overlap with deterministic inference; AivoBlock provides a tested private system but **no inference tickets or custom hardware** |
+| Wong, Ciampi and Sarkar, arXiv **19 October 2026** [12] | Proof-of-ML-Inference (PoML) for user-requested inference in permissionless consensus; modeled security and simulated block-time stability | Closest recent inference-as-work overlap; AivoBlock is permissioned, has limited exact integer execution and lacks their permissionless mining-security claims |
+
+Broader PoUW surveys by Bakhshi et al. [9] and Merlina et al. [10] describe a substantial established design space and persistent tension among useful-task supply, nonamortizable hardness, cost-effective public verification, adjustable difficulty, fairness, decentralization and consensus safety. **AivoBlock sidesteps some of these requirements by constraining membership and workload**, not by solving them for an open network. Quorum-based BFT replication is itself well established [2]; AivoBlock should not represent its committee protocol as the invention of Byzantine consensus.
+
+Here, *useful* means that a deterministic AI inference output **could** be consumed outside the ledger; no evidence establishes a paying consumer, generalized training usefulness or work-cost savings. *Verifiable* means the tested validators **recompute the entire small workload**; it does not imply a succinct mathematical proof of expended computation. *Mining* is not used as a synonym for the authority-configured block-proposal rights of this private testnet. A prior-work comparison of specific claims, publication statuses and sources is preserved in [the scoped review](related-work-review.md).
+
+The reviewed sources were selected for close technical overlap and credible research surveys as of **22 October 2026**. This was a **targeted, non-exhaustive** comparison, not a systematic literature review, patentability search, freedom-to-operate opinion or independent peer review. Consequently, even a claim of first-ever implementation of this combination cannot be established by these sources alone.
 
 ## 2. System design and threat model
 
@@ -164,12 +184,12 @@ These checks protect against inconsistent reports and detect tampering relative 
 3. **Measurement validity:** Client-observed finality includes subprocess startup and polling. CPU service latency uses a narrower, different boundary. End-to-end throughput, energy consumption, operating cost and network-only/consensus-only time were not measured.
 4. **Security validity:** No permissionless Sybil resistance, difficulty mechanism equivalent to Bitcoin's PoW, independent formal verification, production audit, or guarantee of progress under arbitrary Byzantine leader behavior is shown.
 5. **Experimental reproducibility:** Separate-runner audit verifies existing archived observations and computations; it did not independently regenerate models and retest the network on separate laboratory hardware.
-6. **Originality:** Earlier AI/useful-work blockchain proposals exist [3,4], so the claim is a concrete reproducible systems artifact, not proof that the idea of AI-related useful-work mining was invented here.
+6. **Originality and prior art:** Training-based AI mining [3,4,7], useful-work consensus [6,8], and deterministic inference-mining proposals [11,12] all precede or coincide with AivoBlock. This paper claims a concrete, bounded and reproducibly analyzed systems artifact, **not** the first AI mining, first inference mining, first BFT committee, a patentable invention, or a comprehensive literature clearance.
 7. **Publication and license:** A public all-rights-reserved source repository does not by itself grant software reuse rights. This manuscript draft has no peer-review status, DOI or accepted-paper citation.
 
 ## 7. Future work
 
-A stronger follow-up should (i) run independent geographically/hardware-separated testnets and publish new data with system fingerprints; (ii) build a genuinely matched non-blockchain distributed service with equivalent verification trust assumptions; (iii) instrument actual consensus phases separately from client polling; (iv) evaluate larger models and succinct, probabilistic or trusted-hardware verification tradeoffs; (v) increase faulty/Byzantine validator coverage, admission decentralization and reward-model realism; and (vi) perform the formal related-work and novelty analysis before public preprint submission.
+A stronger follow-up should (i) run independent geographically/hardware-separated testnets and publish new data with system fingerprints; (ii) build a genuinely matched non-blockchain distributed service with equivalent verification trust assumptions; (iii) instrument actual consensus phases separately from client polling; (iv) evaluate larger models and succinct, probabilistic or trusted-hardware verification tradeoffs; (v) increase faulty/Byzantine validator coverage, admission decentralization and reward-model realism; and (vi) expand the targeted prior-work review and commission an independent originality/security assessment before making broader scientific or intellectual-property claims.
 
 ## 8. Conclusion
 
@@ -195,16 +215,31 @@ python3 scripts/package_research_evidence.py verify /path/to/aivoblock-research-
 python3 scripts/audit_public_evidence.py --archive /path/to/aivoblock-research-evidence.zip
 ```
 
-**Disclosure:** The source release currently carries an **all-rights-reserved** notice, not an MIT license. Prior work and the paper itself require a final bibliographic and license review before dissemination as a preprint.
+**Disclosure:** The source release currently carries an **all-rights-reserved** notice, not an MIT license. The targeted bibliographic comparison is recorded, but preprint licensing, authorship/contributor credit, conflicts, archive requirements and institutional rights still require author approval before submission.
 
-## References — provisional; full systematic review in milestone #110
+## References — primary-source-checked, targeted selection (22 October 2026)
 
 [1] S. Nakamoto. “Bitcoin: A Peer-to-Peer Electronic Cash System.” 2008. https://bitcoin.org/bitcoin.pdf
 
 [2] M. Castro and B. Liskov. “Practical Byzantine Fault Tolerance.” *Proceedings of the Third Symposium on Operating Systems Design and Implementation (OSDI)*, 1999, pp. 173–186. https://www.usenix.org/conference/osdi-99/practical-byzantine-fault-tolerance
 
-[3] A. Baldominos and Y. Sáez. “Coin.AI: A Proof-of-Useful-Work Scheme for Blockchain-based Distributed Deep Learning.” arXiv:1903.09800, 2019. https://arxiv.org/abs/1903.09800
+[3] A. Baldominos and Y. Saez. “Coin.AI: A Proof-of-Useful-Work Scheme for Blockchain-Based Distributed Deep Learning.” *Entropy* 21(8), 723, 2019. https://doi.org/10.3390/e21080723
 
 [4] A. Lihu, J. Du, I. Barjaktarevic, P. Gerzanics, and M. Harvilla. “A Proof of Useful Work for Artificial Intelligence on the Blockchain.” arXiv:2001.09244, 2020. https://arxiv.org/abs/2001.09244
 
 [5] S. J. ElSayed and AivoBlock contributors. *AivoBlock v0.1.0: Research Prototype for Verifiable Partitioned AI Work on a Permissioned Blockchain* [Software and research data], 2026. https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype
+
+
+[6] M. Fitzi, A. Kiayias, G. Panagiotakos, and A. Russell. “Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work: A Provably Secure Blockchain Protocol.” *CRYPTO 2022*. https://www.iog.io/papers/ofelimos-combinatorial-optimization-via-proof-of-useful-work-a-provably-secure-blockchain-protocol
+
+[7] Z. Zhao, Z. Fang, X. Wang, X. Chen, H. Su, H. Xiao, and Y. Zhou. “Proof-of-Learning with Incentive Security.” arXiv:2404.09005, 2024. https://arxiv.org/abs/2404.09005
+
+[8] I. Komargodski and O. Weinstein. “Proofs of Useful Work from Arbitrary Matrix Multiplication.” arXiv:2504.09971, 2025. https://arxiv.org/abs/2504.09971
+
+[9] F. Bakhshi, M. Ashtiani, and M. A. Azgomi. “A Systematic Literature Review on Proof-of-Useful Work Consensus Algorithms.” *Blockchain: Research and Applications*, article 100387, 2025. https://doi.org/10.1016/j.bcra.2025.100387
+
+[10] A. Merlina, T. Garrett, and R. Vitenberg. “On Replacing Cryptopuzzles with Useful Computation in Blockchain Proof-of-Work Protocols.” *ACM Computing Surveys* 58(14), article 358, online 31 July 2026. https://doi.org/10.1145/3828717
+
+[11] SEDRA Research Team. “Proof of Useful Inference.” *Exploratory working paper*, August 2026; **not peer reviewed**. https://www.sedracoin.com/research/proof-of-useful-inference/
+
+[12] W. K. Wong, M. Ciampi, and R. Sarkar. “Proof-of-Machine-Learning-Inference: Mining Knowledge, Not Hashes.” arXiv:2610.26713, submitted 19 October 2026; **preprint**. https://arxiv.org/abs/2610.26713
