@@ -18,6 +18,8 @@ SCENARIOS = ("service_direct", "service_recomputed", "chain_observed_finality")
 def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
     if not isinstance(bundle, dict) or not isinstance(bundle.get("scenarios"), dict):
         raise ValueError("Missing scenarios object")
+    if bundle.get("performance_claim") is not None:
+        raise ValueError("performance_claim prohibited: service execution and observed BFT finality use different timing boundaries")
     ref = None
     canonical_ref = None
     result = {}
@@ -80,7 +82,11 @@ def validate(bundle, *, minimum_launches=3, minimum_per_launch=30):
         result[mode] = {"launches": len(counts), "samples": len(samples)}
     return {"status": "PASS", "commitments": dict(zip(FIELDS, ref)),
             "canonical_commitments": dict(zip(CANONICAL_FIELDS, canonical_ref)),
-            "scenarios": result}
+            "scenarios": result,
+            "timing_comparability": {"status": "NOT_COMPARABLE",
+                "service_boundary": "synchronous_in_process_service_execute",
+                "chain_boundary": "submit_to_observed_bft_finality",
+                "reason": "Different timed operations; do not calculate a service-vs-chain speedup or latency ratio."}}
 
 
 def main():

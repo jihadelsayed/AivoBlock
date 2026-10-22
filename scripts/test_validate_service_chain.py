@@ -33,6 +33,18 @@ class ValidateServiceChainTests(unittest.TestCase):
     def test_accepts_three_by_thirty(self):
         self.assertEqual(validate(fixture())["status"], "PASS")
 
+    def test_marks_timing_boundaries_as_incompatible(self):
+        report = validate(fixture())
+        self.assertEqual(report["timing_comparability"]["status"], "NOT_COMPARABLE")
+        self.assertNotEqual(report["timing_comparability"]["service_boundary"],
+                            report["timing_comparability"]["chain_boundary"])
+
+    def test_rejects_performance_claim_from_incompatible_boundaries(self):
+        b = fixture()
+        b["performance_claim"] = {"speedup": 100}
+        with self.assertRaisesRegex(ValueError, "performance_claim prohibited"):
+            validate(b)
+
     def test_rejects_missing_canonical_chain_identity(self):
         b = fixture()
         del b["scenarios"]["chain_observed_finality"]["canonical_model_commitment"]
