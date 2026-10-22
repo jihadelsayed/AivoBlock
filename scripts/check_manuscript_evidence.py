@@ -106,7 +106,7 @@ def audit(paper, archive):
         require(f'{cpu[key]:.3f}' in paper, "CPU service number differs")
     for warning in ("full recomputation", "not an independent rerun",
                     "different timing boundary", "permissioned",
-                    "not a production", "not a speedup or overhead ratio"):
+                    "not a production", "must not be interpreted as a speedup or overhead ratio"):
         require(warning.casefold() in paper.casefold(), "missing scope limit " + warning)
     return {"verdict":"PASS", "source_sha":SOURCE, "ci_run":RUN,
             "audited_chain_observations":270, "audited_cpu_service_observations":90,
