@@ -483,6 +483,36 @@ jobs:
             testnet/generated/service-baseline/launch-*-artifacts/*.json
           if-no-files-found: warn
 
+  manuscript:
+    name: Research paper figures against published v0.1.0 data
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download published tagged research archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download v0.1.0-research-prototype \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern aivoblock-research-evidence.zip \
+            --dir manuscript-release
+      - name: Verify every paper table against exact release evidence
+        run: |
+          python3 scripts/package_research_evidence.py verify manuscript-release/aivoblock-research-evidence.zip
+          python3 scripts/check_manuscript_evidence.py \
+            --archive manuscript-release/aivoblock-research-evidence.zip
+      - name: Upload checked research-paper draft
+        uses: actions/upload-artifact@v4
+        with:
+          name: aivoblock-manuscript-draft
+          path: research/paper/aivoblock-manuscript.md
+          if-no-files-found: error
+          retention-days: 90
   evidence_reanalysis:
     name: Independent research evidence reanalysis (fresh runner)
     needs: [testnet_e2e]
