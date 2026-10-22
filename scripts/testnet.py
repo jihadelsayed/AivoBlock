@@ -80,6 +80,19 @@ def observed_finality_timing(start_ns: int, end_ns: int) -> dict:
             "clock": "time.perf_counter_ns"}
 
 
+def submission_observation_timing(start_ns: int, submitted_ns: int, observed_ns: int) -> dict:
+    """Split only observable client phases; do not infer consensus or AI compute time."""
+    if (any(type(t) is not int for t in (start_ns, submitted_ns, observed_ns))
+            or start_ns < 0 or not start_ns < submitted_ns < observed_ns):
+        raise ValueError("invalid monotonic phase timestamps")
+    return {"clock": "time.perf_counter_ns",
+            "cli_submission_ms": (submitted_ns - start_ns) / 1_000_000,
+            "post_submission_to_observed_finality_ms": (observed_ns - submitted_ns) / 1_000_000,
+            "total_ms": (observed_ns - start_ns) / 1_000_000,
+            "post_submission_includes": ["worker_execution", "network_and_consensus", "status_polling"],
+            "consensus_only_ms": None, "ai_execution_only_ms": None}
+
+
 def summarize(samples: list[int]) -> dict:
     """Order statistics of measured samples (nearest-rank percentiles)."""
     if not samples:
@@ -376,9 +389,12 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
         check(task["features"] == export["model"]["d_in"], "submitted the exported model dimensions")
         net.step("pytorch_export", model_commitment=export["model_commitment"],
                  result_commitment=export["result_commitment"], task_id=task["task_id"])
+    qmlp_submitted_ns = time.perf_counter_ns()
     net.wait_height(5, nodes)
     qmlp_finished_ns = time.perf_counter_ns()
     qmlp_timing = observed_finality_timing(qmlp_started_ns, qmlp_finished_ns)
+    qmlp_phases = submission_observation_timing(qmlp_started_ns, qmlp_submitted_ns,
+                                                qmlp_finished_ns)
     qmlp_observed_ms = qmlp_timing["elapsed_ms"]
     final = net.verify(nodes)
     check(final["height"] >= 5, "QMLP task finalized on all three validators")
@@ -386,11 +402,11 @@ def demo(net: Testnet, qmlp_file: Path | None = None) -> None:
              measured_from="before_cli_submission",
              measured_until="all_validators_observed_height",
              observation_method="sequential_one_second_status_polling",
-             **qmlp_timing,
+             **qmlp_timing, timing_phases=qmlp_phases,
              rows=task["rows"],
              partitions=len(task["partitions"]), validators=len(nodes))
     net.report["qmlp_end_to_end_finality"] = {
-        "height": 5, **qmlp_timing,
+        "height": 5, **qmlp_timing, "timing_phases": qmlp_phases,
         "rows": task["rows"], "partitions": len(task["partitions"]),
         "validators": len(nodes), "polling_interval_s": 1,
         "includes": ["cli_submission", "python_worker_execution", "bft_finalization",
