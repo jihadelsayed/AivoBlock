@@ -76,9 +76,26 @@ fn summary(executed: &ExecutedBlockV3, certificate: &QuorumCertificateV1) -> Blo
         height: header.height,
         block_id: hex(&executed.id),
         task_id: hex(&executed.block.task.task_id),
-        model_commitment: executed.block.task.qmlp.as_ref().map(|_| hex(&executed.block.task.model_commitment)),
-        input_commitment: executed.block.task.qmlp.as_ref().map(|_| hex(&executed.block.task.input_commitment)),
-        claim_result_commitments: executed.block.task.qmlp.as_ref().map(|_| executed.block.claims.iter().map(|claim| hex(&claim.result_commitment)).collect()),
+        model_commitment: executed
+            .block
+            .task
+            .qmlp
+            .as_ref()
+            .map(|_| hex(&executed.block.task.model_commitment)),
+        input_commitment: executed
+            .block
+            .task
+            .qmlp
+            .as_ref()
+            .map(|_| hex(&executed.block.task.input_commitment)),
+        claim_result_commitments: executed.block.task.qmlp.as_ref().map(|_| {
+            executed
+                .block
+                .claims
+                .iter()
+                .map(|claim| hex(&claim.result_commitment))
+                .collect()
+        }),
         workload: match executed.block.task.qmlp {
             Some(_) => "qmlp-v1",
             None => "integer-linear-v1",
