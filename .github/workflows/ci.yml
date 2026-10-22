@@ -554,11 +554,52 @@ jobs:
           assert readiness['approval_count']==0
           print(f'PASS: {len(reader.pages)} readable PDF pages; author approvals pending')
           PY
-      - name: Upload offline review-only preprint candidate
+      - name: Build and independently compile arXiv TeX-only upload candidate
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_package_arxiv_source.py' -v
+          python3 scripts/package_arxiv_source.py create \
+            --tex research/paper/build/aivoblock-preprint.tex \
+            --metadata research/paper/submission-metadata.json \
+            --out research/paper/build/arxiv-upload-source.zip
+          python3 scripts/package_arxiv_source.py verify research/paper/build/arxiv-upload-source.zip
+          mkdir -p research/paper/build/arxiv-check
+          unzip -q research/paper/build/arxiv-upload-source.zip -d research/paper/build/arxiv-check
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --entrypoint xelatex \
+            --volume "$PWD/research/paper/build/arxiv-check:/data" \
+            --workdir /data pandoc/latex:3.11.0.0-debian \
+            -interaction=nonstopmode -halt-on-error main.tex
+          if grep -q 'Overfull \\hbox' research/paper/build/arxiv-check/main.log; then
+            echo "arXiv preprint PDF contains unwrapped text beyond the page margin"
+            grep 'Overfull \\hbox' research/paper/build/arxiv-check/main.log
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pypdf import PdfReader
+          from pathlib import Path
+          pdf=Path('research/paper/build/arxiv-check/main.pdf')
+          assert pdf.exists() and pdf.stat().st_size>10000
+          pages=PdfReader(str(pdf)).pages
+          assert 6<=len(pages)<=100
+          content='\n'.join(p.extract_text() or '' for p in pages)
+          for text in ('Sayed Jihad ElSayed','AivoBlock','730.760','Generative AI assistance'):
+              assert text.lower() in content.lower(), f'missing in compiled arXiv PDF: {text}'
+          print(f'PASS: self-contained arXiv source independently compiled {len(pages)} pages')
+          PY
+      - name: Upload offline review-only preprint and arXiv source candidates
         uses: actions/upload-artifact@v4
         with:
           name: aivoblock-preprint-candidate
-          path: research/paper/build/
+          path: |
+            research/paper/build/aivoblock-preprint.pdf
+            research/paper/build/aivoblock-preprint.tex
+            research/paper/build/aivoblock-preprint-source.md
+            research/paper/build/submission-metadata.json
+            research/paper/build/submission-readiness.json
+            research/paper/build/SHA256SUMS.txt
+            research/paper/build/build-provenance.json
+            research/paper/build/arxiv-upload-source.zip
           if-no-files-found: error
           retention-days: 90
   evidence_reanalysis:
