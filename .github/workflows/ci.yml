@@ -570,6 +570,11 @@ jobs:
             --volume "$PWD/research/paper/build/arxiv-check:/data" \
             --workdir /data pandoc/latex:3.11.0.0-debian \
             -interaction=nonstopmode -halt-on-error main.tex
+          if grep -q 'Overfull \\hbox' research/paper/build/arxiv-check/main.log; then
+            echo "arXiv preprint PDF contains unwrapped text beyond the page margin"
+            grep 'Overfull \\hbox' research/paper/build/arxiv-check/main.log
+            exit 1
+          fi
           python3 - <<'PY'
           from pypdf import PdfReader
           from pathlib import Path
