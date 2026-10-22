@@ -143,7 +143,7 @@ The separately measured trained-model CPU-only service executed **90 calls** wit
 
 The published archive contains **147 ZIP entries**, including `manifest.json`, reproduction instructions and **145 evidence entries**; each evidence entry has a declared SHA-256 and byte size. The archive integrity builder checks recorded source hashes and service artifact bytes. The separate fresh-runner auditor recalculates the 270 chain observations' descriptive statistics, rechecks 90 CPU observations and verifies task, finalized height and commitment relationships. GitHub Actions run **39740779280** completed all core jobs, the independent audit and the prerelease publisher successfully.
 
-These checks protect against inconsistent reports and detect tampering relative to the manifest. The manifest alone is not an external trusted timestamp or a substitute for public third-party review. The published GitHub release is a source snapshot and data artifact, **not** a journal publication or independent cross-laboratory replication.
+These checks protect against inconsistent reports and detect tampering relative to the manifest. The manifest alone is not an external trusted timestamp or a substitute for public third-party review. The published GitHub release is a source snapshot and data artifact, **not** a journal publication or independent cross-laboratory replication. The separate CI audit is **not an independent rerun** of the live blockchain experiment, and AivoBlock is **not a production** blockchain.
 
 ## 5. Discussion
 
