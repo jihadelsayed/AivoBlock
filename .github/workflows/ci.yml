@@ -290,10 +290,10 @@ jobs:
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
-      - name: Real QMLP pilot across three independent testnet launches
+      - name: Real 90-task QMLP finality experiment across three independent testnet launches
         run: |
           python3 scripts/measure_chain_finality.py \
-            --skip-build --launches 3 --samples 3 --rows 12 \
+            --skip-build --launches 3 --samples 30 --rows 12 \
             --out testnet/generated/pilot-measurements
           python3 - <<'PY'
           import json
@@ -305,7 +305,7 @@ jobs:
           launch_ids = set()
           for file in files:
               rows = json.loads(file.read_text())
-              assert len(rows) == 3
+              assert len(rows) == 30
               local_heights = set()
               local_blocks = set()
               for row in rows:
@@ -318,11 +318,11 @@ jobs:
                   assert row["elapsed_ms"] > 0
                   assert row["task_id"] and row["block_id"]
                   assert row["workload"] == "qmlp-v1"
-              assert len(local_heights) == len(local_blocks) == 3
+              assert len(local_heights) == len(local_blocks) == 30
               launch_ids.add(rows[0]["launch_id"])
               assert {row["launch_id"] for row in rows} == {rows[0]["launch_id"]}
-          assert len(launch_ids) == 3 and len(all_requests) == 9
-          print("PASS: nine real finalized QMLP tasks across three fresh testnets")
+          assert len(launch_ids) == 3 and len(all_requests) == 90
+          print("PASS: ninety real finalized QMLP tasks across three fresh testnets")
           PY
       - name: Validate and summarize measured research artifacts
         run: |
