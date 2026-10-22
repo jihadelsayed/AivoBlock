@@ -290,27 +290,39 @@ jobs:
         run: python3 scripts/testnet.py demo --skip-build --qmlp-file research-out/digits.qmlp.json
       - name: Four-validator fault-tolerance scenario
         run: python3 scripts/testnet.py fault --skip-build
-      - name: Real three-task QMLP repeated-collector pilot
+      - name: Real QMLP pilot across three independent testnet launches
         run: |
           python3 scripts/measure_chain_finality.py \
-            --skip-build --launches 1 --samples 3 --rows 12 \
+            --skip-build --launches 3 --samples 3 --rows 12 \
             --out testnet/generated/pilot-measurements
           python3 - <<'PY'
           import json
           from pathlib import Path
-          file = Path("testnet/generated/pilot-measurements/launch-000.json")
-          rows = json.loads(file.read_text())
-          assert len(rows) == 3
-          assert len({r["request_id"] for r in rows}) == 3
-          assert len({r["finalized_height"] for r in rows}) == 3
-          assert len({r["block_id"] for r in rows}) == 3
-          for row in rows:
-              assert row["elapsed_ms"] > 0
-              assert row["end_ns"] > row["start_ns"]
-              assert row["finalized_height"] >= 1
-              assert row["task_id"] and row["block_id"]
-              assert row["workload"] == "qmlp-v1"
-          print("PASS: three actual finalized QMLP tasks measured")
+          root = Path("testnet/generated/pilot-measurements")
+          files = sorted(root.glob("launch-???.json"))
+          assert len(files) == 3, files
+          all_requests = set()
+          launch_ids = set()
+          for file in files:
+              rows = json.loads(file.read_text())
+              assert len(rows) == 3
+              local_heights = set()
+              local_blocks = set()
+              for row in rows:
+                  assert row["launch_id"] not in launch_ids
+                  assert row["request_id"] not in all_requests
+                  all_requests.add(row["request_id"])
+                  local_heights.add(row["finalized_height"])
+                  local_blocks.add(row["block_id"])
+                  assert row["end_ns"] > row["start_ns"]
+                  assert row["elapsed_ms"] > 0
+                  assert row["task_id"] and row["block_id"]
+                  assert row["workload"] == "qmlp-v1"
+              assert len(local_heights) == len(local_blocks) == 3
+              launch_ids.add(rows[0]["launch_id"])
+              assert {row["launch_id"] for row in rows} == {rows[0]["launch_id"]}
+          assert len(launch_ids) == 3 and len(all_requests) == 9
+          print("PASS: nine real finalized QMLP tasks across three fresh testnets")
           PY
       - name: Validate and summarize measured research artifacts
         run: |
@@ -359,8 +371,8 @@ jobs:
             testnet/generated/workload-manifest.json
             testnet/generated/*/report.json
             testnet/generated/*/compose.log
-            testnet/generated/pilot-measurements/launch-000.json
-            testnet/generated/pilot-measurements/launch-000/three-node/report.json
+            testnet/generated/pilot-measurements/launch-???.json
+            testnet/generated/pilot-measurements/launch-???/three-node/report.json
           if-no-files-found: warn
 
   protobuf:
