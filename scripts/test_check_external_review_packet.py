@@ -15,7 +15,7 @@ class ExternalReviewPacketTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         original = gate.BASE
-        for filename in ("README.md", "REVIEW_FORM.md", "STATUS.json"):
+        for filename in ("README.md", "REVIEW_FORM.md", "STATUS.json", "UAB_OUTREACH.md", "EMAIL_TO_HASAN.md"):
             (self.base / filename).write_bytes((original / filename).read_bytes())
 
     def test_pending_packet_is_valid(self):
