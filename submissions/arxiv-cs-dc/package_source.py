@@ -19,6 +19,25 @@ def require(condition: bool, explanation: str) -> None:
         raise ValueError(explanation)
 
 
+def wrap_plain_urls(latex: str) -> str:
+    """Make displayed HTTP(S) URLs line-breakable without altering code or hyperlinks."""
+    lines = []
+    in_code = False
+    for line in latex.splitlines(keepends=True):
+        if r"\begin{Shaded}" in line or r"\begin{Highlighting}" in line:
+            in_code = True
+        if not in_code and r"\href{" not in line and not line.lstrip().startswith("%"):
+            def replace_url(match: re.Match[str]) -> str:
+                raw = match.group(0)
+                address = raw.rstrip(".,;")
+                return r"\url{" + address + "}" + raw[len(address):]
+            line = re.sub(r"https?://[^\s\\{}]+", replace_url, line)
+        lines.append(line)
+        if r"\end{Shaded}" in line:
+            in_code = False
+    return "".join(lines)
+
+
 def package(repo: Path) -> dict:
     repo = repo.resolve()
     base = repo / "research/paper/build"
@@ -32,7 +51,7 @@ def package(repo: Path) -> dict:
     approvals = meta.get("approval", {})
     require(isinstance(approvals, dict) and approvals and all(v is False for v in approvals.values()),
             "Author rights and content approvals must remain pending in this draft workflow")
-    tex = tex_path.read_text(encoding="utf-8")
+    tex = wrap_plain_urls(tex_path.read_text(encoding="utf-8"))
     for tag in (r"\documentclass", r"\begin{document}", r"\end{document}",
                 "AivoBlock", "730.760", "270", "References", "Generative AI assistance"):
         require(tag.lower() in tex.lower(), f"Generated TeX missing expected marker: {tag}")

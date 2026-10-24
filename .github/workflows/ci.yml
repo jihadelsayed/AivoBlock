@@ -536,6 +536,8 @@ jobs:
           python3 scripts/check_preprint_package.py
       - name: Build typeset PDF, LaTeX, sources, and SHA-256 manifest
         run: bash scripts/build_preprint.sh
+      - name: Test arXiv source-link packaging
+        run: python3 -m unittest discover -s submissions/arxiv-cs-dc -p 'test_package_source.py' -v
       - name: Package arXiv standalone TeX as review-only source ZIP
         run: python3 submissions/arxiv-cs-dc/package_source.py
       - name: Inspect PDF text, page count, and source metadata
@@ -558,6 +560,8 @@ jobs:
           assert readiness['approval_count']==0
           print(f'PASS: {len(reader.pages)} readable PDF pages; author approvals pending')
           PY
+      - name: Independently compile packaged arXiv main.tex
+        run: bash submissions/arxiv-cs-dc/verify_source.sh
       - name: Upload offline review-only preprint candidate
         uses: actions/upload-artifact@v4
         with:
