@@ -564,6 +564,8 @@ jobs:
           PY
       - name: Independently compile packaged arXiv main.tex
         run: bash submissions/arxiv-cs-dc/verify_source.sh
+      - name: Write arXiv publication-readiness status (nonpublishing)
+        run: python3 submissions/arxiv-cs-dc/readiness.py
       - name: Upload offline review-only preprint candidate
         uses: actions/upload-artifact@v4
         with:
