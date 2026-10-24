@@ -47,7 +47,8 @@ def audit(root: Path) -> dict:
     require(title==meta.get("title"), "manuscript and submission title disagree")
     creators=meta.get("creators")
     require(isinstance(creators,list) and len(creators)>=1 and
-            all(isinstance(p,dict) and p.get("name") and
+            all(isinstance(p,dict) and p.get("name") == "Jihad Elsayed" and
+                p.get("legal_name_confirmed_by_author") is True and
                 p.get("confirmed_by_author") is False for p in creators),
             "unknown or falsely confirmed author identity")
     require(meta.get("publicly_submitted") is False and

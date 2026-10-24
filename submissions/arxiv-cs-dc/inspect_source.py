@@ -23,7 +23,7 @@ if pdf.is_file():
     reader = PdfReader(str(pdf))
     assert 6 <= len(reader.pages) <= 40, "Unexpected PDF page count"
     content = "\n".join(page.extract_text() or "" for page in reader.pages)
-    for marker in ("AivoBlock", "730.760", "References", "Generative AI assistance", "University of Alabama at Birmingham"):
+    for marker in ("AivoBlock", "730.760", "References", "Generative AI assistance", "University of Alabama at Birmingham", "Jihad Elsayed"):
         assert marker.lower() in content.lower(), f"Missing in compiled PDF: {marker}"
     tex = Path("research/paper/arxiv-isolated/main.tex").read_text(encoding="utf-8")
     assert tex.count("\\begin{abstract}") == 1

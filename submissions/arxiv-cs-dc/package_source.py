@@ -128,7 +128,7 @@ def package(repo: Path) -> dict:
     for tag in (r"\documentclass", r"\begin{document}", r"\end{document}",
                 "AivoBlock", "730.760", "270", "References", "Generative AI assistance"):
         require(tag.lower() in tex.lower(), f"Generated TeX missing expected marker: {tag}")
-    require("Sayed Jihad ElSayed" in tex, "Public preprint must preserve proposed author credit")
+    require("Jihad Elsayed" in tex, "Public preprint must preserve proposed author credit")
     require(not re.search(r"\\(?:includegraphics|bibliography|addbibresource|input|include)\s*(?:\[.*?\])?\s*\{", tex),
             "The generated TeX references external files; package all required sources before uploading")
     require(not re.search(r"\\(?:documentclass)\s*(?:\[.*?\])?\s*\{acmart\}", tex),

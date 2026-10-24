@@ -35,7 +35,7 @@ def inspect():
     if len(gates) != 10 or any(value is not False for value in gates.values()):
         errors.append("Draft author/rights approval gates must remain unapproved")
     creators = meta.get("creators", [])
-    if not creators or any(c.get("confirmed_by_author") is not False for c in creators):
+    if not creators or any(c.get("name") != "Jihad Elsayed" or c.get("legal_name_confirmed_by_author") is not True or c.get("confirmed_by_author") is not False for c in creators):
         errors.append("Draft byline must remain unconfirmed pending human verification")
     return {
         "schema": "aivoblock-arxiv-readiness-v1",

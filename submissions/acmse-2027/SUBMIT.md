@@ -24,9 +24,9 @@
 - Confirm the draft constitutes original research and does not overclaim permissionless consensus, cryptographic proof of general AI computations, energy savings or cross-hardware replication.
 
 ## 4. Submit through EasyChair (author action only)
-1. Use the official [ACMSE 2027 poster call](https://acmse.net/2027/posters-call/) and follow the linked EasyChair submission route.
+1. Open the verified [ACMSE 2027 EasyChair portal](https://easychair.org/conferences/?conf=acmse2027) (also linked by the [official poster call](https://acmse.net/2027/posters-call/)). Sign in or create an EasyChair account, then choose a new submission.
 2. Select **Posters**, not the full/short paper track.
-3. Enter the true author details and ORCID in EasyChair; review them against the separately tracked [submission metadata](submission-metadata.json).
+3. Enter **Jihad Elsayed** as the author's confirmed legal name in EasyChair (NOT in the anonymous PDF), plus an appropriate verified UAB affiliation and your real ORCID; review the separately tracked [submission metadata](submission-metadata.json). Other authors must be listed only when confirmed.
 4. Paste the **same** title and abstract used in your reviewed PDF (if the system requests those fields).
 5. Upload the **verified anonymous** `poster-abstract.pdf` from the successful official-template workflow.
 6. Submit before **November 14, 2026**, save the receipt/submission ID, and record it only after the venue confirms submission.
@@ -39,11 +39,10 @@ Anonymous is temporary and applies to the **review PDF**. ACMSE will record the 
 
 **arXiv** is a separate research preprint repository. Do not treat a conference submission, GitHub file, or successful build as an arXiv publication.
 
-## Status as of creation (2026-10-23)
+## Current preparation status (updated 24 October 2026)
 
-- LaTeX source and bibliography are available and mechanically checked.
-- Previous official-template workflow attempts failed for missing TeX dependencies; latest build must complete successfully before approval.
-- Local stock ACM-format preview was two pages; it is **not** evidence that the conference-modified template passes.
-- No submission, endorsement, EasyChair ID, ACM acceptance or camera-ready package exists.
+- The latest checked ACMSE official-template CI build passed; use a successful run on the *final* commit for the upload PDF, not an older artifact.
+- Legal author name corrected to **Jihad Elsayed** in EasyChair metadata; preserve anonymity in the two-page review PDF.
+- No EasyChair submission ID, acceptance, ORCID number, or camera-ready publication is claimed.
 
 Official rules: [Call for Posters](https://acmse.net/2027/posters-call/) and [Papers Format](https://acmse.net/2027/papers-format/).

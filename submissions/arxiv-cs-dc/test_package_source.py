@@ -41,11 +41,11 @@ class UrlFormattingTests(unittest.TestCase):
             "\\label{references-primary-source-checked}\n"
         )
         result = module.format_scholarly_title_block(
-            synthetic, "AivoBlock: Research Title", "Sayed Jihad ElSayed",
+            synthetic, "AivoBlock: Research Title", "Jihad Elsayed",
             "University of Alabama at Birmingham",
         )
         self.assertIn("\\title{AivoBlock: Research Title}", result)
-        self.assertIn("\\author{Sayed Jihad ElSayed\\\\", result)
+        self.assertIn("\\author{Jihad Elsayed\\\\", result)
         self.assertIn("\\begin{abstract}", result)
         self.assertIn("\\end{abstract}", result)
         self.assertIn("\\section{Introduction}", result)
