@@ -23,8 +23,11 @@ if pdf.is_file():
     reader = PdfReader(str(pdf))
     assert 6 <= len(reader.pages) <= 40, "Unexpected PDF page count"
     content = "\n".join(page.extract_text() or "" for page in reader.pages)
-    for marker in ("AivoBlock", "730.760", "References", "Generative AI assistance"):
+    for marker in ("AivoBlock", "730.760", "References", "Generative AI assistance", "University of Alabama at Birmingham"):
         assert marker.lower() in content.lower(), f"Missing in compiled PDF: {marker}"
+    tex = Path("research/paper/arxiv-isolated/main.tex").read_text(encoding="utf-8")
+    assert tex.count("\\begin{abstract}") == 1
+    assert "\\section{Introduction}" in tex and "\\section*{References}" in tex
     # The generated PDF should be derived solely from the exported main.tex file.
     print(f"PASS: arXiv ZIP integrity and {len(reader.pages)} source-compiled pages (not published)")
 else:

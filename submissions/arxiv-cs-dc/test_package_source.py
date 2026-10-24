@@ -22,13 +22,36 @@ class UrlFormattingTests(unittest.TestCase):
         self.assertEqual(module.wrap_plain_urls(src), src)
 
     def test_real_title_block(self):
-        original = ("\\author{}\n\\date{}\n\\begin{document}\n"
-                    "\\section{AivoBlock: Research Title}\\label{aivoblock-research-title}\nbody\n")
-        result = module.format_scholarly_title_block(original, "AivoBlock: Research Title", "Sayed Jihad ElSayed")
+        original = (
+            "\\author{}\n\\date{}\n\\begin{document}\n"
+            "\\section{AivoBlock: Research Title}\\label{aivoblock-research-title}\n"
+            "\\textbf{Author:} provisional credit.\n"
+            "\\subsection{Abstract}\\label{abstract}\n"
+            "Tested result: 730.760 ms.\n"
+            "\\subsection{1. Introduction}\\label{introduction}\n"
+        )
+        # Synthetic miniature must include the complete number of sections to
+        # test the full expected format without changing the fixed manuscript.
+        section_parts = [f"\\subsection{{{i}. Section {i}}}\\label{{s{i}}}\n"
+                         for i in range(2, 9)]
+        subs = [f"\\subsubsection{{1.{i} Detail {i}}}\\label{{detail{i}}}\n"
+                for i in range(1, 14)]
+        synthetic = original + "".join(section_parts) + "".join(subs) + (
+            "\\subsection{References --- checked selection}"
+            "\\label{references-primary-source-checked}\n"
+        )
+        result = module.format_scholarly_title_block(
+            synthetic, "AivoBlock: Research Title", "Sayed Jihad ElSayed",
+            "University of Alabama at Birmingham",
+        )
         self.assertIn("\\title{AivoBlock: Research Title}", result)
-        self.assertIn("\\author{Sayed Jihad ElSayed}", result)
-        self.assertIn("\\maketitle", result)
-        self.assertNotIn("\\section{AivoBlock", result)
+        self.assertIn("\\author{Sayed Jihad ElSayed\\\\", result)
+        self.assertIn("\\begin{abstract}", result)
+        self.assertIn("\\end{abstract}", result)
+        self.assertIn("\\section{Introduction}", result)
+        self.assertIn("\\section*{References}", result)
+        self.assertEqual(result.count("730.760"), 1)
+        self.assertNotIn("\\subsection{Abstract}", result)
 
     def test_repeatable_conversion(self):
         src = "https://example.org/reference\n"

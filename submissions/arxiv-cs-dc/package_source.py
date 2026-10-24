@@ -38,21 +38,73 @@ def wrap_plain_urls(latex: str) -> str:
     return "".join(lines)
 
 
-def format_scholarly_title_block(latex: str, title: str, author: str) -> str:
-    """Show a real title and provisional author byline on the arXiv preprint."""
-    for field in (title, author):
-        require(bool(field) and not re.search(r"[\\{}%$&#_]", field),
+def format_scholarly_title_block(latex: str, title: str, author: str, affiliation: str = "") -> str:
+    """Turn Pandoc draft headings into a reviewable scholarly arXiv title/abstract.
+
+    This changes presentation only: the abstract, research provenance, and
+    experimental content are moved without rewriting their scientific claims.
+    Affiliation and byline are provisional until the author approves them.
+    """
+    for field in (title, author, affiliation):
+        require(not re.search(r"[\\{}%$&#_]", field),
                 "LaTeX metadata contains an unescaped special character")
+    require(bool(title and author), "A title and proposed author are required")
     old_author = "\\author{}" + "\n" + "\\date{}"
     require(old_author in latex, "Expected Pandoc standalone author block missing")
-    byline = "\\title{" + title + "}\n" + "\\author{" + author + "}\n" + "\\date{}"
-    latex = latex.replace(old_author, byline, 1)
-    initial_h1 = re.compile(
-        r"(\\begin\{document\}\s*)\\section\{AivoBlock:.*?\}\\label\{aivoblock-[^}]+\}\s*",
+    byline = author + (r"\\" + "\n" + affiliation if affiliation else "")
+    latex = latex.replace(old_author,
+                          "\\title{" + title + "}\n" + "\\author{" + byline + "}\n" + "\\date{}",
+                          1)
+    pattern = re.compile(
+        r"(\\begin\{document\}\s*)\\section\{AivoBlock:.*?\}"
+        r"\\label\{aivoblock-[^}]+\}\s*"
+        r"(?P<provenance>.*?)\\subsection\{Abstract\}\\label\{abstract\}\s*"
+        r"(?P<abstract>.*?)\s*(?=\\subsection\{1\. Introduction\})",
         re.DOTALL,
     )
-    require(bool(initial_h1.search(latex)), "Expected Pandoc H1 title not found")
-    return initial_h1.sub(lambda match: match.group(1) + "\\maketitle\n\n", latex, count=1)
+    match = pattern.search(latex)
+    require(match is not None, "Original Pandoc front matter or abstract missing")
+    # Keep the existing provenance and disclosures, but put the abstract first.
+    latex = pattern.sub(
+        lambda m: (
+            m.group(1) + "\\maketitle\n\n"
+            + "\\begin{abstract}\n" + m.group("abstract").strip()
+            + "\n\\end{abstract}\n\n"
+            + m.group("provenance").strip() + "\n\n"
+        ), latex, count=1,
+    )
+    # Pandoc demoted levels after treating Markdown H1 as the manuscript title.
+    latex, sections = re.subn(
+        r"\\subsection\{([1-8])\.\s+([^{}]+)\}",
+        lambda m: "\\section{" + " ".join(m.group(2).split()) + "}",
+        latex,
+    )
+    latex, subsections = re.subn(
+        r"\\subsubsection\{[1-8]\.\d+\s+([^{}]+)\}",
+        lambda m: "\\subsection{" + " ".join(m.group(1).split()) + "}",
+        latex,
+    )
+    require(sections == 8 and subsections >= 10,
+            "Unexpected top-level or subsection count; inspect source headings")
+    latex, refs = re.subn(
+        r"\\subsection\{References ---.*?\}(?=\\label\{references-primary-source)",
+        r"\\section*{References}", latex, count=1, flags=re.DOTALL,
+    )
+    require(refs == 1, "Expected manuscript References heading missing")
+    latex = latex.replace(
+        "\\subsection{Author disclosures and research\nintegrity}",
+        "\\section*{Author Disclosures and Research Integrity}",
+    ).replace(
+        "\\subsection{Artifact availability and\nreproducibility}",
+        "\\section*{Artifact Availability and Reproducibility}",
+    )
+    require(latex.count("\\begin{abstract}") == 1
+            and latex.count("\\end{abstract}") == 1,
+            "Expected exactly one actual LaTeX abstract environment")
+    require("\\section{Introduction}" in latex
+            and "\\section*{References}" in latex,
+            "Main article section hierarchy was not normalized")
+    return latex
 
 
 def package(repo: Path) -> dict:
@@ -71,6 +123,7 @@ def package(repo: Path) -> dict:
     tex = format_scholarly_title_block(
         wrap_plain_urls(tex_path.read_text(encoding="utf-8")),
         meta["title"], meta["creators"][0]["name"],
+        meta["creators"][0].get("affiliation") or "",
     )
     for tag in (r"\documentclass", r"\begin{document}", r"\end{document}",
                 "AivoBlock", "730.760", "270", "References", "Generative AI assistance"):
