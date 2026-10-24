@@ -30,6 +30,18 @@ def validate(base=BASE):
         assert marker.lower() in packet.lower(), f"Missing reproducibility limit: {marker}"
     for marker in ("Reproduction detail", "Critical findings", "Reviewer consent"):
         assert marker in form, f"Review template missing {marker}"
+    outreach = (base / "UAB_OUTREACH.md").read_text(encoding="utf-8")
+    mail = (base / "EMAIL_TO_HASAN.md").read_text(encoding="utf-8")
+    for marker in ("Ragib Hasan", "Yuliang Zheng", "NOT VERIFIED", "not_requested"):
+        assert marker.lower() in outreach.lower(), "Outreach guide missing " + marker
+    for marker in ("Dear Professor Hasan", "Sayed Jihad ElSayed", "official arXiv request link", "DRAFT ONLY"):
+        assert marker in mail, "Prepared email missing " + marker
+    candidates = obj.get("proposed_outreach", [])
+    assert len(candidates) == 2, "Expected one primary and one alternate outreach candidate"
+    assert candidates[0].get("name") == "Ragib Hasan" and candidates[1].get("name") == "Yuliang Zheng"
+    for candidate in candidates:
+        assert candidate.get("contact_status") == "not_contacted" and candidate.get("response_received") is False, "No request or reply has been evidenced"
+        assert candidate.get("endorsement_eligibility") == "unverified", "ArXiv eligibility cannot be inferred from professorship"
     assert obj.get("external_reviewer_contact_status") in ALLOWED_CONTACT_STATES
     assert obj.get("external_review_report_received") in (True, False)
     assert obj.get("independent_live_experiment_replication_verified") in (True, False)

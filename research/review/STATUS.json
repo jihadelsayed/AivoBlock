@@ -15,5 +15,25 @@
   "arxiv_endorsement_verified": false,
   "acmse_preprint_anonymity_guidance_received": false,
   "publication_author_approved": false,
-  "note": "GitHub CI archive reanalysis is not outside-person review or an independent live rerun. No reviewer response, conference reply, or arXiv endorsement is asserted by this file."
+  "note": "GitHub CI archive reanalysis is not outside-person review or an independent live rerun. No reviewer response, conference reply, or arXiv endorsement is asserted by this file.",
+  "proposed_outreach": [
+    {
+      "name": "Ragib Hasan",
+      "institution": "University of Alabama at Birmingham",
+      "role": "primary technical reviewer candidate",
+      "profile": "https://www.uab.edu/cas/computerscience/people/faculty-directory/faculty/ragib-hasan",
+      "contact_status": "not_contacted",
+      "endorsement_eligibility": "unverified",
+      "response_received": false
+    },
+    {
+      "name": "Yuliang Zheng",
+      "institution": "University of Alabama at Birmingham",
+      "role": "alternate blockchain and cryptography reviewer candidate",
+      "profile": "https://www.uab.edu/cas/computerscience/people/faculty-directory/faculty/yuliang-zheng",
+      "contact_status": "not_contacted",
+      "endorsement_eligibility": "unverified",
+      "response_received": false
+    }
+  ]
 }
