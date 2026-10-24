@@ -38,6 +38,25 @@ def wrap_plain_urls(latex: str) -> str:
     return "".join(lines)
 
 
+def format_scholarly_title_block(latex: str, title: str, author: str) -> str:
+    """Replace Pandoc's first H1 with a real LaTeX title and tentative author byline."""
+    for field in (title, author):
+        require(bool(field) and not re.search(r"[\\{}%
+
+def package(repo: Path) -> dict:
+#_]", field),
+                "LaTeX metadata contains unescaped special characters")
+    old_author = "\\author{}\\n\\date{}"
+    require(old_author in latex, "Expected Pandoc standalone LaTeX author block missing")
+    latex = latex.replace(old_author, "\\title{" + title + "}\\n\\author{" + author + "}\\n\\date{}", 1)
+    header = re.compile(
+        r"(\\begin\{document\}\s*)\\section\{AivoBlock:.*?\}\\label\{aivoblock-[^}]+\}\s*",
+        re.DOTALL,
+    )
+    require(bool(header.search(latex)), "Expected Pandoc H1 title not found")
+    return header.sub(lambda match: match.group(1) + "\\maketitle\\n\\n", latex, count=1)
+
+
 def package(repo: Path) -> dict:
     repo = repo.resolve()
     base = repo / "research/paper/build"
@@ -51,7 +70,10 @@ def package(repo: Path) -> dict:
     approvals = meta.get("approval", {})
     require(isinstance(approvals, dict) and approvals and all(v is False for v in approvals.values()),
             "Author rights and content approvals must remain pending in this draft workflow")
-    tex = wrap_plain_urls(tex_path.read_text(encoding="utf-8"))
+    tex = format_scholarly_title_block(
+        wrap_plain_urls(tex_path.read_text(encoding="utf-8")),
+        meta["title"], meta["creators"][0]["name"],
+    )
     for tag in (r"\documentclass", r"\begin{document}", r"\end{document}",
                 "AivoBlock", "730.760", "270", "References", "Generative AI assistance"):
         require(tag.lower() in tex.lower(), f"Generated TeX missing expected marker: {tag}")

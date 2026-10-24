@@ -21,6 +21,15 @@ class UrlFormattingTests(unittest.TestCase):
         src = "\\begin{Shaded}\n\\NormalTok{git clone https://example.org/repo.git}\n\\end{Shaded}\n"
         self.assertEqual(module.wrap_plain_urls(src), src)
 
+    def test_real_title_block(self):
+        original = ("\\author{}\n\\date{}\n\\begin{document}\n"
+                    "\\section{AivoBlock: Research Title}\\label{aivoblock-research-title}\nbody\n")
+        result = module.format_scholarly_title_block(original, "AivoBlock: Research Title", "Sayed Jihad ElSayed")
+        self.assertIn("\\title{AivoBlock: Research Title}", result)
+        self.assertIn("\\author{Sayed Jihad ElSayed}", result)
+        self.assertIn("\\maketitle", result)
+        self.assertNotIn("\\section{AivoBlock", result)
+
     def test_repeatable_conversion(self):
         src = "https://example.org/reference\n"
         converted = module.wrap_plain_urls(src)

@@ -14,4 +14,5 @@ for attempt in 1 2; do
     > /dev/null
 done
 python3 submissions/arxiv-cs-dc/inspect_source.py
+cp research/paper/arxiv-isolated/main.pdf research/paper/build/aivoblock-arxiv-source-preview.pdf
 rm -rf research/paper/arxiv-isolated
