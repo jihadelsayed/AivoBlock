@@ -56,20 +56,6 @@ def format_scholarly_title_block(latex: str, title: str, author: str) -> str:
 
 
 def package(repo: Path) -> dict:
-#_]", field),
-                "LaTeX metadata contains unescaped special characters")
-    old_author = "\\author{}\\n\\date{}"
-    require(old_author in latex, "Expected Pandoc standalone LaTeX author block missing")
-    latex = latex.replace(old_author, "\\title{" + title + "}\\n\\author{" + author + "}\\n\\date{}", 1)
-    header = re.compile(
-        r"(\\begin\{document\}\s*)\\section\{AivoBlock:.*?\}\\label\{aivoblock-[^}]+\}\s*",
-        re.DOTALL,
-    )
-    require(bool(header.search(latex)), "Expected Pandoc H1 title not found")
-    return header.sub(lambda match: match.group(1) + "\\maketitle\\n\\n", latex, count=1)
-
-
-def package(repo: Path) -> dict:
     repo = repo.resolve()
     base = repo / "research/paper/build"
     tex_path = base / "aivoblock-preprint.tex"
