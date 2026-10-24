@@ -530,6 +530,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Audit arXiv manuscript references and claim limitations
+        run: python3 submissions/arxiv-cs-dc/audit_preprint.py
       - name: Assert explicit non-submission and author approval gates
         run: |
           python3 -m unittest discover -s scripts -p 'test_preprint_package.py' -v
