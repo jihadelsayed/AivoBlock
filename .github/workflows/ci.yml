@@ -497,6 +497,8 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_literature_review.py' -v
           python3 scripts/check_literature_review.py
+      - name: Validate ACMSE poster source anonymity and evidence claims
+        run: python3 submissions/acmse-2027/check_submission.py --source-only
       - name: Download published tagged research archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
