@@ -39,9 +39,21 @@ def wrap_plain_urls(latex: str) -> str:
 
 
 def format_scholarly_title_block(latex: str, title: str, author: str) -> str:
-    """Replace Pandoc's first H1 with a real LaTeX title and tentative author byline."""
+    """Show a real title and provisional author byline on the arXiv preprint."""
     for field in (title, author):
-        require(bool(field) and not re.search(r"[\\{}%
+        require(bool(field) and not re.search(r"[\\{}%$&#_]", field),
+                "LaTeX metadata contains an unescaped special character")
+    old_author = "\\author{}" + "\n" + "\\date{}"
+    require(old_author in latex, "Expected Pandoc standalone author block missing")
+    byline = "\\title{" + title + "}\n" + "\\author{" + author + "}\n" + "\\date{}"
+    latex = latex.replace(old_author, byline, 1)
+    initial_h1 = re.compile(
+        r"(\\begin\{document\}\s*)\\section\{AivoBlock:.*?\}\\label\{aivoblock-[^}]+\}\s*",
+        re.DOTALL,
+    )
+    require(bool(initial_h1.search(latex)), "Expected Pandoc H1 title not found")
+    return initial_h1.sub(lambda match: match.group(1) + "\\maketitle\n\n", latex, count=1)
+
 
 def package(repo: Path) -> dict:
 #_]", field),
