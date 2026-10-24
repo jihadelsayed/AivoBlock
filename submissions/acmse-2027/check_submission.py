@@ -98,7 +98,7 @@ def main() -> int:
                 require("Andrei Lihu" in body.stdout and "Jincheng Du" in body.stdout,
                         "PDF bibliography is stale or has incorrect names; rebuild with corrected BibTeX")
     if not args.source_only:
-        warnings.append("Venue-modified ACMSE 2027 template ZIP still requires an exact build comparison")
+        warnings.append("Manual review of the generated PDF against sample-sigconf.tex is still required")
     print(f"ACMSE poster preflight: {len(errors)} error(s), {len(warnings)} warning(s)")
     for warning in warnings:
         print(f"WARN: {warning}")
