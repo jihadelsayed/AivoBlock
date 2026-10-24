@@ -42,7 +42,7 @@ Use the generated `.tex` source (not solely a PDF if TeX is available), with onl
 Suggested arXiv metadata (pending review):
 
 - **Title:** AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work
-- **Author:** Sayed Jihad ElSayed — legal formatting, affiliation and contributor list **unconfirmed**.
+- **Author:** Jihad Elsayed — legal formatting, affiliation and contributor list **unconfirmed**.
 - **Possible categories:** cs.DC (primary); cs.CR (cross-list).
 - **Paper status:** research prototype characterization; *not* peer reviewed.
 - **Keywords:** permissioned blockchain, proof of useful work, verifiable AI inference, deterministic quantization, reproducible experiments.

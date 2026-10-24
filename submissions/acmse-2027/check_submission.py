@@ -11,7 +11,7 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-IDENTIFIERS = ("Sayed Jihad", "Jihad ElSayed", "jihadelsayed", "University of Alabama", "uab.edu", "Neetechs LLC")
+IDENTIFIERS = ("Sayed Jihad", "Sayed Jihad ElSayed", "Jihad Elsayed", "Jihad ElSayed", "jihadelsayed", "University of Alabama", "uab.edu", "Neetechs LLC")
 REQUIRED_VALUES = ("270", "730.760", "779.342", "0.742", "3.412", "8.282", "1.880", "0.566", "3.404", "18.757", "94.8")
 
 

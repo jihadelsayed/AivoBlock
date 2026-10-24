@@ -26,7 +26,7 @@ I want to follow the conference's anonymity and originality rules correctly whil
 
 Thank you for your guidance.
 
-Sayed Jihad ElSayed
+Jihad Elsayed
 
 ## How to record an answer
 

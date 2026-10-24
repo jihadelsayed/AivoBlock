@@ -6,7 +6,7 @@
 
 **Title:** AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work
 
-**Author:** Sayed Jihad ElSayed — confirm the exact author-name formatting and any additional credit before upload.
+**Author:** Jihad Elsayed — legal name confirmed by author on 24 October 2026; verify contributor credit and final submission authorization before upload.
 
 **Affiliation:** University of Alabama at Birmingham (UAB) — the author has identified UAB as the current institution; confirm the appropriate research-affiliation wording and contributor credits for the manuscript.
 

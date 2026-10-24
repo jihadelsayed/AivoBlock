@@ -8,7 +8,7 @@
 - **Primary category:** `cs.DC` — Distributed, Parallel, and Cluster Computing.
 - **Optional cross-list:** `cs.CR` — Cryptography and Security, *only if accepted and appropriate for the final technical content*. Do not assume cross-list eligibility.
 - **Title:** AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work
-- **Proposed author:** Sayed Jihad ElSayed — **pending final author approval**.
+- **Proposed author:** Jihad Elsayed — **legal name confirmed by author; complete byline/contributor and publication approval remains pending**.
 - **Proposed affiliation in the manuscript:** University of Alabama at Birmingham — **pending confirmation that it is appropriate for this independently developed research**.
 - **ORCID:** Not provided; do not fabricate an identifier.
 - **Keywords (where supported):** permissioned blockchain; verifiable AI inference; deterministic quantization; distributed systems; reproducible systems research.

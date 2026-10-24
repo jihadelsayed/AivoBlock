@@ -21,7 +21,7 @@ Would you be available to offer brief feedback, or suggest someone whose researc
 
 Thank you for your time.
 
-Sayed Jihad ElSayed
+Jihad Elsayed
 
 ---
 

@@ -34,7 +34,7 @@ def validate(base=BASE):
     mail = (base / "EMAIL_TO_HASAN.md").read_text(encoding="utf-8")
     for marker in ("Ragib Hasan", "Yuliang Zheng", "NOT VERIFIED", "not_requested"):
         assert marker.lower() in outreach.lower(), "Outreach guide missing " + marker
-    for marker in ("Dear Professor Hasan", "Sayed Jihad ElSayed", "official arXiv request link", "DRAFT ONLY"):
+    for marker in ("Dear Professor Hasan", "Jihad Elsayed", "official arXiv request link", "DRAFT ONLY"):
         assert marker in mail, "Prepared email missing " + marker
     candidates = obj.get("proposed_outreach", [])
     assert len(candidates) == 2, "Expected one primary and one alternate outreach candidate"

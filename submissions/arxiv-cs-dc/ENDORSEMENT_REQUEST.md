@@ -28,7 +28,7 @@ Official arXiv endorsement request: **[insert your actual arXiv-generated endors
 
 Thank you for considering it.
 
-Sayed Jihad ElSayed
+Jihad Elsayed
 
 ---
 

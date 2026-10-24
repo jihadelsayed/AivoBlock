@@ -1,7 +1,7 @@
 # AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work
 
 **Manuscript version:** 0.2, 22 October 2026 — working research-paper draft after targeted primary-source literature review, **not** submitted or peer reviewed.  
-**Author:** Sayed Jihad ElSayed (AivoBlock project); contributions and code history remain attributable to repository contributors.  
+**Author:** Jihad Elsayed (AivoBlock project); contributions and code history remain attributable to repository contributors.  
 **Artifact release:** [AivoBlock v0.1.0 research prototype](https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype).  
 **Evidence source:** GitHub Actions run [39740779280](https://github.com/jihadelsayed/AivoBlock/actions/runs/39740779280), commit `ade6ff42737d972658e9c309f9a2d8cffbfb988c`.  
 **Keywords:** verifiable computation; useful AI work; permissioned blockchain; deterministic quantization; Byzantine fault tolerance; reproducible experimental systems.
@@ -239,7 +239,7 @@ python3 scripts/audit_public_evidence.py --archive /path/to/aivoblock-research-e
 
 [4] A. Lihu, J. Du, I. Barjaktarevic, P. Gerzanics, and M. Harvilla. “A Proof of Useful Work for Artificial Intelligence on the Blockchain.” arXiv:2001.09244, 2020. https://arxiv.org/abs/2001.09244
 
-[5] S. J. ElSayed and AivoBlock contributors. *AivoBlock v0.1.0: Research Prototype for Verifiable Partitioned AI Work on a Permissioned Blockchain* [Software and research data], 2026. https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype
+[5] J. Elsayed and AivoBlock contributors. *AivoBlock v0.1.0: Research Prototype for Verifiable Partitioned AI Work on a Permissioned Blockchain* [Software and research data], 2026. https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype
 
 
 [6] M. Fitzi, A. Kiayias, G. Panagiotakos, and A. Russell. “Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work.” *Advances in Cryptology – CRYPTO 2022*, LNCS vol. 13508, pp. 339–369, 2022. https://doi.org/10.1007/978-3-031-15979-4_12

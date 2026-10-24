@@ -9,10 +9,11 @@
   "review_source": "submissions/acmse-2027/poster-abstract.tex",
   "bibliography": "submissions/acmse-2027/references.bib",
   "author_system_metadata": {
-    "name": "Sayed Jihad ElSayed",
+    "name": "Jihad Elsayed",
     "affiliation": "University of Alabama at Birmingham",
     "verified_by_author": false,
-    "orcid": null
+    "orcid": null,
+    "legal_name_confirmed_by_author": true
   },
   "provenance": {
     "research_release": "v0.1.0-research-prototype",
