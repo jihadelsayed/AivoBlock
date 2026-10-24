@@ -1,0 +1,52 @@
+name: ACMSE 2027 Poster Review Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'submissions/acmse-2027/**'
+      - '.github/workflows/acmse-poster.yml'
+  pull_request:
+    paths:
+      - 'submissions/acmse-2027/**'
+      - '.github/workflows/acmse-poster.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acmse-poster-review-build
+  cancel-in-progress: true
+
+jobs:
+  compile-review-artifact:
+    name: Official-template poster preflight (not a submission)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install LaTeX, BibTeX, fonts and PDF inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl unzip latexmk texlive-latex-base texlive-latex-extra \
+            texlive-bibtex-extra texlive-fonts-recommended texlive-publishers \
+            fonts-linuxlibertine poppler-utils
+      - name: Validate anonymous source and published-evidence claims
+        run: python3 submissions/acmse-2027/check_submission.py --source-only
+      - name: Build and check two-page PDF using mandatory ACMSE template
+        run: bash submissions/acmse-2027/build_official.sh
+      - name: Upload offline review artifact (never publishes to ACM)
+        uses: actions/upload-artifact@v4
+        with:
+          name: acmse-2027-anonymous-poster-review
+          path: |
+            submissions/acmse-2027/build/poster-abstract.pdf
+            submissions/acmse-2027/build/poster-abstract.log
+            submissions/acmse-2027/build/poster-abstract.bbl
+            submissions/acmse-2027/build/official-template.sha256
+            submissions/acmse-2027/build/official-template-url.txt
+          retention-days: 30
+          if-no-files-found: error

@@ -95,6 +95,8 @@ def main() -> int:
                     require(token.lower() not in body.stdout.lower(), f"PDF visible identity: {token}")
                 require("References" in body.stdout and "AivoBlock" in body.stdout,
                         "PDF does not include expected paper content and references")
+                require("Andrei Lihu" in body.stdout and "Jincheng Du" in body.stdout,
+                        "PDF bibliography is stale or has incorrect names; rebuild with corrected BibTeX")
     if not args.source_only:
         warnings.append("Venue-modified ACMSE 2027 template ZIP still requires an exact build comparison")
     print(f"ACMSE poster preflight: {len(errors)} error(s), {len(warnings)} warning(s)")
