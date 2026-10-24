@@ -4,7 +4,7 @@
 
 ## Research contribution and limits
 
-The paper, [AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work](../paper/aivoblock-manuscript.md), evaluates a small **permissioned** blockchain prototype that uses signed partition assignments for integer AI inference. Python workers produce claims, Rust validators **fully recompute** the inference, a greater-than-two-thirds fixed-set quorum finalizes blocks, and a Haskell core independently checks deterministic settlement.
+The paper, [AivoBlock: A Reproducible Permissioned Blockchain Prototype for Partitioned, Deterministically Verifiable AI Work](../paper/aivoblock-manuscript.md), evaluates a small **permissioned** blockchain prototype that uses signed partition assignments for integer AI inference. Python workers produce claims, Rust validators **fully recompute** the inference (full recomputation, not succinct proof verification), a greater-than-two-thirds fixed-set quorum finalizes blocks, and a Haskell core independently checks deterministic settlement.
 
 Questions for a reviewer: *Does this implementation do what the paper says?* Are there security failures or missing baselines? Are experimental interpretations and novelty boundaries sufficiently narrow? It does **not** demonstrate permissionless proof-of-work, succinct proof of arbitrary ML computation, token-economic performance, or live-experiment replication on another machine.
 
