@@ -26,7 +26,7 @@ def wrap_plain_urls(latex: str) -> str:
     for line in latex.splitlines(keepends=True):
         if r"\begin{Shaded}" in line or r"\begin{Highlighting}" in line:
             in_code = True
-        if not in_code and r"\href{" not in line and not line.lstrip().startswith("%"):
+        if not in_code and r"\href{" not in line and r"\url{" not in line and not line.lstrip().startswith("%"):
             def replace_url(match: re.Match[str]) -> str:
                 raw = match.group(0)
                 address = raw.rstrip(".,;")
