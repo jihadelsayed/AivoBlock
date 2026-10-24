@@ -536,6 +536,8 @@ jobs:
           python3 scripts/check_preprint_package.py
       - name: Build typeset PDF, LaTeX, sources, and SHA-256 manifest
         run: bash scripts/build_preprint.sh
+      - name: Package arXiv standalone TeX as review-only source ZIP
+        run: python3 submissions/arxiv-cs-dc/package_source.py
       - name: Inspect PDF text, page count, and source metadata
         run: |
           python3 -m pip install 'pypdf>=5,<7'
