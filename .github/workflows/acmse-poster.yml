@@ -33,7 +33,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             curl unzip latexmk texlive-latex-base texlive-latex-extra \
             texlive-bibtex-extra texlive-fonts-recommended texlive-fonts-extra \
-            texlive-publishers fonts-linuxlibertine poppler-utils
+            texlive-plain-generic texlive-publishers fonts-linuxlibertine poppler-utils
       - name: Validate anonymous source and published-evidence claims
         run: python3 submissions/acmse-2027/check_submission.py --source-only
       - name: Build and check two-page PDF using mandatory ACMSE template
