@@ -1,0 +1,35 @@
+{
+  "schema": "aivoblock-acmse-2027-poster-submission-v1",
+  "venue": "ACM Southeast Conference 2027",
+  "track": "Posters",
+  "track_submission_url": "https://acmse.net/2027/posters-call/",
+  "deadline": "2026-11-14",
+  "proposed_title": "AivoBlock: Reproducible Verification of Partitioned AI Inference in a Permissioned Blockchain",
+  "submission_kind": "two-page anonymous extended abstract",
+  "review_source": "submissions/acmse-2027/poster-abstract.tex",
+  "bibliography": "submissions/acmse-2027/references.bib",
+  "author_system_metadata": {
+    "name": "Sayed Jihad ElSayed",
+    "affiliation": "University of Alabama at Birmingham",
+    "verified_by_author": false,
+    "orcid": null
+  },
+  "provenance": {
+    "research_release": "v0.1.0-research-prototype",
+    "research_commit": "ade6ff42737d972658e9c309f9a2d8cffbfb988c",
+    "evidence_ci_run": 39740779280
+  },
+  "gates": {
+    "template_validated_pdf": false,
+    "exactly_two_pages_verified_against_official_template": false,
+    "anon_pdf_confirmed": false,
+    "venue_public_artifact_anonymity_clarified": false,
+    "author_verified_bibliography_and_claims": false,
+    "author_confirmed_ai_assistance_disclosure": false,
+    "author_approved_exact_pdf": false,
+    "easychair_submitted": false
+  },
+  "easychair_submission_id": null,
+  "accepted": false,
+  "note": "Preparation only. The author identity and affiliation belong in EasyChair metadata, not the anonymous PDF. Never automatically infer approval or submission from a CI pass."
+}
