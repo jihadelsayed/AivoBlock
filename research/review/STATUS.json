@@ -1,0 +1,19 @@
+{
+  "schema": "aivoblock-independent-review-tracker-v1",
+  "as_of": "2026-10-23",
+  "project": "AivoBlock",
+  "review_package_path": "research/review/README.md",
+  "review_form_path": "research/review/REVIEW_FORM.md",
+  "original_evidence_commit": "ade6ff42737d972658e9c309f9a2d8cffbfb988c",
+  "original_evidence_run_id": "39740779280",
+  "original_archive_sha256": "a489c37ef5f14c68e08b623eb01477cbc4507ed7b7326cddfcaf9a75745ef414",
+  "external_reviewer_contact_status": "not_requested",
+  "external_review_report_received": false,
+  "review_report_url": null,
+  "independent_live_experiment_replication_verified": false,
+  "new_replication_report_url": null,
+  "arxiv_endorsement_verified": false,
+  "acmse_preprint_anonymity_guidance_received": false,
+  "publication_author_approved": false,
+  "note": "GitHub CI archive reanalysis is not outside-person review or an independent live rerun. No reviewer response, conference reply, or arXiv endorsement is asserted by this file."
+}

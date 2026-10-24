@@ -497,6 +497,10 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_literature_review.py' -v
           python3 scripts/check_literature_review.py
+      - name: Validate outside-review packet without claiming outside review
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_check_external_review_packet.py' -v
+          python3 scripts/check_external_review_packet.py
       - name: Validate ACMSE poster source anonymity and evidence claims
         run: python3 submissions/acmse-2027/check_submission.py --source-only
       - name: Download published tagged research archive
