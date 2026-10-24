@@ -242,11 +242,11 @@ python3 scripts/audit_public_evidence.py --archive /path/to/aivoblock-research-e
 [5] S. J. ElSayed and AivoBlock contributors. *AivoBlock v0.1.0: Research Prototype for Verifiable Partitioned AI Work on a Permissioned Blockchain* [Software and research data], 2026. https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype
 
 
-[6] M. Fitzi, A. Kiayias, G. Panagiotakos, and A. Russell. “Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work: A Provably Secure Blockchain Protocol.” *CRYPTO 2022*. https://www.iog.io/papers/ofelimos-combinatorial-optimization-via-proof-of-useful-work-a-provably-secure-blockchain-protocol
+[6] M. Fitzi, A. Kiayias, G. Panagiotakos, and A. Russell. “Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work.” *Advances in Cryptology – CRYPTO 2022*, LNCS vol. 13508, pp. 339–369, 2022. https://doi.org/10.1007/978-3-031-15979-4_12
 
 [7] Z. Zhao, Z. Fang, X. Wang, X. Chen, H. Su, H. Xiao, and Y. Zhou. “Proof-of-Learning with Incentive Security.” arXiv:2404.09005, 2024. https://arxiv.org/abs/2404.09005
 
-[8] I. Komargodski and O. Weinstein. “Proofs of Useful Work from Arbitrary Matrix Multiplication.” arXiv:2504.09971, 2025. https://arxiv.org/abs/2504.09971
+[8] I. Komargodski and O. Weinstein. “Proofs of Useful Work from Arbitrary Matrix Multiplication.” arXiv:2504.09971v4, revised 13 November 2025. https://arxiv.org/abs/2504.09971
 
 [9] F. Bakhshi, M. Ashtiani, and M. A. Azgomi. “A Systematic Literature Review on Proof-of-Useful Work Consensus Algorithms.” *Blockchain: Research and Applications*, article 100387, 2025. https://doi.org/10.1016/j.bcra.2025.100387
 

@@ -11,15 +11,15 @@ This is a limited audit of the existing manuscript and its published evidence, n
 | [2] | [USENIX OSDI 1999](https://www.usenix.org/conference/osdi-99/practical-byzantine-fault-tolerance) | Castro and Liskov's Byzantine fault-tolerance research exists; it is not a proof of AivoBlock's correctness |
 | [3] | [Entropy 21(8), 723 (2019)](https://doi.org/10.3390/e21080723) | Coin.AI title, authors, journal and DOI match |
 | [4] | [arXiv:2001.09244](https://arxiv.org/abs/2001.09244) | Author given names are Andrei Lihu, Jincheng Du, Igor Barjaktarevic, Patrick Gerzanics and Mark Harvilla; earlier **training** work |
-| [6] | [Edinburgh institutional record](https://www.research.ed.ac.uk/en/publications/ofelimos-combinatorial-optimization-viaproof-of-useful-work/) | Four authors, CRYPTO 2022 and DOI confirmed; exact printed title punctuation merits final check |
+| [6] | [Springer proceedings](https://link.springer.com/book/10.1007/978-3-031-15979-4) and [Edinburgh record](https://www.research.ed.ac.uk/en/publications/ofelimos-combinatorial-optimization-viaproof-of-useful-work/) | **Resolved:** cite published chapter title “Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work,” LNCS 13508, pp. 339–369 (2022), DOI 10.1007/978-3-031-15979-4_12. The longer subtitle appears in some manuscripts/indexes. |
 | [7] | [arXiv:2404.09005](https://arxiv.org/abs/2404.09005) | Title, author group, training-based incentive security match |
-| [8] | [arXiv:2504.09971](https://arxiv.org/abs/2504.09971) | Paper exists, but indexed/version author lists differ; **resolve exact version/byline manually** |
+| [8] | [arXiv:2504.09971v4](https://arxiv.org/abs/2504.09971v4) | **Resolved for v4:** 13 November 2025, authors **Ilan Komargodski and Omri Weinstein**. Earlier indexed versions include Itamar Schen; citations should specify v4 to avoid mixing versions. |
 | [9] | [Elsevier publisher record](https://doi.org/10.1016/j.bcra.2025.100387) | Systematic review and article number 100387 supported |
 | [10] | [ACM Computing Surveys](https://doi.org/10.1145/3828717) | Merlina, Garrett, Vitenberg; vol. 58 issue 14 article 358, online July 2026 |
 | [11] | [SEDRA original working paper](https://www.sedracoin.com/research/proof-of-useful-inference/) | Explicitly **exploratory, not peer reviewed**; August 2026 |
 | [12] | [arXiv:2610.26713](https://arxiv.org/abs/2610.26713) | Wong, Ciampi, Sarkar; submitted 19 October 2026; **preprint** |
 
-Still requiring a final author check: original whitepaper edition/date [1], release citation and contributor credit [5], author/version discrepancy [8], and formatting of all references. Source checking does not mean a venue has accepted the work.
+Reference [1] matches the original Bitcoin whitepaper title and author at bitcoin.org. Reference [5] matches the AivoBlock v0.1.0 GitHub release's stated attribution; individual contributor-credit permissions still require confirmation. Reference [6] published chapter title and [8] arXiv v4 author list are now resolved. The author must still review all bibliographic formatting and URLs. Source checking does not mean a venue has accepted the work.
 
 ## Scientific evidence and boundaries
 
@@ -33,7 +33,8 @@ Still requiring a final author check: original whitepaper edition/date [1], rele
 ## Final author/venue checks still required
 
 - [ ] Personally review the manuscript and every source, and revise any AI-assisted wording; independently verify scholarly claims.
-- [ ] Resolve citation [8] version/author list, [6] exact title, and [1]/[5] attribution.
+- [x] Resolve [6] publisher title and [8] current arXiv v4 byline; verify [1] original Bitcoin whitepaper metadata and [5] release attribution against their hosted records.
+- [ ] Personally confirm that AivoBlock contributors are credited appropriately and approve all reference formatting.
 - [ ] Confirm proposed author, UAB affiliation, ORCID, contribution credit, funding, conflicts, rights and AI-assistance disclosure.
 - [ ] Decide the arXiv paper distribution license; code licensing is separate.
 - [ ] Obtain arXiv cs.DC endorsement and check ACMSE's double-anonymous/preprint rules before public posting.

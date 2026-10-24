@@ -18,7 +18,7 @@ urls = {
     3:"https://doi.org/10.3390/e21080723",
     4:"https://arxiv.org/abs/2001.09244",
     5:"https://github.com/jihadelsayed/AivoBlock/releases/tag/v0.1.0-research-prototype",
-    6:"https://www.iog.io/papers/ofelimos-combinatorial-optimization-via-proof-of-useful-work-a-provably-secure-blockchain-protocol",
+    6:"https://doi.org/10.1007/978-3-031-15979-4_12",
     7:"https://arxiv.org/abs/2404.09005",
     8:"https://arxiv.org/abs/2504.09971",
     9:"https://doi.org/10.1016/j.bcra.2025.100387",
@@ -31,6 +31,14 @@ require([int(n) for n, _ in refs] == list(range(1, 13)),
         "Expected twelve numbered bibliography entries in sequence")
 for n, line in refs:
     require(urls[int(n)] in line, f"Reference [{n}] URL does not match the audited source")
+require("LNCS vol. 13508, pp. 339–369" in paper and
+        "Ofelimos: Combinatorial Optimization via Proof-of-Useful-Work.”" in paper,
+        "Ref [6] must use the publisher's CRYPTO 2022 chapter metadata")
+require("arXiv:2504.09971v4, revised 13 November 2025" in paper and
+        "[8] I. Komargodski and O. Weinstein." in paper,
+        "Ref [8] must cite the verified two-author arXiv v4 record")
+require("S. J. ElSayed and AivoBlock contributors" in paper,
+        "Ref [5] release attribution changed unexpectedly; author sign-off required")
 require(paper.startswith("# " + meta["title"] + "\n"), "Manuscript title and metadata differ")
 require(meta.get("evidence_commit") == "ade6ff42737d972658e9c309f9a2d8cffbfb988c",
         "Experimental source revision changed")
